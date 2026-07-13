@@ -1,6 +1,7 @@
 package cangjie_teacher
 
 import std.collection.*
+import std.convert.Parsable
 
 public let TEACHER_SCHEMA_VERSION = "teacher/v1"
 
@@ -131,4 +132,43 @@ public func validateTeacherObservation(value: TeacherObservation): Bool {
     let families = ["language", "standard_library", "type_adaptation", "algorithm_pattern", "diagnostic", "boundary_check"]
     return families.contains(value.knowledgeFamily) && !value.concept.isEmpty() && !value.targetVersion.isEmpty() &&
         !value.citation.isEmpty() && (value.sourceClass == "official" || value.sourceClass == "approved")
+}
+
+public func renderTeacherRunManifest(value: TeacherRunManifest): String {
+    return teacherJoin([value.runId, value.caseId, value.datasetVersion, value.modelId, value.promptHash,
+        value.attempt.toString(), value.status, value.exitCode.toString(), value.evidenceHash]
+        .map({s: String => escapeField(s)}), "\t")
+}
+public func parseTeacherRunManifest(text: String): TeacherRunManifest {
+    let f = text.split("\t").map({s: String => unescapeField(s)}).toArray()
+    if (f.size != 9) { throw IllegalArgumentException("malformed_teacher_run_manifest") }
+    return TeacherRunManifest(f[0], f[1], f[2], f[3], f[4], Int64.parse(f[5]), f[6], Int64.parse(f[7]), f[8])
+}
+public func validateTeacherRunManifest(value: TeacherRunManifest): Bool {
+    !value.runId.isEmpty() && value.caseId.startsWith("CJ-HUMANEVAL-") && !value.datasetVersion.isEmpty() &&
+        !value.modelId.isEmpty() && value.attempt == 1 && !value.status.isEmpty() && !value.evidenceHash.isEmpty()
+}
+
+public func renderTeacherDatasetManifest(value: TeacherDatasetManifest): String {
+    return teacherJoin(value.cases.map({c: TeacherCaseManifest => renderTeacherCaseManifest(c)}), "\n")
+}
+
+public func validateTeacherCandidateExport(value: TeacherCandidateExport): Bool {
+    !value.identity.isEmpty() && !value.knowledgeFamily.isEmpty() && !value.concept.isEmpty() &&
+        !value.targetVersion.isEmpty() && !value.explanation.isEmpty() && !value.citation.isEmpty() &&
+        (value.sourceClass == "official" || value.sourceClass == "approved") &&
+        !value.provenanceHash.isEmpty() && value.tests.isComplete()
+}
+public func renderTeacherCandidateExport(value: TeacherCandidateExport): String {
+    if (!validateTeacherCandidateExport(value)) { throw IllegalArgumentException("invalid_teacher_candidate_export") }
+    return teacherJoin([value.identity, value.knowledgeFamily, value.concept, value.targetVersion, value.explanation,
+        value.example, value.citation, value.sourceClass, value.provenanceHash, value.tests.positive,
+        value.tests.negative, value.tests.boundary].map({s: String => escapeField(s)}), "\t")
+}
+public func parseTeacherCandidateExport(text: String): TeacherCandidateExport {
+    let f = text.split("\t").map({s: String => unescapeField(s)}).toArray()
+    if (f.size != 12) { throw IllegalArgumentException("malformed_teacher_candidate_export") }
+    let value = TeacherCandidateExport(f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8], KnowledgeAtomTestBundle(f[9], f[10], f[11]))
+    if (!validateTeacherCandidateExport(value)) { throw IllegalArgumentException("invalid_teacher_candidate_export") }
+    return value
 }

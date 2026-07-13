@@ -44,6 +44,8 @@ public class TeacherP0P3Test {
         @Expect(parsed.concept, value.concept)
         @Expect(parsed.explanation, value.explanation)
         @Expect(teacherStableHash(renderTeacherObservation(parsed)), teacherStableHash(renderTeacherObservation(value)))
+        let run = TeacherRunManifest("run", "CJ-HUMANEVAL-000", "v1", "fake", "prompt", 1, "complete", 0, "evidence")
+        @Expect(validateTeacherRunManifest(parseTeacherRunManifest(renderTeacherRunManifest(run))), true)
     }
     // P0-BND-01
     @TestCase public func p0MalformedAndBoundaryPathsFailClosed(): Unit {
@@ -157,6 +159,7 @@ public class TeacherP0P3Test {
     @TestCase public func p3GeneralAtomPassesExportAndAudits(): Unit {
         let candidate = renderCandidateKnowledgeExport(testObservation(), "Create an empty ArrayList<Int64>.", buildKnowledgeAtomTestBundle("append succeeds", "wrong type rejected", "empty list"))
         @Expect(candidate.tests.isComplete(), true)
+        @Expect(validateTeacherCandidateExport(parseTeacherCandidateExport(renderTeacherCandidateExport(candidate))), true)
         @Expect(auditCaseSpecificity(candidate, ["func secretCase"] ).passed, true)
         @Expect(auditCandidateAgainstSolutions(candidate, ["func hiddenAnswer(x: Int64) { return x * 987654 }" ]).passed, true)
     }
