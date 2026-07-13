@@ -1,11 +1,121 @@
 package cangjie_teacher_test
 
 import std.collection.*
+import std.fs.*
+import std.time.*
 import std.unittest.testmacro.*
 import cangjie_teacher.*
 
 private func testCase(id!: String = "CJ-HUMANEVAL-000", version!: String = "dataset-v1"): TeacherCaseManifest {
     TeacherCaseManifest(id, version, "prompt-hash", "starter-hash", "func demo(x: Int64): Int64", "verifier-hash")
+}
+
+private class RecordingExecutor <: TeacherCommandExecutor {
+    public let specs = ArrayList<TeacherCommandSpec>()
+    private let results: Array<TeacherProcessResult>
+    private var index: Int64 = 0
+    public init(results!: Array<TeacherProcessResult> = [TeacherProcessResult(0, "ok")]) { this.results = results }
+    public func execute(spec: TeacherCommandSpec): TeacherProcessResult {
+        specs.add(spec)
+        let selected = if (index < results.size) { results[index] } else { results[results.size - 1] }
+        index += 1
+        selected
+    }
+}
+
+@Test
+public class TeacherRuntimeTest {
+    private func tempRoot(name: String): String {
+        "/tmp/cangjie-teacher-${name}-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+    }
+
+    // P0-POS-01 / P1-POS-01
+    @TestCase public func cliAndFileManifestImport(): Unit {
+        let root = tempRoot("manifest")
+        try {
+            Directory.create(Path(root), recursive: true)
+            let text = teacherJoin(caseLines(), "\n") + "\n"
+            let path = "${root}/manifest.tsv"
+            File.writeTo(Path(path), text.toArray())
+            let parsed = parseTeacherCliOptions(["manifest-check", "--manifest", path, "--checksum", teacherStableHash(teacherJoin(caseLines(), "\n"))])
+            @Expect(parsed.command, "manifest-check")
+            @Expect(loadTeacherDatasetManifestFile(path, parsed.checksum).cases.size, 164)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // P0-NEG-01 / P1-NEG-01
+    @TestCase public func malformedUtf8AndUnsafePrivacyAreRejected(): Unit {
+        let root = tempRoot("encoding")
+        try {
+            Directory.create(Path(root), recursive: true)
+            File.writeTo(Path("${root}/bad"), [UInt8(0xff), UInt8(0xfe)])
+            var invalid = false
+            try { _ = teacherReadUtf8File("${root}/bad") } catch (e: Exception) { invalid = e.message == "invalid_response_encoding" }
+            @Expect(invalid, true)
+            @Expect(validateTeacherExecutionPrivacy("/repo", "/repo/runs", true), false)
+            @Expect(validateTeacherExecutionPrivacy("/repo", "/private/teacher-runs", true), true)
+            @Expect(validateTeacherExecutionPrivacy("/repo", "/private/teacher-runs", false), false)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // P2-UT-01 / P2-BND-01
+    @TestCase public func codexUsesExactArgvCwdEnvironmentAndTimeout(): Unit {
+        let recorder = RecordingExecutor(results: [TeacherProcessResult(124, "timeout", timedOut: true)])
+        let root = tempRoot("process")
+        try {
+            let result = CodexTeacherProcess("/fake/codex", "gpt-fake", timeoutMillis: 1234, executor: recorder)
+                .generate(testCase(), "${root}/workspace", "${root}/session", "${root}/home")
+            @Expect(result.timedOut, true)
+            @Expect(recorder.specs.size, 1)
+            @Expect(recorder.specs[0].executable, "/fake/codex")
+            @Expect(recorder.specs[0].cwd, "${root}/workspace")
+            @Expect(recorder.specs[0].args[0], "exec")
+            @Expect(recorder.specs[0].args.contains("--full-auto"), true)
+            @Expect(recorder.specs[0].timeoutMillis, 1234)
+            var hasHome = false
+            for (entry in recorder.specs[0].env) { if (entry[0] == "CODEX_HOME" && entry[1] == "${root}/home") { hasHome = true } }
+            @Expect(hasHome, true)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // P2-POS-01 / P2-NEG-01
+    @TestCase public func verifierInjectsTestsAfterGenerationAndStopsOnFailure(): Unit {
+        let root = tempRoot("verify")
+        let recorder = RecordingExecutor(results: [TeacherProcessResult(0, "clean"), TeacherProcessResult(7, "build failed")])
+        try {
+            Directory.create(Path("${root}/tests/CJ-HUMANEVAL-000/test/src"), recursive: true)
+            Directory.create(Path("${root}/solution"), recursive: true)
+            File.writeTo(Path("${root}/tests/CJ-HUMANEVAL-000/test/src/case_test.cj"), "test".toArray())
+            @Expect(exists(Path("${root}/solution/test")), false)
+            let result = CjpmTeacherVerifier("${root}/tests", executor: recorder).verify(testCase(), "${root}/solution")
+            @Expect(exists(Path("${root}/solution/test/src/case_test.cj")), true)
+            @Expect(result.exitCode, 7)
+            @Expect(recorder.specs.size, 2)
+            @Expect(recorder.specs[0].args, ["clean"])
+            @Expect(recorder.specs[1].args, ["build", "-i"])
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // P2-E2E-01
+    @TestCase public func workspaceEvidenceAtomicPersistenceAndResume(): Unit {
+        let root = tempRoot("storage")
+        try {
+            Directory.create(Path("${root}/starters/CJ-HUMANEVAL-000/src"), recursive: true)
+            File.writeTo(Path("${root}/starters/CJ-HUMANEVAL-000/cjpm.toml"), "package".toArray())
+            File.writeTo(Path("${root}/starters/CJ-HUMANEVAL-000/src/main.cj"), "中文😀".toArray())
+            let workspace = createTeacherCaseWorkspace(root, "run-1", testCase(), "${root}/starters")
+            @Expect(teacherReadUtf8File("${workspace}/src/main.cj"), "中文😀")
+            let run = TeacherRunManifest("run-1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-fake", "prompt-hash", 1, "complete", 0, "evidence")
+            let entries = persistTeacherRunArtifacts(root, run, "generated", "verified")
+            @Expect(entries.size, 3)
+            @Expect(exists(Path("${root}/runs/run-1/evidence/CJ-HUMANEVAL-000/index.tsv")), true)
+            let completedPath = "${root}/runs/run-1/completed.manifest"
+            _ = persistCompletedTeacherRuns(completedPath, [run])
+            @Expect(loadCompletedTeacherRuns(completedPath).size, 1)
+            @Expect(exists(Path(completedPath + ".tmp")), false)
+            @Expect(TeacherPaths(root).workspace("run-1", "CJ-HUMANEVAL-000") != TeacherPaths(root).workspace("run-2", "CJ-HUMANEVAL-000"), true)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
 }
 private func testObservation(explanation!: String = "ArrayList stores a growable sequence safely.",
     citation!: String = "https://cangjie-lang.cn/docs/collection", family!: String = "standard_library"): TeacherObservation {

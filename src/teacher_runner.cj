@@ -38,7 +38,7 @@ public func runTeacherCase(caseValue: TeacherCaseManifest, options: TeacherRunOp
 }
 
 public func verifyTeacherSolution(caseValue: TeacherCaseManifest, options: TeacherRunOptions, generatedEvidence: String): TeacherRunManifest {
-    let checked = options.verifier.verify(caseValue, TeacherPaths(options.root).solution(caseValue.caseId))
+    let checked = options.verifier.verify(caseValue, TeacherPaths(options.root).workspace(options.runId, caseValue.caseId))
     if (checked.exitCode != 0) { return buildTeacherRun(caseValue, options, "verification_failed", checked.exitCode, generatedEvidence + checked.output) }
     return buildTeacherRun(caseValue, options, "verified", 0, generatedEvidence + checked.output)
 }

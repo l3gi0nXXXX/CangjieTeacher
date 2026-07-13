@@ -1,0 +1,75 @@
+package cangjie_teacher
+
+import std.collection.*
+import std.env.getVariables
+import std.fs.*
+import std.io.StringReader
+import std.process.*
+import std.time.*
+
+public class TeacherCommandSpec {
+    public let executable: String
+    public let args: Array<String>
+    public let cwd: String
+    public let env: Array<(String, String)>
+    public let timeoutMillis: Int64
+    public init(executable: String, args: Array<String>, cwd: String,
+        env!: Array<(String, String)> = [], timeoutMillis!: Int64 = 600000) {
+        this.executable = executable; this.args = args; this.cwd = cwd; this.env = env; this.timeoutMillis = timeoutMillis
+    }
+}
+
+public interface TeacherCommandExecutor { func execute(spec: TeacherCommandSpec): TeacherProcessResult }
+
+public class NativeTeacherCommandExecutor <: TeacherCommandExecutor {
+    public init() {}
+    public func execute(spec: TeacherCommandSpec): TeacherProcessResult {
+        let environment = HashMap<String, String>()
+        for ((key, value) in getVariables()) { environment[key] = value }
+        for (entry in spec.env) { environment[entry[0]] = entry[1] }
+        try {
+            let process = launch(spec.executable, spec.args, stdOut: ProcessRedirect.Pipe,
+                stdErr: ProcessRedirect.Pipe, workingDirectory: Some(Path(spec.cwd)), environment: Some(environment))
+            let stdout = spawn { try { StringReader(process.stdOutPipe).readToEnd() } catch (_: Exception) { "invalid_response_encoding" } }
+            let stderr = spawn { try { StringReader(process.stdErrPipe).readToEnd() } catch (_: Exception) { "invalid_response_encoding" } }
+            try {
+                let code = process.wait(timeout: Some(Duration.millisecond * spec.timeoutMillis))
+                TeacherProcessResult(code, stdout.get() + stderr.get())
+            } catch (_: TimeoutException) {
+                try { process.terminate(force: true) } catch (_: Exception) {}
+                try { _ = stdout.get(); _ = stderr.get() } catch (_: Exception) {}
+                TeacherProcessResult(124, "timeout", timedOut: true)
+            }
+        } catch (_: Exception) { TeacherProcessResult(127, "process_launch_failed") }
+    }
+}
+
+public class CodexTeacherProcess <: TeacherProcess {
+    private let executable: String
+    private let model: String
+    private let timeoutMillis: Int64
+    private let executor: TeacherCommandExecutor
+    public init(executable: String, model: String, timeoutMillis!: Int64 = 600000,
+        executor!: TeacherCommandExecutor = NativeTeacherCommandExecutor()) {
+        this.executable = executable; this.model = model; this.timeoutMillis = timeoutMillis; this.executor = executor
+    }
+    public func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String): TeacherProcessResult {
+        Directory.create(Path(workspace), recursive: true)
+        Directory.create(Path(session), recursive: true)
+        Directory.create(Path(runtimeHome), recursive: true)
+        let prompt = "Implement the Cangjie function with signature: ${caseValue.signature}. Write only inside the current workspace."
+        let args = ["exec", "--model", this.model, "--full-auto", "--skip-git-repo-check", "--cwd", workspace, prompt]
+        return this.executor.execute(TeacherCommandSpec(this.executable, args, workspace,
+            env: [("CODEX_HOME", runtimeHome), ("CANGJIE_TEACHER_SESSION", session)], timeoutMillis: this.timeoutMillis))
+    }
+}
+
+public func createTeacherCaseWorkspace(root: String, runId: String, caseValue: TeacherCaseManifest,
+    starterRoot: String): String {
+    let workspace = TeacherPaths(root).workspace(runId, caseValue.caseId)
+    if (exists(Path(workspace))) { remove(Path(workspace), recursive: true) }
+    Directory.create(Path(workspace), recursive: true)
+    teacherCopyFile("${starterRoot}/${caseValue.caseId}/cjpm.toml", "${workspace}/cjpm.toml")
+    teacherCopyFile("${starterRoot}/${caseValue.caseId}/src/main.cj", "${workspace}/src/main.cj")
+    workspace
+}
