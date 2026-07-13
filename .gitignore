@@ -1,65 +1,16 @@
-develop_steps/
-docs/superpowers/
-MEMORY.md
-DREAMS.md
-memory/
-.env
-.agents/
-.claude/
-.learnings/
-.qwen/
-.env.example
-control-ui-cjbackup/
-.worktrees/
-
-.magic-cli/
-**/*.bak
-**/backups/**
-# Build artifacts
 target/
 *.macrocall
 binary/
-
-# Log files
-logs/
-*.log
-log.txt
-
-# Cache files
-.cache/
-build-script-cache/
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
 .DS_Store
-Thumbs.db
-
-# Temporary files
+.idea/
+.vscode/
+*.swp
 *.tmp
-*.temp
-todo.md
+*.log
+.env
+.env.*
+!.env.example
+.teacher-runtime/
+runs/raw-model-cache/
+teacher-solutions/local-only/
 
-# Test files
-test/
-!/test/
-/test/*
-!/test/fixtures/
-/test/fixtures/*
-!/test/fixtures/service_plugin/
-/test/fixtures/service_plugin/*
-!/test/fixtures/service_plugin/stdio_protocol/
-!/test/fixtures/service_plugin/stdio_protocol/*
-!/test/fixtures/service_plugin/job_protocol/
-!/test/fixtures/service_plugin/job_protocol/*
-test_examples/
-
-# External modules
-CangjieMagic/
-cj-lsp/
-node_modules/
-ui/node_modules/

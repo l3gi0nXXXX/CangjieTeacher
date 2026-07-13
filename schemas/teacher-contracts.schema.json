@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "teacher-contracts/v1",
+  "description": "Documentation schema. Runtime validation is authoritative in teacher_contracts.cj.",
+  "required": ["schemaVersion", "datasetVersion", "caseId", "evidenceHash"],
+  "properties": {
+    "schemaVersion": {"const": "teacher/v1"},
+    "datasetVersion": {"type": "string", "minLength": 1},
+    "caseId": {"pattern": "^CJ-HUMANEVAL-[0-9]{3}$"},
+    "evidenceHash": {"type": "string", "minLength": 1}
+  }
+}
