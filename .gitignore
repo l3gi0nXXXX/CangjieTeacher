@@ -12,4 +12,4 @@ binary/
 !.env.example
 .teacher-runtime/
 runs/raw-model-cache/
-teacher-solutions/local-only/
+teacher-solutions/
