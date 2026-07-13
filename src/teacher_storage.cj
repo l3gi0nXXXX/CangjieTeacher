@@ -2,6 +2,9 @@ package cangjie_teacher
 
 import std.fs.*
 import std.collection.*
+import std.sort.*
+import stdx.crypto.digest.SHA256
+import std.core.StringBuilder
 
 public func teacherReadUtf8File(path: String): String {
     if (!exists(Path(path))) { throw IllegalArgumentException("file_not_found") }
@@ -24,6 +27,47 @@ public func teacherCopyFile(source: String, target: String): Unit {
     let output = Path(target)
     if (!exists(output.parent)) { Directory.create(output.parent, recursive: true) }
     File.writeTo(output, bytes)
+}
+
+public func teacherDirectoryHash(root: String): String {
+    let base = Path(root)
+    if (!exists(base)) { return "" }
+    let files = ArrayList<String>()
+    Directory.walk(base) { info: FileInfo =>
+        if (info.isRegular()) {
+            let full = info.path.toString(); let prefix = base.toString() + "/"
+            if (full.startsWith(prefix)) { files.add(full[prefix.size..]) }
+        }
+        true
+    }
+    sort(files)
+    let digest = SHA256()
+    for (relative in files) {
+        let bytes = File.readFrom(base.join(relative))
+        digest.write("${relative.size}:${relative}:${bytes.size}:".toArray()); digest.write(bytes)
+    }
+    let out = StringBuilder()
+    for (byte in digest.finish()) {
+        let hi = byte / UInt8(16); let lo = byte % UInt8(16)
+        out.append(if (hi < UInt8(10)) { "${hi}" } else { ["a","b","c","d","e","f"][Int64(hi - UInt8(10))] })
+        out.append(if (lo < UInt8(10)) { "${lo}" } else { ["a","b","c","d","e","f"][Int64(lo - UInt8(10))] })
+    }
+    "sha256:${out.toString()}"
+}
+
+public func teacherSanitizeEvidence(value: String): String {
+    let clean = value.replace("Authorization", "[redacted]").replace("token", "[redacted]")
+    let safeLines = ArrayList<String>()
+    for (line in clean.split("\n")) {
+        let trimmed = line.trimAscii()
+        if (trimmed.startsWith("package ") || trimmed.startsWith("func ") || trimmed.startsWith("public func ") ||
+            trimmed.contains("return ") || trimmed.contains("=>")) { safeLines.add("[solution_content_redacted]") }
+        else { safeLines.add(line) }
+    }
+    let sanitized = teacherJoin(safeLines.toArray(), "\n")
+    let runes = sanitized.toRuneArray()
+    if (runes.size <= 4000) { return sanitized }
+    String(runes[..4000]) + "..."
 }
 
 public func persistTeacherRunArtifacts(root: String, run: TeacherRunManifest, processEvidence: String,

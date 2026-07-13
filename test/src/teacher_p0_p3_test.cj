@@ -7,16 +7,19 @@ import std.unittest.testmacro.*
 import cangjie_teacher.*
 
 private func testCase(id!: String = "CJ-HUMANEVAL-000", version!: String = "dataset-v1"): TeacherCaseManifest {
-    TeacherCaseManifest(id, version, "prompt-hash", "starter-hash", "func demo(x: Int64): Int64", "verifier-hash")
+    TeacherCaseManifest(id, version, "prompt-hash", "starter-hash", "func demo(x: Int64): Int64", "verifier-hash",
+        prompt: "Implement demo for 中文😀.", targetVersion: "1.0.0", requiredKnowledgeTags: ["Int64"])
 }
 
 private class RecordingExecutor <: TeacherCommandExecutor {
     public let specs = ArrayList<TeacherCommandSpec>()
     private let results: Array<TeacherProcessResult>
     private var index: Int64 = 0
+    public var observedInjectedTests = false
     public init(results!: Array<TeacherProcessResult> = [TeacherProcessResult(0, "ok")]) { this.results = results }
     public func execute(spec: TeacherCommandSpec): TeacherProcessResult {
         specs.add(spec)
+        if (exists(Path("${spec.cwd}/src/TestMain.cj"))) { observedInjectedTests = true }
         let selected = if (index < results.size) { results[index] } else { results[results.size - 1] }
         index += 1
         selected
@@ -53,9 +56,11 @@ public class TeacherRuntimeTest {
             var invalid = false
             try { _ = teacherReadUtf8File("${root}/bad") } catch (e: Exception) { invalid = e.message == "invalid_response_encoding" }
             @Expect(invalid, true)
-            @Expect(validateTeacherExecutionPrivacy("/repo", "/repo/runs", true), false)
-            @Expect(validateTeacherExecutionPrivacy("/repo", "/private/teacher-runs", true), true)
-            @Expect(validateTeacherExecutionPrivacy("/repo", "/private/teacher-runs", false), false)
+            Directory.create(Path("${root}/repo"), recursive: true)
+            Directory.create(Path("${root}/private/teacher-runs"), recursive: true)
+            @Expect(validateTeacherExecutionPrivacy("${root}/repo", "${root}/repo/runs", true), false)
+            @Expect(validateTeacherExecutionPrivacy("${root}/repo", "${root}/private/teacher-runs", true), true)
+            @Expect(validateTeacherExecutionPrivacy("${root}/repo", "${root}/private/teacher-runs", false), false)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
@@ -84,12 +89,15 @@ public class TeacherRuntimeTest {
         let root = tempRoot("verify")
         let recorder = RecordingExecutor(results: [TeacherProcessResult(0, "clean"), TeacherProcessResult(7, "build failed")])
         try {
-            Directory.create(Path("${root}/tests/CJ-HUMANEVAL-000/test/src"), recursive: true)
-            Directory.create(Path("${root}/solution"), recursive: true)
-            File.writeTo(Path("${root}/tests/CJ-HUMANEVAL-000/test/src/case_test.cj"), "test".toArray())
-            @Expect(exists(Path("${root}/solution/test")), false)
+            Directory.create(Path("${root}/tests/CJ-HUMANEVAL-000/tests"), recursive: true)
+            Directory.create(Path("${root}/solution/src"), recursive: true)
+            File.writeTo(Path("${root}/solution/cjpm.toml"), "original package".toArray())
+            File.writeTo(Path("${root}/tests/CJ-HUMANEVAL-000/tests/cjpm.executable.toml"), "package".toArray())
+            File.writeTo(Path("${root}/tests/CJ-HUMANEVAL-000/tests/TestMain.cj"), "test".toArray())
+            @Expect(exists(Path("${root}/solution/src/TestMain.cj")), false)
             let result = CjpmTeacherVerifier("${root}/tests", executor: recorder).verify(testCase(), "${root}/solution")
-            @Expect(exists(Path("${root}/solution/test/src/case_test.cj")), true)
+            @Expect(recorder.observedInjectedTests, true)
+            @Expect(exists(Path("${root}/solution/src/TestMain.cj")), false)
             @Expect(result.exitCode, 7)
             @Expect(recorder.specs.size, 2)
             @Expect(recorder.specs[0].args, ["clean"])
@@ -101,11 +109,14 @@ public class TeacherRuntimeTest {
     @TestCase public func workspaceEvidenceAtomicPersistenceAndResume(): Unit {
         let root = tempRoot("storage")
         try {
-            Directory.create(Path("${root}/starters/CJ-HUMANEVAL-000/src"), recursive: true)
-            File.writeTo(Path("${root}/starters/CJ-HUMANEVAL-000/cjpm.toml"), "package".toArray())
-            File.writeTo(Path("${root}/starters/CJ-HUMANEVAL-000/src/main.cj"), "中文😀".toArray())
-            let workspace = createTeacherCaseWorkspace(root, "run-1", testCase(), "${root}/starters")
-            @Expect(teacherReadUtf8File("${workspace}/src/main.cj"), "中文😀")
+            Directory.create(Path("${root}/starters/CJ-HUMANEVAL-000/starter/src"), recursive: true)
+            File.writeTo(Path("${root}/starters/CJ-HUMANEVAL-000/starter/cjpm.toml"), "package".toArray())
+            File.writeTo(Path("${root}/starters/CJ-HUMANEVAL-000/starter/src/solution.cj"), "中文😀".toArray())
+            let starterHash = teacherDirectoryHash("${root}/starters/CJ-HUMANEVAL-000/starter")
+            let actualCase = TeacherCaseManifest("CJ-HUMANEVAL-000", "dataset-v1", "prompt-hash", starterHash,
+                "func demo(x: Int64): Int64", "verifier-hash", prompt: "Implement demo")
+            let workspace = createTeacherCaseWorkspace(root, "run-1", actualCase, "${root}/starters")
+            @Expect(teacherReadUtf8File("${workspace}/src/solution.cj"), "中文😀")
             let run = TeacherRunManifest("run-1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-fake", "prompt-hash", 1, "complete", 0, "evidence")
             let entries = persistTeacherRunArtifacts(root, run, "generated", "verified")
             @Expect(entries.size, 3)
@@ -127,7 +138,9 @@ private func validCases(): Array<TeacherCaseManifest> {
     for (i in 0..164) { out.add(testCase(id: "CJ-HUMANEVAL-${teacherPad3(i)}")) }
     return out.toArray()
 }
-private func caseLines(): Array<String> { validCases().map({c: TeacherCaseManifest => renderTeacherCaseManifest(c)}) }
+private func caseLines(): Array<String> { validCases().map({c: TeacherCaseManifest =>
+    "{\"schemaVersion\":\"cangjie-humaneval-model-v1\",\"caseId\":\"${c.caseId}\",\"datasetVersion\":\"${c.datasetVersion}\",\"targetVersion\":\"1.0.0\",\"signature\":\"func demo(x: Int64): Int64\",\"prompt\":\"Implement demo\",\"promptHash\":\"prompt-hash\",\"starterHash\":\"starter-hash\",\"requiredKnowledgeTags\":[\"Int64\"]}"
+}) }
 
 private class FakeClock <: TeacherClock {
     public func nowMillis(): Int64 { 1000 }

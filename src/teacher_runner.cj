@@ -8,6 +8,14 @@ public class TeacherProcessResult {
     public let timedOut: Bool
     public init(exitCode: Int64, output: String, timedOut!: Bool = false) { this.exitCode = exitCode; this.output = output; this.timedOut = timedOut }
 }
+public class TeacherCaseExecution {
+    public let run: TeacherRunManifest
+    public let generationEvidence: String
+    public let verifierEvidence: String
+    public init(run: TeacherRunManifest, generationEvidence: String, verifierEvidence: String) {
+        this.run = run; this.generationEvidence = generationEvidence; this.verifierEvidence = verifierEvidence
+    }
+}
 public interface TeacherProcess {
     func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String): TeacherProcessResult
 }
@@ -27,14 +35,21 @@ public class TeacherRunOptions {
 }
 
 public func runTeacherCase(caseValue: TeacherCaseManifest, options: TeacherRunOptions): TeacherRunManifest {
+    executeTeacherCase(caseValue, options).run
+}
+
+public func executeTeacherCase(caseValue: TeacherCaseManifest, options: TeacherRunOptions): TeacherCaseExecution {
     let paths = TeacherPaths(options.root)
     let started = options.clock.nowMillis()
     let generated = options.process.generate(caseValue, paths.workspace(options.runId, caseValue.caseId),
         paths.session(options.runId, caseValue.caseId), paths.runtimeHome(options.runId, caseValue.caseId))
-    if (generated.timedOut) { return buildTeacherRun(caseValue, options, "timeout", 124, "${started}:timeout") }
-    if (generated.exitCode != 0) { return buildTeacherRun(caseValue, options, "generation_failed", generated.exitCode, generated.output) }
-    if (generated.output.isEmpty()) { return buildTeacherRun(caseValue, options, "empty_output", 3, "empty") }
-    return verifyTeacherSolution(caseValue, options, generated.output)
+    if (generated.timedOut) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "timeout", 124, "${started}:timeout"), generated.output, "") }
+    if (generated.exitCode != 0) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "generation_failed", generated.exitCode, generated.output), generated.output, "") }
+    if (generated.output.isEmpty()) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "empty_output", 3, "empty"), "empty", "") }
+    let checked = options.verifier.verify(caseValue, TeacherPaths(options.root).workspace(options.runId, caseValue.caseId))
+    let run = if (checked.exitCode != 0) { buildTeacherRun(caseValue, options, "verification_failed", checked.exitCode, generated.output + checked.output) }
+        else { buildTeacherRun(caseValue, options, "verified", 0, generated.output + checked.output) }
+    TeacherCaseExecution(run, generated.output, checked.output)
 }
 
 public func verifyTeacherSolution(caseValue: TeacherCaseManifest, options: TeacherRunOptions, generatedEvidence: String): TeacherRunManifest {

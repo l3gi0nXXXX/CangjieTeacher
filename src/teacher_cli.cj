@@ -18,6 +18,7 @@ public class TeacherCliOptions {
     public var timeoutMillis: Int64 = 600000
     public var localOnly = false
     public var repositoryRoot = ""
+    public var caseId = ""
     public init() {}
 }
 
@@ -40,6 +41,7 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
             case "--model" => out.model = value
             case "--run-id" => out.runId = value
             case "--repo-root" => out.repositoryRoot = value
+            case "--case-id" => out.caseId = value
             case "--timeout-ms" => out.timeoutMillis = try { Int64.parse(value) } catch (_: Exception) { throw IllegalArgumentException("invalid_timeout") }
             case _ => throw IllegalArgumentException("unknown_cli_option")
         }
@@ -75,6 +77,7 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
     let runOptions = TeacherRunOptions(options.runId, options.root, options.model, process, verifier, SystemTeacherClock())
     let out = ArrayList<TeacherRunManifest>()
     for (caseValue in manifest.cases) {
+        if (!options.caseId.isEmpty() && caseValue.caseId != options.caseId) { continue }
         var reusable: ?TeacherRunManifest = None
         for (old in completed) {
             if (old.caseId == caseValue.caseId && old.status == "complete" && old.datasetVersion == caseValue.datasetVersion && old.promptHash == caseValue.promptHash) { reusable = Some(old) }
@@ -83,9 +86,15 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
             case Some(old) => out.add(old)
             case None =>
                 _ = createTeacherCaseWorkspace(options.root, options.runId, caseValue, options.starterRoot)
-                let run = finalizeTeacherRun(runTeacherCase(caseValue, runOptions), true)
+                let execution = executeTeacherCase(caseValue, runOptions)
+                let run = finalizeTeacherRun(execution.run, true)
                 out.add(run)
-                _ = persistTeacherRunArtifacts(options.root, run, "generation_status=${run.status}", "verification_exit=${run.exitCode}")
+                if (run.status == "complete") {
+                    teacherCopyTree(TeacherPaths(options.root).workspace(options.runId, caseValue.caseId),
+                        TeacherPaths(options.root).solution(caseValue.caseId))
+                }
+                _ = persistTeacherRunArtifacts(options.root, run, teacherSanitizeEvidence(execution.generationEvidence),
+                    teacherSanitizeEvidence(execution.verifierEvidence))
                 _ = persistCompletedTeacherRuns(completedPath, out.toArray())
         }
     }
@@ -94,8 +103,8 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
 
 public func validateTeacherExecutionPrivacy(repositoryRoot: String, artifactRoot: String, localOnly: Bool): Bool {
     if (!localOnly || repositoryRoot.trimEnd('/').isEmpty() || artifactRoot.trimEnd('/').isEmpty()) { return false }
-    let repo = repositoryRoot.trimEnd('/')
-    let artifacts = artifactRoot.trimEnd('/')
+    let repo = try { canonicalize(Path(repositoryRoot)).toString().trimEnd('/') } catch (_: Exception) { return false }
+    let artifacts = try { canonicalize(Path(artifactRoot)).toString().trimEnd('/') } catch (_: Exception) { return false }
     return artifacts != repo && !artifacts.startsWith(repo + "/")
 }
 
@@ -109,6 +118,11 @@ public func cangjieTeacherCliMain(args: Array<String>): Int64 {
         if (options.command == "manifest-check") {
             let manifest = loadTeacherDatasetManifestFile(options.manifest, options.checksum)
             println("manifest valid=true cases=${manifest.cases.size} datasetVersion=${manifest.datasetVersion}")
+            return 0
+        }
+        if (options.command == "hash-directory") {
+            if (options.starterRoot.isEmpty()) { throw IllegalArgumentException("missing_required_cli_option") }
+            println(teacherDirectoryHash(options.starterRoot))
             return 0
         }
         if (options.command == "run") {

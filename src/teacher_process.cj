@@ -54,10 +54,10 @@ public class CodexTeacherProcess <: TeacherProcess {
         this.executable = executable; this.model = model; this.timeoutMillis = timeoutMillis; this.executor = executor
     }
     public func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String): TeacherProcessResult {
-        Directory.create(Path(workspace), recursive: true)
-        Directory.create(Path(session), recursive: true)
-        Directory.create(Path(runtimeHome), recursive: true)
-        let prompt = "Implement the Cangjie function with signature: ${caseValue.signature}. Write only inside the current workspace."
+        if (!exists(Path(workspace))) { Directory.create(Path(workspace), recursive: true) }
+        if (!exists(Path(session))) { Directory.create(Path(session), recursive: true) }
+        if (!exists(Path(runtimeHome))) { Directory.create(Path(runtimeHome), recursive: true) }
+        let prompt = "${caseValue.prompt}\n\nRequired signature: ${caseValue.signature}\nWrite only inside the current workspace."
         let args = ["exec", "--model", this.model, "--full-auto", "--skip-git-repo-check", "--cwd", workspace, prompt]
         return this.executor.execute(TeacherCommandSpec(this.executable, args, workspace,
             env: [("CODEX_HOME", runtimeHome), ("CANGJIE_TEACHER_SESSION", session)], timeoutMillis: this.timeoutMillis))
@@ -69,7 +69,8 @@ public func createTeacherCaseWorkspace(root: String, runId: String, caseValue: T
     let workspace = TeacherPaths(root).workspace(runId, caseValue.caseId)
     if (exists(Path(workspace))) { remove(Path(workspace), recursive: true) }
     Directory.create(Path(workspace), recursive: true)
-    teacherCopyFile("${starterRoot}/${caseValue.caseId}/cjpm.toml", "${workspace}/cjpm.toml")
-    teacherCopyFile("${starterRoot}/${caseValue.caseId}/src/main.cj", "${workspace}/src/main.cj")
+    let starter = "${starterRoot}/${caseValue.caseId}/starter"
+    if (teacherDirectoryHash(starter) != caseValue.starterHash) { throw IllegalArgumentException("starter_hash_mismatch") }
+    teacherCopyTree(starter, workspace)
     workspace
 }

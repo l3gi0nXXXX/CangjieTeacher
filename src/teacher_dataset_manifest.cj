@@ -3,11 +3,32 @@ package cangjie_teacher
 import std.collection.*
 import std.core.StringBuilder
 import stdx.crypto.digest.SHA256
+import stdx.encoding.json.JsonValue
+
+public func parseTeacherModelManifestJson(line: String): TeacherCaseManifest {
+    try {
+        let value = JsonValue.fromStr(line).asObject()
+        let field = {key: String => value.get(key).getOrThrow().asString().getValue()}
+        let schema = field("schemaVersion")
+        if (schema != "cangjie-humaneval-model-v1" && schema != "cangjie-humaneval-authority-v1") {
+            throw IllegalArgumentException("unsupported_manifest_schema")
+        }
+        let tags = ArrayList<String>()
+        for (tag in value.get("requiredKnowledgeTags").getOrThrow().asArray().getItems()) {
+            tags.add(tag.asString().getValue())
+        }
+        TeacherCaseManifest(field("caseId"), field("datasetVersion"), field("promptHash"),
+            field("starterHash"), field("signature"), "verifier-owned", prompt: field("prompt"),
+            targetVersion: field("targetVersion"), requiredKnowledgeTags: tags.toArray())
+    } catch (e: IllegalArgumentException) { throw e } catch (_: Exception) {
+        throw IllegalArgumentException("malformed_teacher_manifest_json")
+    }
+}
 
 public func importTeacherDatasetManifest(lines: Array<String>, expectedChecksum: String): TeacherDatasetManifest {
     let checksum = teacherStableHash(teacherJoin(lines, "\n"))
     if (checksum != expectedChecksum) { throw IllegalArgumentException("manifest_checksum_mismatch") }
-    let cases = lines.map({line: String => parseTeacherCaseManifest(line)})
+    let cases = lines.map({line: String => parseTeacherModelManifestJson(line)})
     if (cases.isEmpty()) { throw IllegalArgumentException("empty_manifest") }
     let manifest = TeacherDatasetManifest(cases[0].datasetVersion, cases)
     if (!validateTeacherDatasetManifest(manifest)) { throw IllegalArgumentException("invalid_manifest") }

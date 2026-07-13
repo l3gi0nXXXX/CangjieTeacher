@@ -10,17 +10,26 @@ public class CjpmTeacherVerifier <: TeacherVerifier {
         this.testsRoot = testsRoot; this.executor = executor; this.timeoutMillis = timeoutMillis
     }
     public func verify(caseValue: TeacherCaseManifest, solutionRoot: String): TeacherProcessResult {
-        let testSource = "${this.testsRoot}/${caseValue.caseId}/test"
+        let testSource = "${this.testsRoot}/${caseValue.caseId}/tests"
         if (!exists(Path(testSource))) { return TeacherProcessResult(4, "verifier_fixture_missing") }
-        teacherCopyTree(testSource, "${solutionRoot}/test")
-        let commands: Array<Array<String>> = [["clean"], ["build", "-i"], ["test", "-j", "1"]]
-        var evidence = ""
-        for (args in commands) {
-            let result = this.executor.execute(TeacherCommandSpec("cjpm", args, solutionRoot, timeoutMillis: this.timeoutMillis))
-            evidence += result.output
-            if (result.timedOut || result.exitCode != 0) { return TeacherProcessResult(result.exitCode, evidence, timedOut: result.timedOut) }
+        let projectPath = "${solutionRoot}/cjpm.toml"
+        let injectedTestPath = "${solutionRoot}/src/TestMain.cj"
+        let originalProject = teacherReadUtf8File(projectPath)
+        try {
+            teacherCopyFile("${testSource}/cjpm.executable.toml", projectPath)
+            teacherCopyFile("${testSource}/TestMain.cj", injectedTestPath)
+            let commands: Array<Array<String>> = [["clean"], ["build", "-i"], ["test", "-j", "1"], ["run"]]
+            var evidence = ""
+            for (args in commands) {
+                let result = this.executor.execute(TeacherCommandSpec("cjpm", args, solutionRoot, timeoutMillis: this.timeoutMillis))
+                evidence += result.output
+                if (result.timedOut || result.exitCode != 0) { return TeacherProcessResult(result.exitCode, evidence, timedOut: result.timedOut) }
+            }
+            TeacherProcessResult(0, evidence)
+        } finally {
+            _ = teacherAtomicWrite(projectPath, originalProject)
+            try { remove(Path(injectedTestPath)) } catch (_: Exception) {}
         }
-        TeacherProcessResult(0, evidence)
     }
 }
 

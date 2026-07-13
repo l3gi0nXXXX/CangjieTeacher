@@ -18,10 +18,15 @@ public class TeacherCaseManifest {
     public let starterHash: String
     public let signature: String
     public let verifierHash: String
+    public let prompt: String
+    public let targetVersion: String
+    public let requiredKnowledgeTags: Array<String>
     public init(caseId: String, datasetVersion: String, promptHash: String, starterHash: String,
-        signature: String, verifierHash: String) {
+        signature: String, verifierHash: String, prompt!: String = "", targetVersion!: String = "",
+        requiredKnowledgeTags!: Array<String> = []) {
         this.caseId = caseId; this.datasetVersion = datasetVersion; this.promptHash = promptHash
         this.starterHash = starterHash; this.signature = signature; this.verifierHash = verifierHash
+        this.prompt = prompt; this.targetVersion = targetVersion; this.requiredKnowledgeTags = requiredKnowledgeTags
     }
 }
 
@@ -117,7 +122,7 @@ public func parseTeacherCaseManifest(text: String): TeacherCaseManifest {
 }
 public func validateTeacherCaseManifest(value: TeacherCaseManifest): Bool {
     value.caseId.startsWith("CJ-HUMANEVAL-") && !value.datasetVersion.isEmpty() &&
-        !value.promptHash.isEmpty() && !value.signature.isEmpty() && !value.verifierHash.isEmpty()
+        !value.promptHash.isEmpty() && !value.signature.isEmpty() && !value.starterHash.isEmpty()
 }
 public func renderTeacherObservation(value: TeacherObservation): String {
     return teacherJoin([value.caseId, value.knowledgeFamily, value.concept, value.targetVersion, value.explanation,
