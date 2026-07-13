@@ -33,13 +33,7 @@ public func teacherDirectoryHash(root: String): String {
     let base = Path(root)
     if (!exists(base)) { return "" }
     let files = ArrayList<String>()
-    Directory.walk(base) { info: FileInfo =>
-        if (info.isRegular()) {
-            let full = info.path.toString(); let prefix = base.toString() + "/"
-            if (full.startsWith(prefix)) { files.add(full[prefix.size..]) }
-        }
-        true
-    }
+    teacherCollectDirectoryFiles(base, "", files)
     sort(files)
     let digest = SHA256()
     for (relative in files) {
@@ -53,6 +47,14 @@ public func teacherDirectoryHash(root: String): String {
         out.append(if (lo < UInt8(10)) { "${lo}" } else { ["a","b","c","d","e","f"][Int64(lo - UInt8(10))] })
     }
     "sha256:${out.toString()}"
+}
+
+private func teacherCollectDirectoryFiles(current: Path, relativeRoot: String, files: ArrayList<String>): Unit {
+    for (entry in Directory.readFrom(current)) {
+        let relative = if (relativeRoot.isEmpty()) { entry.name } else { "${relativeRoot}/${entry.name}" }
+        if (entry.isDirectory()) { teacherCollectDirectoryFiles(entry.path, relative, files) }
+        else if (entry.isRegular()) { files.add(relative) }
+    }
 }
 
 public func teacherSanitizeEvidence(value: String): String {

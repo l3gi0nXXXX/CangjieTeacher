@@ -32,6 +32,20 @@ public class TeacherRuntimeTest {
         "/tmp/cangjie-teacher-${name}-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
     }
 
+    @TestCase public func directoryHashSupportsUtf8PathsAndIsStable(): Unit {
+        let root = tempRoot("utf8-hash")
+        try {
+            Directory.create(Path("${root}/中文目录/emoji😀"), recursive: true)
+            File.writeTo(Path("${root}/中文目录/emoji😀/知识📚.cj"), "中文内容😀".toArray())
+            let first = teacherDirectoryHash(root)
+            let second = teacherDirectoryHash(root)
+            @Expect(first.startsWith("sha256:"), true)
+            @Expect(first, second)
+            File.writeTo(Path("${root}/中文目录/emoji😀/知识📚.cj"), "变更内容".toArray())
+            @Expect(teacherDirectoryHash(root) != first, true)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     // P0-POS-01 / P1-POS-01
     @TestCase public func cliAndFileManifestImport(): Unit {
         let root = tempRoot("manifest")
