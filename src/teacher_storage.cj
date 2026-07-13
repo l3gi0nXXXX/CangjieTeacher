@@ -4,6 +4,7 @@ import std.fs.*
 import std.collection.*
 
 public func teacherReadUtf8File(path: String): String {
+    if (!exists(Path(path))) { throw IllegalArgumentException("file_not_found") }
     try { String.fromUtf8(File.readFrom(Path(path))) } catch (_: Exception) {
         throw IllegalArgumentException("invalid_response_encoding")
     }

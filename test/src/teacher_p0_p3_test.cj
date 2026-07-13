@@ -39,6 +39,7 @@ public class TeacherRuntimeTest {
             File.writeTo(Path(path), text.toArray())
             let parsed = parseTeacherCliOptions(["manifest-check", "--manifest", path, "--checksum", teacherStableHash(teacherJoin(caseLines(), "\n"))])
             @Expect(parsed.command, "manifest-check")
+            @Expect(parseTeacherCliOptions(["--help"]).command, "help")
             @Expect(loadTeacherDatasetManifestFile(path, parsed.checksum).cases.size, 164)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }

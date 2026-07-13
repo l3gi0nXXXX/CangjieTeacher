@@ -25,6 +25,7 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
     let out = TeacherCliOptions()
     var i: Int64 = 0
     while (i < args.size) {
+        if (args[i] == "--help") { out.command = "help"; i += 1; continue }
         if (!args[i].startsWith("--") && out.command.isEmpty()) { out.command = args[i]; i += 1; continue }
         if (args[i] == "--local-only") { out.localOnly = true; i += 1; continue }
         if (i + 1 >= args.size) { throw IllegalArgumentException("missing_cli_option_value") }
@@ -101,6 +102,10 @@ public func validateTeacherExecutionPrivacy(repositoryRoot: String, artifactRoot
 public func cangjieTeacherCliMain(args: Array<String>): Int64 {
     try {
         let options = parseTeacherCliOptions(args)
+        if (options.command == "help" || options.command == "--help" || options.command.isEmpty()) {
+            println("usage: cangjie_teacher manifest-check|run --manifest <path> --checksum <sha256> [run options]")
+            return 0
+        }
         if (options.command == "manifest-check") {
             let manifest = loadTeacherDatasetManifestFile(options.manifest, options.checksum)
             println("manifest valid=true cases=${manifest.cases.size} datasetVersion=${manifest.datasetVersion}")
