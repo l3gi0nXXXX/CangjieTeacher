@@ -1,7 +1,8 @@
-package cangjie_teacher
+package cangjie_teacher_test
 
 import std.collection.*
 import std.unittest.testmacro.*
+import cangjie_teacher.*
 
 private func testCase(id!: String = "CJ-HUMANEVAL-000", version!: String = "dataset-v1"): TeacherCaseManifest {
     TeacherCaseManifest(id, version, "prompt-hash", "starter-hash", "func demo(x: Int64): Int64", "verifier-hash")
