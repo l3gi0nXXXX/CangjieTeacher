@@ -19,4 +19,3 @@ public func validateTeacherPathBoundary(root: String, candidate: String, caseId!
     if (!caseId.isEmpty() && candidate.contains("CJ-HUMANEVAL-") && !candidate.contains(caseId)) { return false }
     return true
 }
-

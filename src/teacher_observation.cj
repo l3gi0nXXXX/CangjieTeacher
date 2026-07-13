@@ -14,4 +14,3 @@ public func validateObservationNoSolutionLeak(observation: TeacherObservation): 
     if (observation.explanation.split("\n").size > 20 || observation.explanation.toRuneArray().size > 4000) { return false }
     return true
 }
-
