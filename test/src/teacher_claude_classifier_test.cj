@@ -19,6 +19,8 @@ private class ClassifierExecutor <: TeacherCommandExecutor {
 public class TeacherClaudeClassifierTest {
     private func root(name:String):String{"/tmp/teacher-claude-classifier-${name}-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"}
     private func request():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-007\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"缺少 Rune 知识😀\"}"}
+    private func absRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CASE-GENERIC-ABS\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"compile_error 中文😀\",\"studentSourceExcerpt\":\"main(): Unit { let value: Float64 = -3.5; println(value.abs()) }\",\"compilerTestSummary\":\"error: undeclared identifier 'abs' 中文😀\"}"}
+    private func prerequisiteRequest(summary:String):String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CASE-GENERIC-IMPORT\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"compile_error 中文😀\",\"studentSourceExcerpt\":\"main(): Unit { println(1) }\",\"compilerTestSummary\":\"${summary}\"}"}
     private func structured(category!:String="reasoning_failure",model!:String="GLM-5.2"):String{
         let body="{\"category\":\"${category}\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}"
         "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"${model}\"}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":${body}}\n"
@@ -26,6 +28,10 @@ public class TeacherClaudeClassifierTest {
     private func args(root:String):Array<String>{["--request","${root}/workspace/request.json","--output","${root}/workspace/response.json","--workspace","${root}/workspace","--runtime-home","${root}/runtime-home","--session-id","session-中文😀","--expected-provider","claude-code","--expected-model","GLM-5.2"]}
     private func prepare(name:String):(String,Array<String>){let r=root(name);Directory.create(Path("${r}/workspace"),recursive:true);Directory.create(Path("${r}/runtime-home"),recursive:true);File.writeTo(Path("${r}/workspace/request.json"),request().toArray());(r,args(r))}
     private func oversizedLine():String{var value="x";for(_ in 0..21){value+=value};value}
+    private func knowledgeStructured(text:String):String{
+        let body="{\"category\":\"knowledge_gap\",\"knowledgeFamily\":\"standard_library\",\"reusable\":true,\"sourceClass\":\"official\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"purificationPassed\":true,\"canonicalKnowledgeId\":\"GENERAL-ABS-API\",\"targetVersion\":\"1.0.0\",\"evidenceId\":\"sha256:evidence\",\"knowledgeText\":\"${text}\"}"
+        "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"GLM-5.2\"}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":${body}}\n"
+    }
 
     // P5-C-UT-02 + P5-C-POS-02: exact isolated Claude argv and a native init/result identity produce response v1.
     @TestCase public func exactClaudeContractAndUtf8Positive():Unit{
@@ -80,6 +86,45 @@ public class TeacherClaudeClassifierTest {
             @Expect(decodeClaudeClassifierStream(structured(model:"wrong-model"))[1],"observed_model_mismatch")
             let wrong=setup[1].clone();wrong[13]="GPT-5.6";@Expect(runClaudeClassifierAdapter(wrong,executor:ClassifierExecutor(TeacherProcessResult(0,structured()))).diagnostic,"expected_identity_not_allowed")
             @Expect(exists(Path("${r}/workspace/response.json")),false)
+        }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
+    }
+
+    // P5-C-UT-03/POS-03/NEG-03/BND-03: request-visible facts bound every prerequisite and abs API claim.
+    @TestCase public func groundedPrerequisitesAndAbsFactsFailClosed():Unit{
+        let setup=prepare("grounded-facts");let r=setup[0]
+        try{
+            File.writeTo(Path("${r}/workspace/request.json"),absRequest().toArray())
+            let correct=ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("Float64 receiver .abs() is unavailable; use the global documented abs(value) form.")))
+            let accepted=runClaudeClassifierAdapter(setup[1],executor:correct)
+            @Expect(accepted.ok,true);@Expect(accepted.diagnostic,"ok")
+            @Expect(correct.specs[0].args[1].contains("Never assert an import or dependency prerequisite unless"),true)
+            @Expect(correct.specs[0].args[1].contains("receiver .abs() is unavailable and use the global documented abs(value) form"),true)
+            remove(Path("${r}/workspace/response.json"))
+
+            let unsupported=ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("Float64 requires import std.math.* before global abs(value).")))
+            let rejected=runClaudeClassifierAdapter(setup[1],executor:unsupported)
+            @Expect(rejected.ok,false);@Expect(rejected.diagnostic,"classifier_response_source_fact_unsupported")
+            @Expect(exists(Path("${r}/workspace/response.json")),false)
+
+            let incomplete=ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("Use the documented Float64 API.")))
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:incomplete).diagnostic,"classifier_response_source_fact_unsupported")
+            let privatePath=knowledgeStructured("Use global abs(value); see /Users/private/秘密😀.")
+            @Expect(decodeClaudeClassifierStream(privatePath)[1],"response_contains_forbidden_data")
+
+            File.writeTo(Path("${r}/workspace/request.json"),prerequisiteRequest("root imports package 'std.unicode' but it is not declared as a dependency").toArray())
+            let supported=ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("The visible dependency diagnostic requires import std.unicode.*.")))
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:supported).diagnostic,"ok")
+            remove(Path("${r}/workspace/response.json"))
+            let wrongPackage=ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("The failure requires import std.math.*.")))
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:wrongPackage).diagnostic,"classifier_response_source_fact_unsupported")
+            File.writeTo(Path("${r}/workspace/request.json"),prerequisiteRequest("error: undeclared identifier 'demo'").toArray())
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:supported).diagnostic,"classifier_response_source_fact_unsupported")
+            File.writeTo(Path("${r}/workspace/request.json"),prerequisiteRequest("error after import std.unicode.* 中文😀").toArray())
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:supported).diagnostic,"classifier_response_source_fact_unsupported")
+            File.writeTo(Path("${r}/workspace/request.json"),prerequisiteRequest("source contains import std.unicode.* but another API failed").toArray())
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:supported).diagnostic,"classifier_response_source_fact_unsupported")
+            File.writeTo(Path("${r}/workspace/request.json"),prerequisiteRequest("cannot find package std.unicode 中文😀").toArray())
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:supported).diagnostic,"ok")
         }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
     }
 }

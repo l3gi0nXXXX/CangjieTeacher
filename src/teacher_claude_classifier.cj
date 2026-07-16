@@ -64,6 +64,8 @@ public func runClaudeClassifierAdapter(args: Array<String>,
         "Choose compile_error or unit_failure only when the evidence does not establish an allowed reusable knowledge gap and the cause is case-specific. " +
         "For knowledge_gap, knowledgeFamily must be exactly one of syntax, standard_library, stdx, toolchain, compiler_diagnostic, version_migration, engineering_practice; sourceClass must be exactly official; citation must be an HTTPS URL under https://docs.cangjie-lang.cn/ (use https://docs.cangjie-lang.cn/docs/1.0.0/ when no more specific official URL is supplied); targetVersion must be 1.0.0; evidenceId must bind resultEvidenceHash; canonicalKnowledgeId must be general and must not contain the case id. " +
         "Provide only general reusable knowledge; otherwise leave all knowledge fields empty and both booleans false. " +
+        "Never assert an import or dependency prerequisite unless the request's visible failureObservation or compilerTestSummary explicitly proves the same package and prerequisite. " +
+        claudeClassifierGroundingPrompt(request) +
         "Return one schema-valid object. Never infer or reveal hidden tests, reference answers, credentials, or local paths. Request:\n" + request
     let cli = executor.execute(TeacherCommandSpec("claude", ["-p", prompt, "--model", CLAUDE_CLASSIFIER_MODEL,
         "--json-schema", schema, "--output-format", "stream-json", "--verbose", "--no-session-persistence",
@@ -76,6 +78,7 @@ public func runClaudeClassifierAdapter(args: Array<String>,
     if (cli.output.toArray().size > CLAUDE_CLASSIFIER_MAX_BYTES) { result.diagnostic = "classifier_output_too_large"; return result }
     let decoded = decodeClaudeClassifierStream(cli.output)
     if (decoded[1] != "ok") { result.diagnostic = decoded[1]; return result }
+    if (!claudeClassifierResponseFactsValid(request, decoded[0])) { result.diagnostic = "classifier_response_source_fact_unsupported"; return result }
     try {
         _ = teacherAtomicWrite(options.output, decoded[0] + "\n")
         if (readClaudeClassifierUtf8(options.output) != decoded[0] + "\n") { result.diagnostic = "response_write_failed"; return result }
@@ -119,6 +122,71 @@ private func validClaudeClassifierRequest(raw: String): Bool {
             classifierString(o,"runMode")=="development" && classifierString(o,"resultEvidenceHash")!="" &&
             !claudeClassifierForbidden(raw)
     } catch (_: Exception) { false }
+}
+
+private func claudeClassifierGroundingPrompt(request:String):String{
+    try{
+        let o=JsonValue.fromStr(request).asObject();let source=classifierString(o,"studentSourceExcerpt").toAsciiLower()
+        let compiler=classifierString(o,"compilerTestSummary").toAsciiLower()
+        if(source.contains(".abs(")&&compiler.contains("undeclared identifier 'abs'")){
+            "For this visible receiver-style absolute-value failure, do not infer any package or import; if classifying a knowledge gap, state that receiver .abs() is unavailable and use the global documented abs(value) form. "
+        }else{""}
+    }catch(_:Exception){""}
+}
+
+private func claudeClassifierResponseFactsValid(requestText:String,responseText:String):Bool{
+    try{
+        let request=JsonValue.fromStr(requestText).asObject();let response=JsonValue.fromStr(responseText).asObject()
+        if(classifierString(response,"category").toAsciiLower()!="knowledge_gap"){return true}
+        let knowledge=classifierString(response,"knowledgeText").toAsciiLower()
+        let source=classifierString(request,"studentSourceExcerpt").toAsciiLower()
+        let compiler=classifierString(request,"compilerTestSummary").toAsciiLower()
+        if(source.contains(".abs(")&&compiler.contains("undeclared identifier 'abs'")){
+            let receiverUnavailable=knowledge.contains("receiver")&&knowledge.contains(".abs(")&&
+                (knowledge.contains("unavailable")||knowledge.contains("does not provide")||knowledge.contains("no member"))
+            let globalForm=knowledge.contains("global")&&knowledge.contains("abs(value)")
+            if(!receiverUnavailable||!globalForm||!claudeClassifierPackageTokens(knowledge).isEmpty()||claudeClassifierAssertsPrerequisite(knowledge)){return false}
+        }
+        if(!claudeClassifierAssertsPrerequisite(knowledge)){return true}
+        let evidence=(classifierString(request,"failureObservation")+" "+compiler).toAsciiLower()
+        if(!claudeClassifierMissingPrerequisiteEvidence(evidence)){return false}
+        for(packageName in claudeClassifierPackageTokens(knowledge)){if(!evidence.contains(packageName)){return false}}
+        true
+    }catch(_:Exception){false}
+}
+
+private func claudeClassifierMissingPrerequisiteEvidence(evidence:String):Bool{
+    evidence.contains("missing dependency")||evidence.contains("missing package")||evidence.contains("missing import")||
+        evidence.contains("not declared as a dependency")||evidence.contains("not added as a dependency")||
+        evidence.contains("cannot find package")||evidence.contains("cannot find module")||
+        evidence.contains("undeclared package")||evidence.contains("undeclared module")||
+        ((evidence.contains("package")||evidence.contains("module")||evidence.contains("dependency"))&&evidence.contains("not found"))
+}
+
+private func claudeClassifierAssertsPrerequisite(knowledge:String):Bool{
+    let denies=knowledge.contains("import is unnecessary")||knowledge.contains("import is not required")||
+        knowledge.contains("does not require import")||knowledge.contains("without importing")||
+        knowledge.contains("do not import")||knowledge.contains("must not import")||
+        knowledge.contains("dependency is unnecessary")||knowledge.contains("dependency is not required")
+    if(denies){return false}
+    knowledge.contains("must import")||knowledge.contains("requires import")||knowledge.contains("required to import")||
+        knowledge.contains("importing std.")||knowledge.contains("importing stdx.")||knowledge.contains("import std.")||
+        knowledge.contains("import stdx.")||knowledge.contains("add a dependency")||knowledge.contains("add the dependency")||
+        knowledge.contains("dependency prerequisite")||knowledge.contains("depends on std.")||knowledge.contains("depends on stdx.")
+}
+
+private func claudeClassifierPackageTokens(value:String):ArrayList<String>{
+    let out=ArrayList<String>();var current=StringBuilder()
+    for(c in value.toAsciiLower().toRuneArray()){
+        if((c>=r'a'&&c<=r'z')||(c>=r'0'&&c<=r'9')||c==r'_'||c==r'.'||c==r'*'){current.append(c)}
+        else{claudeClassifierAddPackageToken(out,current.toString());current=StringBuilder()}
+    };claudeClassifierAddPackageToken(out,current.toString());out
+}
+private func claudeClassifierAddPackageToken(out:ArrayList<String>,raw:String):Unit{
+    let runes=raw.toRuneArray();var end=runes.size
+    while(end>0&&(runes[end-1]==r'.'||runes[end-1]==r'*')){end-=1}
+    if(end==0){return};let token=String(runes[0..end])
+    if((token.startsWith("std.")||token.startsWith("stdx."))&&!out.contains(token)){out.add(token)}
 }
 
 // A Claude stream is provider evidence only when it contains the native system/init event;
@@ -166,7 +234,7 @@ private func renderClaudeClassifierResponse(o:JsonObject):String{
 }
 
 private func claudeClassifierJsonSchema():String{"{\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"category\":{\"type\":\"string\"},\"knowledgeFamily\":{\"type\":\"string\"},\"reusable\":{\"type\":\"boolean\"},\"sourceClass\":{\"type\":\"string\"},\"citation\":{\"type\":\"string\"},\"purificationPassed\":{\"type\":\"boolean\"},\"canonicalKnowledgeId\":{\"type\":\"string\"},\"targetVersion\":{\"type\":\"string\"},\"evidenceId\":{\"type\":\"string\"},\"knowledgeText\":{\"type\":\"string\"}},\"required\":[\"category\",\"knowledgeFamily\",\"reusable\",\"sourceClass\",\"citation\",\"purificationPassed\",\"canonicalKnowledgeId\",\"targetVersion\",\"evidenceId\",\"knowledgeText\"]}"}
-private func claudeClassifierForbidden(v:String):Bool{let x=v.toAsciiLower();x.contains("teacher-solutions")||x.contains("canonical_solution")||x.contains("hidden_test")||x.contains("hidden-test")||x.contains("/reference/")||x.contains("authorization:")||x.contains("password")||x.contains("api_key")||x.contains("token=")}
+private func claudeClassifierForbidden(v:String):Bool{let x=v.toAsciiLower();x.contains("teacher-solutions")||x.contains("canonical_solution")||x.contains("hidden_test")||x.contains("hidden-test")||x.contains("/reference/")||x.contains("/users/")||x.contains("/private/")||x.contains("authorization:")||x.contains("password")||x.contains("api_key")||x.contains("token=")}
 private func classifierString(o:JsonObject,k:String):String{match(o.get(k)){case Some(v)=>v.asString().getValue().trimAscii();case None=>""}}
 private func classifierInt(o:JsonObject,k:String):Int64{match(o.get(k)){case Some(v)=>v.asInt().getValue();case None=>0}}
 private func classifierBool(o:JsonObject,k:String):Bool{match(o.get(k)){case Some(v)=>v.asBool().getValue();case None=>false}}
