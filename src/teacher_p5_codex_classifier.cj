@@ -169,7 +169,13 @@ private func p5CodexSealResponse(raw: String): (String, String) {
 }
 
 private func p5CodexPrompt(request: String): String {
-    "Classify this first-attempt Cangjie evaluation failure. Use only the supplied request; do not access files, tools, hidden tests, reference solutions, Teacher solutions, or external data. Return exactly one JSON object matching the output schema. Categories: knowledge_gap, retrieval_failure, reasoning_failure, compile_error, unit_failure, dataset_failure, runner_failure, environment_failure, tool_error, timeout, protocol_violation. All ten fields are required. For knowledge_gap, provide only reusable general knowledge with official or approved-trusted citation. For every other category, set every knowledge string to an empty string and both reusable and purificationPassed to false. Request:\n${request}"
+    "Classify the root cause of this first-attempt Cangjie evaluation failure, not merely its surface compiler or test outcome. " +
+    "Use only the supplied request; do not access files, tools, hidden tests, reference solutions, Teacher solutions, or external data. " +
+    "Return exactly one JSON object matching the output schema. Categories: knowledge_gap, retrieval_failure, reasoning_failure, compile_error, unit_failure, dataset_failure, runner_failure, environment_failure, tool_error, timeout, protocol_violation. " +
+    "When the supplied evidence itself proves that the failure came from missing or misapplied reusable Cangjie syntax, standard-library, stdx, toolchain, diagnostic, version-migration, or engineering knowledge, choose knowledge_gap even when the observed surface is compile_error or unit_failure. " +
+    "Choose compile_error or unit_failure only when the evidence does not establish an allowed reusable knowledge gap and the cause is case-specific. " +
+    "All ten fields are required. For knowledge_gap, provide only reusable general knowledge with official or approved-trusted citation. " +
+    "For every other category, set every knowledge string to an empty string and both reusable and purificationPassed to false. Request:\n${request}"
 }
 
 private func p5CodexOutputSchema(): String {

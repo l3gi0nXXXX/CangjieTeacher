@@ -34,6 +34,8 @@ public class TeacherClaudeClassifierTest {
             let executor=ClassifierExecutor(TeacherProcessResult(0,structured()));let result=runClaudeClassifierAdapter(setup[1],executor:executor)
             @Expect(result.ok,true);@Expect(result.diagnostic,"ok");@Expect(executor.specs.size,1)
             let spec=executor.specs[0];@Expect(spec.executable,"claude");@Expect(spec.args.contains("-p"),true);@Expect(spec.args.contains("--json-schema"),true)
+            @Expect(spec.args[1].contains("root cause"),true);@Expect(spec.args[1].contains("even when failureObservation is compile_error or unit_failure"),true)
+            @Expect(spec.args[1].contains("case-specific"),true)
             @Expect(spec.args.contains("stream-json"),true);@Expect(spec.args.contains("--no-session-persistence"),true);@Expect(spec.args.contains("--bare"),true)
             @Expect(spec.args.contains("--strict-mcp-config"),true);@Expect(spec.args.contains("--tools"),true);@Expect(spec.args.contains("GLM-5.2"),true)
             @Expect(spec.args.contains("{\"mcpServers\":{}}"),true);@Expect(spec.args.contains("{}"),false)

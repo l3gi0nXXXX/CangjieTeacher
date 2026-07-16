@@ -59,8 +59,11 @@ public func runClaudeClassifierAdapter(args: Array<String>,
     if (request.toArray().size > CLAUDE_CLASSIFIER_MAX_BYTES) { result.diagnostic = "request_too_large"; return result }
     if (!validClaudeClassifierRequest(request)) { result.diagnostic = "request_contract_invalid"; return result }
     let schema = claudeClassifierJsonSchema()
-    let prompt = "Classify this Cangjie benchmark failure using only the supplied JSON. Return one schema-valid object. " +
-        "Never infer or reveal hidden tests, reference answers, credentials, or local paths. Request:\n" + request
+    let prompt = "Classify the root cause of this Cangjie benchmark failure using only the supplied JSON; do not merely repeat its surface compiler or test outcome. " +
+        "When the supplied evidence itself proves missing or misapplied reusable Cangjie syntax, standard-library, stdx, toolchain, diagnostic, version-migration, or engineering knowledge, choose knowledge_gap even when failureObservation is compile_error or unit_failure. " +
+        "Choose compile_error or unit_failure only when the evidence does not establish an allowed reusable knowledge gap and the cause is case-specific. " +
+        "For knowledge_gap provide only general reusable knowledge backed by an official Cangjie documentation citation; otherwise leave all knowledge fields empty and both booleans false. " +
+        "Return one schema-valid object. Never infer or reveal hidden tests, reference answers, credentials, or local paths. Request:\n" + request
     let cli = executor.execute(TeacherCommandSpec("claude", ["-p", prompt, "--model", CLAUDE_CLASSIFIER_MODEL,
         "--json-schema", schema, "--output-format", "stream-json", "--verbose", "--no-session-persistence",
         "--bare", "--disable-slash-commands", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--tools", ""],

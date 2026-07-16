@@ -40,6 +40,9 @@ public class TeacherP5CodexClassifierTest {
         @Expect(spec.args.contains("--sandbox"), true); @Expect(spec.args.contains("read-only"), true)
         @Expect(spec.args.contains("--ephemeral"), true); @Expect(spec.args.contains("--ignore-user-config"), true); @Expect(spec.args.contains("--ignore-rules"), true)
         @Expect(spec.args.contains("--output-schema"), true); @Expect(spec.args.contains("--output-last-message"), true)
+        @Expect(spec.args[spec.args.size - 1].contains("root cause"), true)
+        @Expect(spec.args[spec.args.size - 1].contains("even when the observed surface is compile_error or unit_failure"), true)
+        @Expect(spec.args[spec.args.size - 1].contains("case-specific"), true)
         var homeOverridden=false;var sessionBound=false
         for(entry in spec.env){if(entry[0]=="CODEX_HOME"){homeOverridden=true};if(entry[0]=="CANGJIE_TEACHER_SESSION"&&entry[1]=="session-ut"){sessionBound=true}}
         @Expect(homeOverridden,false);@Expect(sessionBound,true)
