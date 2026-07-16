@@ -19,17 +19,22 @@ public class TeacherCliOptions {
     public var localOnly = false
     public var repositoryRoot = ""
     public var caseId = ""
+    public var authorityGap = ""
+    public var outputRoot = ""
     public init() {}
 }
 
 public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
     let out = TeacherCliOptions()
+    let seen = HashSet<String>()
     var i: Int64 = 0
     while (i < args.size) {
         if (args[i] == "--help") { out.command = "help"; i += 1; continue }
         if (!args[i].startsWith("--") && out.command.isEmpty()) { out.command = args[i]; i += 1; continue }
-        if (args[i] == "--local-only") { out.localOnly = true; i += 1; continue }
+        if (args[i] == "--local-only") { if (seen.contains(args[i])) { throw IllegalArgumentException("duplicate_cli_option") }; seen.add(args[i]); out.localOnly = true; i += 1; continue }
         if (i + 1 >= args.size) { throw IllegalArgumentException("missing_cli_option_value") }
+        if (seen.contains(args[i])) { throw IllegalArgumentException("duplicate_cli_option") }
+        seen.add(args[i])
         let value = args[i + 1]
         match (args[i]) {
             case "--root" => out.root = value
@@ -43,6 +48,8 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
             case "--repo-root" => out.repositoryRoot = value
             case "--case-id" => out.caseId = value
             case "--timeout-ms" => out.timeoutMillis = try { Int64.parse(value) } catch (_: Exception) { throw IllegalArgumentException("invalid_timeout") }
+            case "--authority-gap" => out.authorityGap = value
+            case "--output-root" => out.outputRoot = value
             case _ => throw IllegalArgumentException("unknown_cli_option")
         }
         i += 2
@@ -112,7 +119,7 @@ public func cangjieTeacherCliMain(args: Array<String>): Int64 {
     try {
         let options = parseTeacherCliOptions(args)
         if (options.command == "help" || options.command == "--help" || options.command.isEmpty()) {
-            println("usage: cangjie_teacher manifest-check|run --manifest <path> --checksum <sha256> [run options]")
+            println(teacherCliUsage())
             return 0
         }
         if (options.command == "manifest-check") {
@@ -132,10 +139,17 @@ public func cangjieTeacherCliMain(args: Array<String>): Int64 {
             println("teacher runId=${options.runId} total=${runs.size} complete=${complete}")
             return if (complete == runs.size) { 0 } else { 1 }
         }
-        println("usage: cangjie_teacher manifest-check|run --manifest <path> --checksum <sha256> [run options]")
+        if (options.command == "candidate-build") {
+            return runTeacherCandidateBuild(options)
+        }
+        println(teacherCliUsage())
         2
     } catch (e: Exception) {
         println("teacher failed diagnostic=${e.message}")
         1
     }
+}
+
+private func teacherCliUsage(): String {
+    "usage: cangjie_teacher manifest-check --manifest <path> --checksum <sha256> | hash-directory --starter-root <path> | run --root <private-root> --manifest <path> --checksum <sha256> --starter-root <path> --tests-root <path> --run-id <id> --repo-root <path> --local-only [--case-id <id>] [--codex <path>] [--model <id>] [--timeout-ms <ms>] | candidate-build --root <private-root> --manifest <path> --checksum <sha256> --authority-gap <path> --run-id <id> --output-root <path>"
 }

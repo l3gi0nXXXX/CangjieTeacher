@@ -310,4 +310,54 @@ public class TeacherP0P3Test {
         let leaked = TeacherCandidateExport("id", "language", "concept", "1.0.0", leakedText, "example", "official", "official", "hash", buildKnowledgeAtomTestBundle("p", "n", "b"))
         @Expect(auditCandidateAgainstSolutions(leaked, [leakedText]).passed, false)
     }
+
+    // P3/P4 candidate control UT/BND/POS/NEG/fake-E2E
+    @TestCase public func candidateControlExecutesAllThreeTestCategories(): Unit {
+        let bundle = "{\"tests\":[{\"category\":\"positive\",\"operation\":\"contains\",\"input\":\"中文😀 Rune\",\"needle\":\"Rune\",\"expected\":\"true\"},{\"category\":\"negative\",\"operation\":\"contains\",\"input\":\"safe\",\"needle\":\"answer\",\"expected\":\"false\"},{\"category\":\"boundary\",\"operation\":\"rune_count\",\"input\":\"😀\",\"expected\":\"1\"}]}"
+        @Expect(executeTeacherAtomTestBundle(bundle)[0], true)
+        @Expect(executeTeacherAtomTestBundle(bundle.replace("\"expected\":\"1\"", "\"expected\":\"2\""))[1], "atom_test_failed")
+        @Expect(executeTeacherAtomTestBundle("not-json")[1], "malformed_atom_test_bundle")
+    }
+
+    @TestCase public func candidateControlFakeEndToEndAndBoundaries(): Unit {
+        let root = "/tmp/teacher-candidate-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            Directory.create(Path(root), recursive: true)
+            let manifest = teacherJoin(caseLines(), "\n") + "\n"
+            File.writeTo(Path("${root}/manifest.jsonl"), manifest.toArray())
+            Directory.create(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src"), recursive: true)
+            File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"), "private opaque implementation 987654".toArray())
+            let run = TeacherRunManifest("teacher-r1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6", "prompt-hash", 1, "complete", 0, "evidence")
+            _ = persistCompletedTeacherRuns("${root}/runs/teacher-r1/completed.manifest", [run])
+            let evidence = "case=confirmed|taxonomy=knowledge_gap|independent=sha256:abc"
+            let gap = "{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"dataset-v1\",\"teacherRunId\":\"development-r1\",\"evidenceHash\":\"sha256:${teacherStableHash(evidence)}\",\"evidence\":\"${evidence}\",\"failureTaxonomy\":\"knowledge_gap\",\"knowledgeGapConfirmations\":2,\"caseId\":\"CJ-HUMANEVAL-000\",\"benchmark\":\"Cangjie-HumanEval\",\"taskText\":\"authority bound task\",\"visibleTestExcerpt\":\"\",\"compilerOutput\":\"knowledge gap\",\"missingKnowledge\":\"G-STRING\",\"interfaceId\":\"KI-02\",\"contentFamily\":\"KC-02\",\"updateMechanism\":\"KU-11\",\"targetVersion\":\"1.0.0\",\"officialCitation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\"}\n"
+            File.writeTo(Path("${root}/gap.jsonl"), gap.toArray())
+            let options = TeacherCliOptions(); options.command="candidate-build"; options.root=root; options.manifest="${root}/manifest.jsonl"
+            options.checksum=teacherStableHash(teacherJoin(caseLines(), "\n"));options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.outputRoot="${root}/exports/r1"
+            let result = buildTeacherCandidates(options)
+            @Expect(result.ok, true); @Expect(result.accepted, 1)
+            @Expect(exists(Path("${root}/exports/r1/observations.tsv")), true)
+            @Expect(exists(Path("${root}/exports/r1/atom-tests.jsonl")), true)
+            @Expect(exists(Path("${root}/exports/r1/candidate-knowledge.tsv")), true)
+            let ckb = teacherReadUtf8File("${root}/exports/r1/candidate-knowledge/ckb-benchmark-gap.jsonl")
+            @Expect(ckb.contains("\"schemaVersion\":\"ckb-benchmark-gap-v1\""), true)
+            @Expect(ckb.contains("\"knowledgeAtomCandidate\":true"), true)
+            @Expect(ckb.contains("\"candidateHash\":\"sha256:"), true)
+            @Expect(teacherReadUtf8File("${root}/exports/r1/candidate-knowledge.tsv").toAsciiLower().contains("cj-humaneval-"), false)
+            options.outputRoot="${root}/ckb-data/production"
+            @Expect(buildTeacherCandidates(options).diagnostic, "output_path_forbidden")
+            options.outputRoot="${root}/exports/../escape"
+            @Expect(buildTeacherCandidates(options).diagnostic, "output_path_forbidden")
+            File.writeTo(Path("${root}/bad-gap.jsonl"), [UInt8(0xff), UInt8(0xfe)])
+            options.authorityGap="${root}/bad-gap.jsonl"; options.outputRoot="${root}/exports/bad-encoding"
+            @Expect(buildTeacherCandidates(options).diagnostic, "invalid_response_encoding")
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    @TestCase public func candidateControlFailsClosedForCliAndCorruptEvidence(): Unit {
+        var unknown=false;try{_=parseTeacherCliOptions(["candidate-build","--unknown","x"])}catch(e:Exception){unknown=e.message=="unknown_cli_option"};@Expect(unknown,true)
+        var duplicate=false;try{_=parseTeacherCliOptions(["candidate-build","--root","a","--root","b"])}catch(e:Exception){duplicate=e.message=="duplicate_cli_option"};@Expect(duplicate,true)
+        let options=TeacherCliOptions();options.command="candidate-build"
+        @Expect(buildTeacherCandidates(options).diagnostic,"missing_required_cli_option")
+    }
 }

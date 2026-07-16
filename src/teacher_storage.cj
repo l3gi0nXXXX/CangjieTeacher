@@ -16,9 +16,14 @@ public func teacherReadUtf8File(path: String): String {
 public func teacherAtomicWrite(path: String, content: String): String {
     let target = Path(path)
     if (!exists(target.parent)) { Directory.create(target.parent, recursive: true) }
-    let tmp = Path(path + ".tmp")
-    File.writeTo(tmp, content.toArray())
-    rename(tmp, to: target, overwrite: true)
+    let tmp = Path(path + ".tmp-" + teacherStableHash(path + content))
+    try {
+        File.writeTo(tmp, content.toArray())
+        rename(tmp, to: target, overwrite: true)
+    } catch (e: Exception) {
+        try { remove(tmp) } catch (_: Exception) {}
+        throw e
+    }
     teacherStableHash(content)
 }
 
