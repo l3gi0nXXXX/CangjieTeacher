@@ -13,15 +13,13 @@ private func p3CkbString(object: JsonObject, key: String): String {
 
 private func p3CkbPart(value: String): String { "${value.size}:${value}" }
 
-private func p3CkbCandidateHash(raw: String): String {
-    let object = JsonValue.fromStr(raw.trimAscii()).asObject()
+private func p3CkbCandidateHashFor(object:JsonObject,bundle:String,evidence:String,evidenceHash:String):String{
     let benchmark = p3CkbString(object, "benchmark").trimAscii().toAsciiLower()
     let dataset = p3CkbString(object, "datasetVersion").trimAscii().toAsciiLower()
     let caseId = p3CkbString(object, "caseId").trimAscii().toAsciiLower()
     let gap = p3CkbString(object, "missingKnowledge").trimAscii().toAsciiUpper()
     let target = p3CkbString(object, "targetVersion").trimAscii().toAsciiLower()
     let identity = "${benchmark}:${dataset}:${caseId}:${gap}:${target}"
-    let bundle = object.get("knowledgeAtomTestBundle").getOrThrow().toString()
     let canonical = p3CkbPart(identity) + p3CkbPart(p3CkbString(object, "taskText")) +
         p3CkbPart(p3CkbString(object, "visibleTestExcerpt")) + p3CkbPart(p3CkbString(object, "compilerOutput")) +
         p3CkbPart(gap) + p3CkbPart(p3CkbString(object, "interfaceId").trimAscii()) +
@@ -30,11 +28,54 @@ private func p3CkbCandidateHash(raw: String): String {
         p3CkbPart(p3CkbString(object, "targetVersion").trimAscii()) +
         p3CkbPart(p3CkbString(object, "officialCitation").trimAscii()) + p3CkbPart(bundle) +
         p3CkbPart("${object.get("knowledgeAtomCandidate").getOrThrow().asBool().getValue()}") +
-        p3CkbPart(p3CkbString(object, "teacherRunId")) + p3CkbPart(p3CkbString(object, "evidenceHash")) +
-        p3CkbPart(p3CkbString(object, "evidence")) + p3CkbPart(p3CkbString(object, "candidatePath")) +
+        p3CkbPart(p3CkbString(object, "teacherRunId")) + p3CkbPart(evidenceHash) +
+        p3CkbPart(evidence) + p3CkbPart(p3CkbString(object, "candidatePath")) +
         p3CkbPart(object.get("revision").getOrThrow().toString()) + p3CkbPart(object.get("attempt").getOrThrow().toString()) +
         p3CkbPart(p3CkbString(object, "failureTaxonomy")) + p3CkbPart(object.get("knowledgeGapConfirmations").getOrThrow().toString())
     "sha256:${teacherStableHash(canonical)}"
+}
+
+private func p3CkbCandidateHash(raw: String): String {
+    let object=JsonValue.fromStr(raw.trimAscii()).asObject()
+    p3CkbCandidateHashFor(object,object.get("knowledgeAtomTestBundle").getOrThrow().toString(),p3CkbString(object,"evidence"),p3CkbString(object,"evidenceHash"))
+}
+
+private func makeLegacyRawCkb(source:String):Unit{
+    let path="${source}/candidate-knowledge/ckb-benchmark-gap.jsonl";let current=teacherReadUtf8File(path).trimAscii();let object=JsonValue.fromStr(current).asObject()
+    let rawBundle=teacherReadUtf8File("${source}/atom-tests.jsonl").trimAscii();let canonicalBundle=object.get("knowledgeAtomTestBundle").getOrThrow().toString()
+    let currentEvidence=p3CkbString(object,"evidence");let baseEvidence=currentEvidence.split("|teacherAtomHash=")[0]
+    let extractor=JsonValue.fromStr(rawBundle).asObject().get("extractor").getOrThrow().asObject();let transcript=p3CkbString(extractor,"transcriptHash")
+    let legacyEvidence="${baseEvidence}|teacherAtomHash=sha256:${teacherStableHash(rawBundle)}|extractorTranscriptHash=${transcript}"
+    let legacyEvidenceHash="sha256:${teacherStableHash(legacyEvidence)}";let legacyHash=p3CkbCandidateHashFor(object,rawBundle,legacyEvidence,legacyEvidenceHash)
+    let legacy=current.replace("\"knowledgeAtomTestBundle\":${canonicalBundle}","\"knowledgeAtomTestBundle\":${rawBundle}")
+        .replace("\"evidence\":\"${currentEvidence}\"","\"evidence\":\"${legacyEvidence}\"")
+        .replace("\"evidenceHash\":\"${p3CkbString(object,"evidenceHash")}\"","\"evidenceHash\":\"${legacyEvidenceHash}\"")
+        .replace("\"candidateHash\":\"${p3CkbString(object,"candidateHash")}\"","\"candidateHash\":\"${legacyHash}\"")
+    File.writeTo(Path(path),(legacy+"\n").toArray())
+}
+
+private func buildCandidateFixture(root:String,name:String):String{
+    Directory.create(Path(root),recursive:true)
+    File.writeTo(Path("${root}/manifest.jsonl"),(teacherJoin(caseLines(),"\n")+"\n").toArray())
+    Directory.create(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src"),recursive:true)
+    File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"),"private opaque implementation 987654".toArray())
+    let run=TeacherRunManifest("teacher-r1","CJ-HUMANEVAL-000","dataset-v1","gpt-5.6-sol","prompt-hash",2,"complete",0,"evidence-中文😀")
+    _=persistCompletedTeacherRuns("${root}/runs/teacher-r1/completed.manifest",[run]);_=persistTeacherRunArtifacts(root,run,"generation","verification");_=persistTeacherSolutionBinding(root,run)
+    let evidence="case=confirmed|taxonomy=knowledge_gap|independent=sha256:abc"
+    let gap="{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"dataset-v1\",\"teacherRunId\":\"teacher-r1\",\"evidenceHash\":\"sha256:${teacherStableHash(evidence)}\",\"evidence\":\"${evidence}\",\"failureTaxonomy\":\"knowledge_gap\",\"knowledgeGapConfirmations\":2,\"caseId\":\"CJ-HUMANEVAL-000\",\"benchmark\":\"Cangjie-HumanEval\",\"taskText\":\"authority bound task\",\"visibleTestExcerpt\":\"\",\"compilerOutput\":\"knowledge gap\",\"missingKnowledge\":\"G-STRING\",\"interfaceId\":\"KI-02\",\"contentFamily\":\"KC-02\",\"updateMechanism\":\"KU-11\",\"targetVersion\":\"1.0.0\",\"officialCitation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\"}\n"
+    File.writeTo(Path("${root}/gap.jsonl"),gap.toArray())
+    let options=TeacherCliOptions();options.command="candidate-build";options.root=root;options.manifest="${root}/manifest.jsonl";options.checksum=teacherStableHash(teacherJoin(caseLines(),"\n"));options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.outputRoot="${root}/exports/${name}";options.model="gpt-5.6-sol"
+    let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 String Rune iteration\",\"explanation\":\"Use String Rune iteration for Unicode character boundaries.\",\"example\":\"Declare text.runes(); compare with &&, <, > for 中文😀.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let text: String = \\\"ok\\\" }\",\"negativeSource\":\"main() { let text: String = unknownName }\",\"boundarySource\":\"main() { let text: String = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\",\"positiveDependencyProfile\":\"none\",\"negativeDependencyProfile\":\"none\",\"boundaryDependencyProfile\":\"none\"}"
+    let built=buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(0,extractorJson)]),atomExecutor:AtomRepairExecutor())
+    if(!built.ok){throw IllegalStateException(built.diagnostic)}
+    options.outputRoot
+}
+
+private func reexportOptions(root:String,source:String,name:String):TeacherCliOptions{
+    let options=TeacherCliOptions();options.command="candidate-reexport";options.root=root
+    options.manifest="${root}/manifest.jsonl";options.checksum=teacherStableHash(teacherJoin(caseLines(),"\n"))
+    options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.sourceExport=source;options.outputRoot="${root}/exports/${name}"
+    options
 }
 
 private func testCase(id!: String = "CJ-HUMANEVAL-000", version!: String = "dataset-v1"): TeacherCaseManifest {
@@ -958,6 +999,98 @@ public class TeacherP0P3Test {
         let leaked="{\"atomId\":\"GENERAL\",\"example\":\"/Users/private/token=secret 中文😀\"}"
         let blocked=canonicalizeTeacherCkbKnowledgeAtomBundle(leaked.toArray())
         @Expect(blocked[1],"atom_content_contamination");@Expect(blocked[0],"")
+    }
+
+    @TestCase public func candidateReexportReplaysTrustedBundleWithoutModelAndPublishesAtomically():Unit{
+        let root="/tmp/teacher-reexport-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            let source=buildCandidateFixture(root,"source")
+            let options=TeacherCliOptions();options.command="candidate-reexport";options.root=root
+            options.manifest="${root}/manifest.jsonl";options.checksum=teacherStableHash(teacherJoin(caseLines(),"\n"))
+            options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.sourceExport=source
+            options.outputRoot="${root}/exports/reexported"
+            let replay=RecordingExecutor(results:[TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(1,"undefined"),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,"")])
+            let result=reexportTeacherCandidateBundle(options,atomExecutor:replay)
+            @Expect(result.ok,true);@Expect(result.accepted,1);@Expect(result.diagnostic,"ok")
+            @Expect(replay.specs.size,8)
+            for(spec in replay.specs){@Expect(spec.executable,"cjpm")}
+            let sourceBundle=teacherReadUtf8File("${source}/atom-tests.jsonl").trimAscii()
+            let outputBundle=teacherReadUtf8File("${options.outputRoot}/atom-tests.jsonl").trimAscii()
+            let sourceObject=JsonValue.fromStr(sourceBundle).asObject();let outputObject=JsonValue.fromStr(outputBundle).asObject()
+            @Expect(outputObject.get("atomId").getOrThrow().toString(),sourceObject.get("atomId").getOrThrow().toString())
+            @Expect(outputObject.get("tests").getOrThrow().toString(),sourceObject.get("tests").getOrThrow().toString())
+            @Expect(outputObject.get("execution").getOrThrow().toString()!=sourceObject.get("execution").getOrThrow().toString(),true)
+            let outputCkb=teacherReadUtf8File("${options.outputRoot}/candidate-knowledge/ckb-benchmark-gap.jsonl").trimAscii()
+            @Expect(p3CkbString(JsonValue.fromStr(outputCkb).asObject(),"candidateHash"),p3CkbCandidateHash(outputCkb))
+            @Expect(outputCkb.contains("\\u0026\\u0026"),true)
+        } finally { try{remove(Path(root),recursive:true)}catch(_:Exception){} }
+    }
+
+    @TestCase public func candidateReexportAcceptsLegacyRawOuterHashAndEmitsCanonicalCkbHash():Unit{
+        let root="/tmp/teacher-reexport-legacy-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            let source=buildCandidateFixture(root,"legacy-source");makeLegacyRawCkb(source)
+            let legacy=teacherReadUtf8File("${source}/candidate-knowledge/ckb-benchmark-gap.jsonl").trimAscii()
+            @Expect(p3CkbString(JsonValue.fromStr(legacy).asObject(),"candidateHash")!=p3CkbCandidateHash(legacy),true)
+            let options=reexportOptions(root,source,"canonical-output")
+            let replay=RecordingExecutor(results:[TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(1,"undefined"),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,"")])
+            let result=reexportTeacherCandidateBundle(options,atomExecutor:replay);@Expect(result.ok,true)
+            let canonical=teacherReadUtf8File("${options.outputRoot}/candidate-knowledge/ckb-benchmark-gap.jsonl").trimAscii()
+            @Expect(p3CkbString(JsonValue.fromStr(canonical).asObject(),"candidateHash"),p3CkbCandidateHash(canonical))
+            @Expect(canonical.contains("\\u0026\\u0026"),true)
+        } finally { try{remove(Path(root),recursive:true)}catch(_:Exception){} }
+    }
+
+    @TestCase public func candidateReexportFailsClosedForMissingCorruptAndUnsafeSource():Unit{
+        let root="/tmp/teacher-reexport-negative-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            let source=buildCandidateFixture(root,"source")
+            let options=TeacherCliOptions();options.command="candidate-reexport";options.root=root
+            options.manifest="${root}/manifest.jsonl";options.checksum=teacherStableHash(teacherJoin(caseLines(),"\n"))
+            options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.sourceExport=source
+            options.outputRoot="${root}/exports/reexported"
+            remove(Path("${source}/atoms.tsv"))
+            @Expect(reexportTeacherCandidateBundle(options).diagnostic,"source_export_missing_file")
+            @Expect(exists(Path(options.outputRoot)),false)
+            @Expect(exists(Path(options.outputRoot+".tmp")),false)
+            options.sourceExport="${root}/../outside"
+            @Expect(reexportTeacherCandidateBundle(options).diagnostic,"source_export_path_forbidden")
+            @Expect(parseTeacherCliOptions(["candidate-reexport","--source-export",source,"--output-root",options.outputRoot]).sourceExport,source)
+        } finally { try{remove(Path(root),recursive:true)}catch(_:Exception){} }
+    }
+
+    @TestCase public func candidateReexportRejectsUtf8SizeRowsAndContractTampering():Unit{
+        let base="/tmp/teacher-reexport-tamper-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            let utf8Root="${base}/utf8";let utf8Source=buildCandidateFixture(utf8Root,"source");let utf8Options=reexportOptions(utf8Root,utf8Source,"output")
+            File.writeTo(Path("${utf8Source}/atoms.tsv"),[UInt8(0xff),UInt8(0xfe)])
+            @Expect(reexportTeacherCandidateBundle(utf8Options).diagnostic,"invalid_response_encoding");@Expect(exists(Path(utf8Options.outputRoot)),false)
+
+            let sizeRoot="${base}/size";let sizeSource=buildCandidateFixture(sizeRoot,"source");let sizeOptions=reexportOptions(sizeRoot,sizeSource,"output")
+            File.writeTo(Path("${sizeSource}/atoms.tsv"),Array<UInt8>(262145,repeat:UInt8(65)))
+            @Expect(reexportTeacherCandidateBundle(sizeOptions).diagnostic,"source_export_too_large");@Expect(exists(Path(sizeOptions.outputRoot)),false)
+
+            let rowsRoot="${base}/rows";let rowsSource=buildCandidateFixture(rowsRoot,"source");let rowsOptions=reexportOptions(rowsRoot,rowsSource,"output")
+            let observation=teacherReadUtf8File("${rowsSource}/observations.tsv").trimAscii();File.writeTo(Path("${rowsSource}/observations.tsv"),"${observation}\n${observation}\n".toArray())
+            @Expect(reexportTeacherCandidateBundle(rowsOptions).diagnostic,"source_export_record_count_invalid");@Expect(exists(Path(rowsOptions.outputRoot)),false)
+
+            let purifyRoot="${base}/purify";let purifySource=buildCandidateFixture(purifyRoot,"source");let purifyOptions=reexportOptions(purifyRoot,purifySource,"output")
+            let bundlePath="${purifySource}/atom-tests.jsonl";let unpurified=teacherReadUtf8File(bundlePath).replace("\"purificationPassed\":true","\"purificationPassed\":false")
+            File.writeTo(Path(bundlePath),unpurified.toArray())
+            @Expect(reexportTeacherCandidateBundle(purifyOptions).diagnostic,"atom_purification_required");@Expect(exists(Path(purifyOptions.outputRoot)),false)
+
+            let executeRoot="${base}/execute";let executeSource=buildCandidateFixture(executeRoot,"source");let executeOptions=reexportOptions(executeRoot,executeSource,"output")
+            let executePath="${executeSource}/atom-tests.jsonl";let failed=teacherReadUtf8File(executePath).replace("\"passed\":3","\"passed\":2")
+            File.writeTo(Path(executePath),failed.toArray())
+            @Expect(reexportTeacherCandidateBundle(executeOptions).diagnostic,"atom_execution_invalid");@Expect(exists(Path(executeOptions.outputRoot)),false)
+
+            let hashRoot="${base}/hash";let hashSource=buildCandidateFixture(hashRoot,"source");let hashOptions=reexportOptions(hashRoot,hashSource,"output")
+            let ckbPath="${hashSource}/candidate-knowledge/ckb-benchmark-gap.jsonl";let originalCkb=teacherReadUtf8File(ckbPath)
+            let declared=p3CkbString(JsonValue.fromStr(originalCkb.trimAscii()).asObject(),"candidateHash")
+            let badHash=originalCkb.replace("\"candidateHash\":\"${declared}\"","\"candidateHash\":\"sha256:bad\"")
+            File.writeTo(Path(ckbPath),badHash.toArray())
+            @Expect(reexportTeacherCandidateBundle(hashOptions).diagnostic,"source_gap_candidate_hash_mismatch");@Expect(exists(Path(hashOptions.outputRoot)),false)
+        } finally { try{remove(Path(base),recursive:true)}catch(_:Exception){} }
     }
 
     @TestCase public func candidateAtomRunsInRealLocalCangjieWorkspaces():Unit {
