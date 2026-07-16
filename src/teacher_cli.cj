@@ -75,6 +75,7 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
         options.starterRoot.isEmpty() || options.testsRoot.isEmpty() || options.runId.isEmpty()) {
         throw IllegalArgumentException("missing_required_cli_option")
     }
+    if (options.model != "gpt-5.6-sol") { throw IllegalArgumentException("teacher_model_identity_invalid") }
     if (!validateTeacherExecutionPrivacy(options.repositoryRoot, options.root, options.localOnly)) {
         throw IllegalArgumentException("teacher_remote_not_private")
     }
@@ -83,7 +84,8 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
     let completed = loadCompletedTeacherRuns(completedPath)
     let process = CodexTeacherProcess(options.codex, options.model, timeoutMillis: options.timeoutMillis)
     let verifier = CjpmTeacherVerifier(options.testsRoot, timeoutMillis: options.timeoutMillis)
-    let runOptions = TeacherRunOptions(options.runId, options.root, options.model, process, verifier, SystemTeacherClock())
+    let runOptions = TeacherRunOptions(options.runId, options.root, options.model, process, verifier, SystemTeacherClock(),
+        repairUntilVerified: true)
     let out = ArrayList<TeacherRunManifest>()
     for (caseValue in manifest.cases) {
         if (!options.caseId.isEmpty() && caseValue.caseId != options.caseId) { continue }

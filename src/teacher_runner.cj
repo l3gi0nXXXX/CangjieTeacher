@@ -17,7 +17,8 @@ public class TeacherCaseExecution {
     }
 }
 public interface TeacherProcess {
-    func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String): TeacherProcessResult
+    func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String,
+        verifierFeedback: String): TeacherProcessResult
 }
 public interface TeacherVerifier { func verify(caseValue: TeacherCaseManifest, solutionRoot: String): TeacherProcessResult }
 public interface TeacherClock { func nowMillis(): Int64 }
@@ -29,8 +30,11 @@ public class TeacherRunOptions {
     public let process: TeacherProcess
     public let verifier: TeacherVerifier
     public let clock: TeacherClock
-    public init(runId: String, root: String, modelId: String, process: TeacherProcess, verifier: TeacherVerifier, clock: TeacherClock) {
+    public let repairUntilVerified: Bool
+    public init(runId: String, root: String, modelId: String, process: TeacherProcess, verifier: TeacherVerifier,
+        clock: TeacherClock, repairUntilVerified!: Bool = false) {
         this.runId = runId; this.root = root; this.modelId = modelId; this.process = process; this.verifier = verifier; this.clock = clock
+        this.repairUntilVerified = repairUntilVerified
     }
 }
 
@@ -41,15 +45,31 @@ public func runTeacherCase(caseValue: TeacherCaseManifest, options: TeacherRunOp
 public func executeTeacherCase(caseValue: TeacherCaseManifest, options: TeacherRunOptions): TeacherCaseExecution {
     let paths = TeacherPaths(options.root)
     let started = options.clock.nowMillis()
-    let generated = options.process.generate(caseValue, paths.workspace(options.runId, caseValue.caseId),
-        paths.session(options.runId, caseValue.caseId), paths.runtimeHome(options.runId, caseValue.caseId))
-    if (generated.timedOut) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "timeout", 124, "${started}:timeout"), generated.output, "") }
-    if (generated.exitCode != 0) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "generation_failed", generated.exitCode, generated.output), generated.output, "") }
-    if (generated.output.isEmpty()) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "empty_output", 3, "empty"), "empty", "") }
-    let checked = options.verifier.verify(caseValue, TeacherPaths(options.root).workspace(options.runId, caseValue.caseId))
-    let run = if (checked.exitCode != 0) { buildTeacherRun(caseValue, options, "verification_failed", checked.exitCode, generated.output + checked.output) }
-        else { buildTeacherRun(caseValue, options, "verified", 0, generated.output + checked.output) }
-    TeacherCaseExecution(run, generated.output, checked.output)
+    var feedback = ""
+    var generationEvidence = ""
+    var verifierEvidence = ""
+    var teacherAttempt: Int64 = 0
+    while (true) {
+        teacherAttempt += 1
+        let generated = options.process.generate(caseValue, paths.workspace(options.runId, caseValue.caseId),
+            paths.session(options.runId, caseValue.caseId), paths.runtimeHome(options.runId, caseValue.caseId), feedback)
+        generationEvidence += generated.output
+        if (generated.timedOut) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "timeout", 124, "${started}:timeout", attempt: teacherAttempt), generationEvidence, verifierEvidence) }
+        if (generated.exitCode != 0) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "generation_failed", generated.exitCode, generationEvidence, attempt: teacherAttempt), generationEvidence, verifierEvidence) }
+        if (generated.output.isEmpty()) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "empty_output", 3, "empty", attempt: teacherAttempt), "empty", verifierEvidence) }
+        let checked = options.verifier.verify(caseValue, paths.workspace(options.runId, caseValue.caseId))
+        verifierEvidence += checked.output
+        if (checked.exitCode == 0) {
+            return TeacherCaseExecution(buildTeacherRun(caseValue, options, "verified", 0,
+                generationEvidence + verifierEvidence, attempt: teacherAttempt), generationEvidence, verifierEvidence)
+        }
+        if (!options.repairUntilVerified || checked.timedOut) {
+            return TeacherCaseExecution(buildTeacherRun(caseValue, options, "verification_failed", checked.exitCode,
+                generationEvidence + verifierEvidence, attempt: teacherAttempt), generationEvidence, verifierEvidence)
+        }
+        feedback = teacherSanitizeEvidence(checked.output)
+    }
+    throw IllegalStateException("teacher_repair_loop_unreachable")
 }
 
 public func verifyTeacherSolution(caseValue: TeacherCaseManifest, options: TeacherRunOptions, generatedEvidence: String): TeacherRunManifest {
@@ -58,9 +78,10 @@ public func verifyTeacherSolution(caseValue: TeacherCaseManifest, options: Teach
     return buildTeacherRun(caseValue, options, "verified", 0, generatedEvidence + checked.output)
 }
 
-private func buildTeacherRun(caseValue: TeacherCaseManifest, options: TeacherRunOptions, status: String, exitCode: Int64, evidence: String): TeacherRunManifest {
+private func buildTeacherRun(caseValue: TeacherCaseManifest, options: TeacherRunOptions, status: String, exitCode: Int64,
+    evidence: String, attempt!: Int64 = 1): TeacherRunManifest {
     return TeacherRunManifest(options.runId, caseValue.caseId, caseValue.datasetVersion, options.modelId,
-        caseValue.promptHash, 1, status, exitCode, teacherStableHash(evidence))
+        caseValue.promptHash, attempt, status, exitCode, teacherStableHash(evidence))
 }
 
 public func finalizeTeacherRun(run: TeacherRunManifest, evidenceValid: Bool): TeacherRunManifest {

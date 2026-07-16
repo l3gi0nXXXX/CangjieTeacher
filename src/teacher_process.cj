@@ -53,14 +53,22 @@ public class CodexTeacherProcess <: TeacherProcess {
         executor!: TeacherCommandExecutor = NativeTeacherCommandExecutor()) {
         this.executable = executable; this.model = model; this.timeoutMillis = timeoutMillis; this.executor = executor
     }
-    public func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String): TeacherProcessResult {
+    public func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String,
+        verifierFeedback: String): TeacherProcessResult {
         if (!exists(Path(workspace))) { Directory.create(Path(workspace), recursive: true) }
         if (!exists(Path(session))) { Directory.create(Path(session), recursive: true) }
         if (!exists(Path(runtimeHome))) { Directory.create(Path(runtimeHome), recursive: true) }
-        let prompt = "${caseValue.prompt}\n\nRequired signature: ${caseValue.signature}\nWrite only inside the current workspace."
-        let args = ["exec", "--model", this.model, "--full-auto", "--skip-git-repo-check", "--cwd", workspace, prompt]
+        let repair = if (verifierFeedback.isEmpty()) { "" } else {
+            "\n\nThe public verifier failed. Repair the implementation in the same workspace and rerun local checks. " +
+            "Do not look for hidden tests or reference solutions. Sanitized verifier output:\n${verifierFeedback}"
+        }
+        let prompt = "${caseValue.prompt}\n\nRequired signature: ${caseValue.signature}\n" +
+            "Work only inside the current workspace. Implement the case completely and run available local Cangjie checks. " +
+            "Do not access CKB, teacher solutions, reference solutions, or hidden tests.${repair}"
+        let args = ["exec", "--model", this.model, "--sandbox", "workspace-write", "--skip-git-repo-check",
+            "--ephemeral", "--ignore-user-config", "--ignore-rules", "-C", workspace, prompt]
         return this.executor.execute(TeacherCommandSpec(this.executable, args, workspace,
-            env: [("CODEX_HOME", runtimeHome), ("CANGJIE_TEACHER_SESSION", session)], timeoutMillis: this.timeoutMillis))
+            env: [("CANGJIE_TEACHER_SESSION", session)], timeoutMillis: this.timeoutMillis))
     }
 }
 

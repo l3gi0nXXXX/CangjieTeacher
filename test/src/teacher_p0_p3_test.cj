@@ -84,17 +84,19 @@ public class TeacherRuntimeTest {
         let root = tempRoot("process")
         try {
             let result = CodexTeacherProcess("/fake/codex", "gpt-fake", timeoutMillis: 1234, executor: recorder)
-                .generate(testCase(), "${root}/workspace", "${root}/session", "${root}/home")
+                .generate(testCase(), "${root}/workspace", "${root}/session", "${root}/home", "")
             @Expect(result.timedOut, true)
             @Expect(recorder.specs.size, 1)
             @Expect(recorder.specs[0].executable, "/fake/codex")
             @Expect(recorder.specs[0].cwd, "${root}/workspace")
             @Expect(recorder.specs[0].args[0], "exec")
-            @Expect(recorder.specs[0].args.contains("--full-auto"), true)
+            @Expect(recorder.specs[0].args.contains("workspace-write"), true)
+            @Expect(recorder.specs[0].args.contains("-C"), true)
+            @Expect(recorder.specs[0].args.contains("--ephemeral"), true)
             @Expect(recorder.specs[0].timeoutMillis, 1234)
             var hasHome = false
-            for (entry in recorder.specs[0].env) { if (entry[0] == "CODEX_HOME" && entry[1] == "${root}/home") { hasHome = true } }
-            @Expect(hasHome, true)
+            for (entry in recorder.specs[0].env) { if (entry[0] == "CODEX_HOME") { hasHome = true } }
+            @Expect(hasHome, false)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
@@ -162,12 +164,29 @@ private class FakeClock <: TeacherClock {
 private class FakeProcess <: TeacherProcess {
     let result: TeacherProcessResult
     public init(result: TeacherProcessResult) { this.result = result }
-    public func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String): TeacherProcessResult { result }
+    public func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String,
+        verifierFeedback: String): TeacherProcessResult { result }
 }
 private class FakeVerifier <: TeacherVerifier {
     let result: TeacherProcessResult
     public init(result: TeacherProcessResult) { this.result = result }
     public func verify(caseValue: TeacherCaseManifest, solutionRoot: String): TeacherProcessResult { result }
+}
+private class RepairProcess <: TeacherProcess {
+    public let feedback = ArrayList<String>()
+    public func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String,
+        verifierFeedback: String): TeacherProcessResult {
+        feedback.add(verifierFeedback)
+        TeacherProcessResult(0, "generation-${feedback.size}")
+    }
+}
+private class RepairVerifier <: TeacherVerifier {
+    var calls: Int64 = 0
+    public func verify(caseValue: TeacherCaseManifest, solutionRoot: String): TeacherProcessResult {
+        calls += 1
+        if (calls == 1) { TeacherProcessResult(1, "编译错误🙂\npublic func leaked(): Unit {}") }
+        else { TeacherProcessResult(0, "passed") }
+    }
 }
 private func options(generate!: TeacherProcessResult = TeacherProcessResult(0, "solution"),
     verify!: TeacherProcessResult = TeacherProcessResult(0, "tests passed")): TeacherRunOptions {
@@ -242,6 +261,18 @@ public class TeacherP0P3Test {
         @Expect(runTeacherCase(testCase(), options()).status, "verified")
         @Expect(runTeacherCase(testCase(), options(generate: TeacherProcessResult(7, "compile failed"))).status, "generation_failed")
         @Expect(runTeacherCase(testCase(), options(verify: TeacherProcessResult(9, "tests failed"))).status, "verification_failed")
+    }
+    @TestCase public func p2TeacherRepairsAfterPublicVerifierFailureWithoutLeakingSolution(): Unit {
+        let process = RepairProcess(); let verifier = RepairVerifier()
+        let run = runTeacherCase(testCase(), TeacherRunOptions("repair-run", "/tmp/teacher-repair-fixture",
+            "gpt-5.6-sol", process, verifier, FakeClock(), repairUntilVerified: true))
+        @Expect(run.status, "verified")
+        @Expect(run.attempt, 2)
+        @Expect(process.feedback.size, 2)
+        @Expect(process.feedback[0], "")
+        @Expect(process.feedback[1].contains("编译错误🙂"), true)
+        @Expect(process.feedback[1].contains("public func leaked"), false)
+        @Expect(process.feedback[1].contains("[solution_content_redacted]"), true)
     }
     // P2-BND-01
     @TestCase public func p2TimeoutEmptyUtf8AndResumeAreStable(): Unit {
