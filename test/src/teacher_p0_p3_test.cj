@@ -374,6 +374,8 @@ public class TeacherP0P3Test {
         let leakedText = "alphaBravo charlieDelta echoFoxtrot golfHotel indiaJuliet kiloLima mikeNovember oscarPapa"
         let leaked = TeacherCandidateExport("id", "language", "concept", "1.0.0", leakedText, "example", "official", "official", "hash", buildKnowledgeAtomTestBundle("p", "n", "b"))
         @Expect(auditCandidateAgainstSolutions(leaked, [leakedText]).passed, false)
+        let generic = TeacherCandidateExport("id", "language", "concept", "1.0.0", "Use println for a small demo.", "println(value)", "official", "official", "hash", buildKnowledgeAtomTestBundle("println(value)", "println(value)", "println(value)"))
+        @Expect(auditCandidateAgainstSolutions(generic, ["println println println println println println println println println"]).passed, true)
     }
 
     // P3/P4 candidate control UT/BND/POS/NEG/fake-E2E

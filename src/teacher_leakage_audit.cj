@@ -10,9 +10,10 @@ public class LeakageAuditResult {
 
 private func normalizedTokens(value: String): Array<String> {
     let out = ArrayList<String>()
+    let seen = HashSet<String>()
     let raw = value.toAsciiLower().replace("(", " ").replace(")", " ").replace("{", " ").replace("}", " ")
         .replace(",", " ").replace(";", " ").split(" ")
-    for (token in raw) { if (token.size >= 5) { out.add(token) } }
+    for (token in raw) { if (token.size >= 5 && !seen.contains(token)) { seen.add(token); out.add(token) } }
     return out.toArray()
 }
 
