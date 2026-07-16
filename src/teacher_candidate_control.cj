@@ -262,10 +262,19 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
             out.feedback=teacherAuthorityFloat64AbsFeedback()
             return out
         }
+        if(gap=="g-string-rune-contains"&&
+            (!teacherAuthorityStringRuneContainsPositive(narrative,positiveSource)||
+             !teacherAuthorityStringRuneContainsPositive(narrative,boundarySource)||
+             !teacherAuthorityStringRuneContainsNegative(negativeSource))){
+            out.feedback=teacherAuthorityStringRuneContainsFeedback()
+            return out
+        }
         out.ok=true;out.diagnostic="ok";return out
     }
     var names="";for(i in 0..required.size){if(i>0){names+=","};names+=required[i]}
-    if(gap.contains("float64-abs")){
+    if(gap=="g-string-rune-contains"){
+        out.feedback=teacherAuthorityStringRuneContainsFeedback()
+    }else if(gap.contains("float64-abs")){
         out.feedback=teacherAuthorityFloat64AbsFeedback()
     }else if(gap.contains("string-rune-iteration")){
         out.feedback=teacherAuthorityStringRuneIterationFeedback()
@@ -342,6 +351,59 @@ private func teacherAuthorityHasGlobalAbsCall(code:String):Bool{
 
 private func teacherAuthorityFloat64AbsFeedback():String{
     teacherAuthorityBoundedFeedback("Float64 absolute value uses the global abs(value) function, not a receiver or member value.abs() call. Positive source must call global abs with a negative Float64; boundary source must call global abs(-0.0) and abs(0.0); neither may contain .abs(. The negative source must call a Float64 member .abs() to reproduce the undeclared-identifier diagnostic. Comments and string labels do not count as evidence.")
+}
+
+private func teacherAuthorityStringRuneContainsPositive(narrative:String,source:String):Bool{
+    let raw=teacherAuthorityCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    if(!narrative.contains("array<rune>.contains(rune)")||!code.contains(":uint8")||!code.contains(".torunearray(")){return false}
+    teacherAuthorityTypedReceiverContainsRune(raw,code,"array<rune>")
+}
+
+private func teacherAuthorityStringRuneContainsNegative(source:String):Bool{
+    let raw=teacherAuthorityCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    teacherAuthorityTypedReceiverContainsRune(raw,code,"string")||teacherAuthorityTypedReceiverContainsRune(raw,code,"array<uint8>")
+}
+
+private func teacherAuthorityTypedReceiverContainsRune(raw:String,code:String,receiverType:String):Bool{
+    let receivers=teacherAuthorityNamesBeforeType(raw,receiverType)
+    let runes=teacherAuthorityNamesBeforeType(raw,"rune")
+    for(receiver in receivers){
+        for(rune in runes){if(code.contains("${receiver}.contains(${rune})")){return true}}
+        if(code.contains("${receiver}.contains(r'")){return true}
+    }
+    false
+}
+
+private func teacherAuthorityNamesBeforeType(raw:String,typeName:String):ArrayList<String>{
+    let out=ArrayList<String>();let runes=raw.toRuneArray();let typeRunes=typeName.toRuneArray()
+    for(i in 0..runes.size){
+        if(runes[i]!=r':'){continue}
+        var typeStart=i+1
+        while(typeStart<runes.size&&teacherAuthorityAsciiSpace(runes[typeStart])){typeStart+=1}
+        if(typeStart+typeRunes.size>runes.size){continue}
+        var matches=true
+        for(j in 0..typeRunes.size){if(runes[typeStart+j]!=typeRunes[j]){matches=false;break}}
+        if(!matches||i==0){continue}
+        var end=i-1
+        while(end>=0&&teacherAuthorityAsciiSpace(runes[end])){end-=1}
+        var start=end
+        while(start>=0&&teacherAuthorityIdentifierRune(runes[start])){start-=1}
+        start+=1
+        if(start<=end){let name=String(runes[start..end+1]);if(!out.contains(name)){out.add(name)}}
+    }
+    out
+}
+
+private func teacherAuthorityIdentifierRune(value:Rune):Bool{
+    (value>=r'a'&&value<=r'z')||(value>=r'0'&&value<=r'9')||value==r'_'
+}
+
+private func teacherAuthorityAsciiSpace(value:Rune):Bool{
+    value==r' '||value==r'\t'||value==r'\n'||value==r'\r'
+}
+
+private func teacherAuthorityStringRuneContainsFeedback():String{
+    teacherAuthorityBoundedFeedback("Positive and boundary sources must each use an Array<Rune> receiver produced with toRuneArray and call Array<Rune>.contains(Rune), while also demonstrating the distinct UInt8 type. The negative source must call contains with a Rune on a declared String receiver, or on a declared Array<UInt8> receiver, to reproduce the mismatched-types diagnostic. String construction from UInt8, String.contains(String), comments, and string labels do not satisfy this gate.")
 }
 
 private func teacherAuthorityQuotedAnchors(value:String):ArrayList<String>{

@@ -529,12 +529,27 @@ public class TeacherP0P3Test {
             "Use contains, StringBuilder.append, UInt8, Rune, and toRuneArray together.",stringSource,
             "main(){ let byte: UInt8 = UInt8(65); println(\"A\".contains(byte)) }",stringSource)
         @Expect(stringRelevant.ok,true)
-        let containsSource="main(){ let byte: UInt8=UInt8(65); let runes:Array<Rune>=\"A\".toRuneArray(); println(\"A\".contains(String(runes))); println(byte) }"
+        let containsSource="main(){ let text:String=\"中😀\"; let byte:UInt8=UInt8(65); let runes:Array<Rune>=text.toRuneArray(); let rune:Rune=r'中'; println(runes.contains(rune)); println(byte) }"
+        let containsNegative="main(){ let text:String=\"A\"; let rune:Rune=r'A'; println(text.contains(rune)) }"
         let containsOnly=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS",
-            "String iteration yields UInt8; use toRuneArray for Rune values and pass a String to contains.",
-            "Use UInt8, Rune, contains, and toRuneArray together.",containsSource,
-            "main(){ let byte:UInt8=UInt8(65); println(\"A\".contains(byte)) }",containsSource)
+            "Direct String iteration yields UInt8; use toRuneArray for an Array<Rune>, then call Array<Rune>.contains with a Rune instead of String.contains(Rune).",
+            "Use UInt8, Rune, toRuneArray, and Array<Rune>.contains(Rune) together.",containsSource,containsNegative,containsSource)
         @Expect(containsOnly.ok,true);@Expect(containsOnly.anchors.contains("stringbuilder.append"),false)
+        let byteArrayNegative="main(){ let bytes:Array<UInt8>=[UInt8(65)]; let rune:Rune=r'A'; println(bytes.contains(rune)) }"
+        @Expect(validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS",
+            "Direct String iteration yields UInt8; use toRuneArray for an Array<Rune>, then call Array<Rune>.contains with a Rune instead of Array<UInt8>.contains(Rune).",
+            "Use UInt8, Rune, toRuneArray, and Array<Rune>.contains(Rune) together.",containsSource,byteArrayNegative,containsSource).ok,true)
+        let wrongPositive="main(){ let byte:UInt8=UInt8(65); let rune:Rune=r'A'; let runes:Array<Rune>=\"A\".toRuneArray(); println(\"A\".contains(String(runes))); println(byte); println(rune) }"
+        let wrongPositiveResult=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS",
+            "Direct String iteration yields UInt8; use toRuneArray for Rune values and contains.","UInt8 Rune toRuneArray contains",wrongPositive,containsNegative,wrongPositive)
+        @Expect(wrongPositiveResult.ok,false);@Expect(wrongPositiveResult.feedback.contains("Array<Rune> receiver"),true)
+        let observedWrongNegative="main(){ let byte:UInt8=UInt8(65); let rune:Rune=r'A'; let bytes:Array<UInt8>=[byte]; let text=String([byte]); println(\"A\".contains(\"A\")); println(rune); println(bytes.size); println(text) }"
+        let wrongNegativeResult=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS",
+            "Direct String iteration yields UInt8; use toRuneArray for an Array<Rune>, then call Array<Rune>.contains with a Rune.",
+            "Use UInt8, Rune, toRuneArray, and Array<Rune>.contains(Rune) together.",containsSource,observedWrongNegative,containsSource)
+        @Expect(wrongNegativeResult.ok,false);@Expect(wrongNegativeResult.feedback.contains("String receiver"),true)
+        let disguised="// Array<Rune>.contains(Rune)\nmain(){ println(\"UInt8 Rune toRuneArray contains\") }"
+        @Expect(validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS","UInt8 Rune toRuneArray contains","UInt8 Rune toRuneArray contains",disguised,containsNegative,disguised).ok,false)
         @Expect(stringRelevant.anchors.contains("stringbuilder.append"),true)
 
         let byteRelevant=validateTeacherAuthorityRelevance("invalid binary operator '<' on type 'UInt8' and 'Rune'","G-RUNE-BYTE-COMPARE",
