@@ -482,6 +482,71 @@ public class TeacherP0P3Test {
         @Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false);@Expect(unsafeResult.feedback.contains("Authorization"),false)
     }
 
+    @TestCase public func candidateAuthorityRelevanceDerivesUnicodeStringAndBytePrerequisites():Unit{
+        let unicodeCompiler="undeclared identifier 'isLowerCase'; undeclared identifier 'isUpperCase'"
+        let unicodeWithoutImport=validateTeacherAuthorityRelevance(unicodeCompiler,"G-RUNE-UNICODE-IMPORT",
+            "Call Rune.isLowerCase and Rune.isUpperCase.","r'a'.isLowerCase(); r'A'.isUpperCase()",
+            "main(){ println(r'a'.isLowerCase()); println(r'A'.isUpperCase()) }",
+            "main(){ println(r'a'.isLowerCase()); println(r'A'.isUpperCase()) }",
+            "main(){ println(r'中'.isLowerCase()); println(r'中'.isUpperCase()) }")
+        @Expect(unicodeWithoutImport.ok,false);@Expect(unicodeWithoutImport.feedback.contains("std.unicode"),true)
+        let unicodeRelevant=validateTeacherAuthorityRelevance(unicodeCompiler,"G-RUNE-UNICODE-IMPORT",
+            "Import std.unicode.* for Rune.isLowerCase and Rune.isUpperCase.","import std.unicode.* before both methods.",
+            "import std.unicode.*\nmain(){ println(r'a'.isLowerCase()); println(r'A'.isUpperCase()) }",
+            "main(){ println(r'a'.isLowerCase()); println(r'A'.isUpperCase()) }",
+            "import std.unicode.*\nmain(){ println(r'中'.isLowerCase()); println(r'中'.isUpperCase()) }")
+        @Expect(unicodeRelevant.ok,true)
+
+        let stringCompiler="expected 'Struct-String', found 'UInt8'; expected 'Rune', found 'UInt8'"
+        let generic=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS-STRINGBUILDER-APPEND",
+            "A String stores text.","Use String values.","main(){}","main(){ bad }","main(){}")
+        @Expect(generic.ok,false);@Expect(generic.feedback.contains("struct-string"),false);@Expect(generic.feedback.contains("stringbuilder.append"),true)
+        let stringSource="main(){ let byte: UInt8 = UInt8(65); let rune: Rune = r'A'; let runes: Array<Rune> = \"A\".toRuneArray(); let found = \"A\".contains(\"A\"); let builder = StringBuilder(); builder.append(rune); println(found); println(byte); println(runes.size) }"
+        let stringRelevant=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS-STRINGBUILDER-APPEND",
+            "String iteration can yield UInt8; convert to Rune with toRuneArray, pass String to contains, and Rune to StringBuilder.append.",
+            "Use contains, StringBuilder.append, UInt8, Rune, and toRuneArray together.",stringSource,
+            "main(){ let byte: UInt8 = UInt8(65); println(\"A\".contains(byte)) }",stringSource)
+        @Expect(stringRelevant.ok,true)
+
+        let byteRelevant=validateTeacherAuthorityRelevance("invalid binary operator '<' on type 'UInt8' and 'Rune'","G-RUNE-BYTE-COMPARE",
+            "A UInt8 byte cannot compare with Rune; use toRuneArray for character comparison.","Use UInt8 and Rune values with toRuneArray.",
+            "main(){ let byte: UInt8=UInt8(65); let rune: Rune=\"A\".toRuneArray()[0]; println(byte); println(rune) }",
+            "main(){ let byte: UInt8=UInt8(65); let rune: Rune=r'A'; println(byte < rune) }",
+            "main(){ let byte: UInt8=UInt8(65); let rune: Rune=\"中\".toRuneArray()[0]; println(byte); println(rune) }")
+        @Expect(byteRelevant.ok,true)
+        let commentOnly=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS-STRINGBUILDER-APPEND",
+            "UInt8 Rune contains StringBuilder.append toRuneArray.","UInt8 Rune contains StringBuilder.append toRuneArray.",
+            "// UInt8 Rune .contains( StringBuilder .append( .toRuneArray(\nmain(){ println(\"UInt8 Rune contains StringBuilder.append toRuneArray\") }",
+            "main(){ bad }","// UInt8 Rune contains StringBuilder.append toRuneArray\nmain(){}")
+        @Expect(commentOnly.ok,false)
+        let unsafeDerived=validateTeacherAuthorityRelevance(stringCompiler+" 中文😀 '/Users/private/token' Authorization "+String(Array<Rune>(2000,repeat:r'界')),
+            "G-STRING-RUNE-CONTAINS-STRINGBUILDER-APPEND","generic","generic","main(){}","main(){bad}","main(){}")
+        @Expect(unsafeDerived.ok,false);@Expect(unsafeDerived.feedback.toRuneArray().size<=803,true)
+        @Expect(unsafeDerived.feedback.contains("/Users"),false);@Expect(unsafeDerived.feedback.toAsciiLower().contains("token"),false);@Expect(unsafeDerived.feedback.contains("Authorization"),false)
+    }
+
+    @TestCase public func candidateAuthorityRelevanceSeparatesPositiveAndNegativeApiAnchors():Unit{
+        let repeatRelevant=validateTeacherAuthorityRelevance("unknown named argument prefix 'item:'","G-ARRAY-REPEAT",
+            "Use repeat: to fill an Array; item: is not a valid named argument.","Array<Int64>(3, repeat: 7) replaces item:.",
+            "main(){ let values=Array<Int64>(3, repeat: 7); println(values.size) }",
+            "main(){ let values=Array<Int64>(3, item: 7); println(values.size) }",
+            "main(){ let values=Array<Rune>(0, repeat: r'中'); println(values.size) }")
+        @Expect(repeatRelevant.ok,true)
+        let repeatWrong=validateTeacherAuthorityRelevance("unknown named argument prefix 'item:'","G-ARRAY-REPEAT",
+            "Use item: for Array construction.","item:","main(){ let x=Array<Int64>(1,item:1) }","main(){ bad }","main(){ let x=Array<Int64>(0,item:1) }")
+        @Expect(repeatWrong.ok,false);@Expect(repeatWrong.feedback.contains("repeat"),true)
+
+        let runeArrayRelevant=validateTeacherAuthorityRelevance("undeclared identifier 'fromRuneArray'","G-STRING-RUNE-ARRAY",
+            "Construct String from Array<Rune> with String(runes); fromRuneArray does not exist.","Use String(Array<Rune>) instead of fromRuneArray.",
+            "main(){ let runes:Array<Rune>=[r'A']; let text=String(runes); println(text) }",
+            "main(){ let runes:Array<Rune>=[r'A']; let text=String.fromRuneArray(runes); println(text) }",
+            "main(){ let runes:Array<Rune>=[r'中',r'😀']; let text=String(runes); println(text) }")
+        @Expect(runeArrayRelevant.ok,true)
+        let runeArrayWrong=validateTeacherAuthorityRelevance("undeclared identifier 'fromRuneArray'","G-STRING-RUNE-ARRAY",
+            "Call fromRuneArray.","fromRuneArray", "main(){ let x=String.fromRuneArray([]) }","main(){ let x=String.fromRuneArray([]) }","main(){ let x=String.fromRuneArray([]) }")
+        @Expect(runeArrayWrong.ok,false);@Expect(runeArrayWrong.feedback.contains("string-constructor"),true)
+    }
+
     @TestCase public func candidateControlFakeEndToEndAndBoundaries(): Unit {
         let root = "/tmp/teacher-candidate-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         try {

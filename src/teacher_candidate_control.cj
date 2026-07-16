@@ -175,14 +175,32 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
     let out=TeacherAuthorityRelevanceResult()
     // Extract only allow-listed quoted tokens before line sanitization: a pipe-flattened
     // compiler line may also contain "return code", which causes the whole line to be redacted.
+    let gap=missingKnowledge.toAsciiLower()
     let quoted=teacherAuthorityQuotedAnchors(compilerOutput)
+    let extracted=ArrayList<String>()
+    for(anchor in quoted){if(teacherAuthorityStrongAnchor(anchor)&&!extracted.contains(anchor.toAsciiLower())){extracted.add(anchor.toAsciiLower())}}
     let strong=ArrayList<String>()
-    for(anchor in quoted){if(teacherAuthorityStrongAnchor(anchor)&&!strong.contains(anchor.toAsciiLower())){strong.add(anchor.toAsciiLower())}}
-    let primary=ArrayList<String>();for(anchor in strong){primary.add(anchor)}
+    let primary=ArrayList<String>()
+    if(gap.contains("array-repeat")){
+        strong.add("repeat");primary.add("item:")
+    }else if(gap.contains("string-rune-array")){
+        strong.add("string-constructor");strong.add("array<rune>");primary.add("fromrunearray")
+    }else{
+        for(anchor in extracted){strong.add(anchor)}
+    }
+    if(gap.contains("string-rune-contains")&&strong.isEmpty()){
+        for(anchor in ["uint8","rune","contains","stringbuilder.append","torunearray"]){teacherAuthorityAddAnchor(strong,anchor)}
+        primary.add("contains")
+    }else if(gap.contains("rune-byte-compare")&&strong.isEmpty()){
+        for(anchor in ["uint8","rune","torunearray"]){teacherAuthorityAddAnchor(strong,anchor)}
+        primary.add("uint8");primary.add("rune")
+    }else if(primary.isEmpty()){for(anchor in strong){primary.add(anchor)}}
     // In Cangjie 1.0, the numeric parse interface is provided by std.convert;
     // mentioning the method without its required import is not actionable knowledge.
     if(strong.contains("parse")&&!strong.contains("std.convert")){strong.add("std.convert")}
-    let required=if(strong.isEmpty()){teacherAuthorityGapAnchors(missingKnowledge)}else{strong}
+    // Rune case classification methods are extensions supplied by std.unicode.
+    if(gap.contains("rune-unicode-import")&&!strong.contains("std.unicode")){strong.add("std.unicode")}
+    let required=if(strong.isEmpty()){teacherAuthorityGapAnchors(missingKnowledge)}else{let anchors=ArrayList<String>();for(anchor in strong){anchors.add(anchor)};for(anchor in primary){teacherAuthorityAddAnchor(anchors,anchor)};anchors}
     for(anchor in required){out.anchors.add(anchor)}
     if(required.isEmpty()){out.diagnostic="authority_anchor_missing";out.feedback="Authority relevance failed: no safe public failure anchor was available; return knowledge that directly explains the canonical gap.";return out}
     let narrative=(explanation+"\n"+example).toAsciiLower()
@@ -192,7 +210,7 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
     var narrativeHits:Int64=0;var sourceHits:Int64=0
     for(anchor in required){if(teacherAuthorityAnchorPresent(narrative,anchor)){narrativeHits+=1};if(teacherAuthorityAnchorPresent(sources,anchor)){sourceHits+=1}}
     let eachSource=teacherAuthorityAnyAnchor(positive,required)&&teacherAuthorityAnyAnchor(negative,required)&&teacherAuthorityAnyAnchor(boundary,required)
-    let strongCoverage=strong.isEmpty()||teacherAuthorityAllAnchors(narrative,strong)&&teacherAuthorityAllSourceAnchors(positiveSource,strong)&&
+    let strongCoverage=strong.isEmpty()||teacherAuthorityAllAnchors(narrative,strong)&&teacherAuthorityAllAnchors(narrative,primary)&&teacherAuthorityAllSourceAnchors(positiveSource,strong)&&
         teacherAuthorityAllSourceAnchors(boundarySource,strong)&&teacherAuthorityAllSourceAnchors(negativeSource,primary)
     if(narrativeHits>=minimum&&sourceHits>=minimum&&eachSource&&strongCoverage){out.ok=true;out.diagnostic="ok";return out}
     var names="";for(i in 0..required.size){if(i>0){names+=","};names+=required[i]}
@@ -215,9 +233,11 @@ private func teacherAuthorityAnchorAllowed(value:String):Bool{
 
 private func teacherAuthorityStrongAnchor(value:String):Bool{
     let lower=value.toAsciiLower()
-    if(["float16","float32","float64","int8","int16","int32","int64","uint8","uint16","uint32","uint64","rune","string","arraylist","hashmap","bool","true","false","if","type","expected","found"].contains(lower)){return false}
+    if(["float16","float32","float64","int8","int16","int32","int64","uint8","uint16","uint32","uint64","rune","string","struct-string","arraylist","hashmap","bool","true","false","if","type","expected","found"].contains(lower)){return false}
     true
 }
+
+private func teacherAuthorityAddAnchor(anchors:ArrayList<String>,anchor:String):Unit{if(!anchors.contains(anchor)){anchors.add(anchor)}}
 
 private func teacherAuthorityGapAnchors(gap:String):ArrayList<String>{
     let out=ArrayList<String>()
@@ -228,6 +248,7 @@ private func teacherAuthorityGapAnchors(gap:String):ArrayList<String>{
 private func teacherAuthorityAnchorPresent(text:String,anchor:String):Bool{
     if(anchor=="bytes"){return text.contains("bytes")||text.contains("byte")||text.contains("uint8")}
     if(anchor=="index"){return text.contains("index")||text.contains("[")}
+    if(anchor=="string-constructor"){return text.contains("string(")||text.contains("construct string")||text.contains("string constructor")}
     text.contains(anchor)
 }
 
@@ -237,7 +258,20 @@ private func teacherAuthorityAllSourceAnchors(source:String,anchors:ArrayList<St
     let code=teacherAuthorityCodeOnly(source).toAsciiLower()
     for(anchor in anchors){
         if(anchor=="std.convert"){var imported=false;for(line in code.split("\n")){if(line.trimAscii().startsWith("import std.convert")){imported=true;break}};if(!imported){return false}}
+        else if(anchor=="std.unicode"){var imported=false;for(line in code.split("\n")){if(line.trimAscii().startsWith("import std.unicode")){imported=true;break}};if(!imported){return false}}
         else if(anchor=="parse"){if(!code.contains(".parse(")){return false}}
+        else if(anchor=="islowercase"){if(!code.contains(".islowercase(")){return false}}
+        else if(anchor=="isuppercase"){if(!code.contains(".isuppercase(")){return false}}
+        else if(anchor=="contains"){if(!code.contains(".contains(")){return false}}
+        else if(anchor=="stringbuilder.append"){if(!code.contains("stringbuilder")||!code.contains(".append(")){return false}}
+        else if(anchor=="torunearray"){if(!code.contains(".torunearray(")){return false}}
+        else if(anchor=="uint8"){if(!code.contains(": uint8")&&!code.contains("uint8(")){return false}}
+        else if(anchor=="rune"){if(!code.contains(": rune")&&!code.contains("array<rune>")&&!code.contains("r'")){return false}}
+        else if(anchor=="repeat"){if(!code.contains("repeat:")){return false}}
+        else if(anchor=="item:"){if(!code.contains("item:")){return false}}
+        else if(anchor=="string-constructor"){if(!code.contains("string(")){return false}}
+        else if(anchor=="array<rune>"){if(!code.contains("array<rune>")){return false}}
+        else if(anchor=="fromrunearray"){if(!code.contains(".fromrunearray(")){return false}}
         else if(!teacherAuthorityAnchorPresent(code,anchor)){return false}
     };true
 }
