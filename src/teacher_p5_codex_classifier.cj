@@ -51,37 +51,89 @@ public func executeTeacherP5CodexClassifierAdapter(args: Array<String>, executor
             result.diagnostic = "adapter_identity_invalid"; return result
         }
         if (!p5CodexSafePaths(options)) { result.diagnostic = "adapter_path_invalid"; return result }
-        let requestText = p5CodexReadBoundedUtf8(options.request)
-        let request = p5CodexValidateRequest(requestText)
-        if (request[0] != "ok") { result.diagnostic = request[0]; return result }
         if (!exists(Path(options.workspace))) { Directory.create(Path(options.workspace), recursive: true) }
         if (!exists(Path(options.runtimeHome))) { Directory.create(Path(options.runtimeHome), recursive: true) }
-        let schemaPath = Path(options.workspace).join("classifier-response.schema.json").toString()
-        let modelOutput = Path(options.workspace).join("classifier-response.model.json").toString()
-        _ = teacherAtomicWrite(schemaPath, p5CodexOutputSchema())
-        try { if (exists(Path(modelOutput))) { remove(Path(modelOutput)) } } catch (_: Exception) {}
-        let prompt = p5CodexPrompt(requestText)
-        // An empty controller runtime-home has no Codex login state. Keep it as
-        // provenance isolation only; --ephemeral/--ignore-* prevent config and
-        // session pollution while the process inherits the real authenticated home.
-        let command = TeacherCommandSpec(codexExecutable,
-            ["exec", "-m", P5_CODEX_MODEL_ARG, "--sandbox", "read-only", "--skip-git-repo-check",
-             "--ephemeral", "--ignore-user-config", "--ignore-rules", "-C", options.workspace,
-             "--output-schema", schemaPath, "--output-last-message", modelOutput, prompt],
-            options.workspace, env: [("CANGJIE_TEACHER_SESSION", options.sessionId)],
-            timeoutMillis: options.timeoutMillis)
-        let process = executor.execute(command)
-        if (process.timedOut) { result.diagnostic = "codex_timeout"; return result }
-        if (process.exitCode != 0) { result.diagnostic = "codex_nonzero_exit"; return result }
-        let raw = p5CodexReadBoundedUtf8(modelOutput)
-        let response = p5CodexSealResponse(raw)
-        if (response[0] != "ok") { result.diagnostic = response[0]; return result }
-        _ = teacherAtomicWrite(options.output, response[1] + "\n")
-        result.ok = true; result.diagnostic = "ok"; result
+        if (!removeP5CodexClassifierDiagnostic(options)) {
+            return failP5CodexClassifier(result, options, "diagnostic_reset_failed")
+        }
+        try {
+            let requestText = p5CodexReadBoundedUtf8(options.request,
+                missingDiagnostic: "request_contract_invalid", tooLargeDiagnostic: "request_too_large")
+            let request = p5CodexValidateRequest(requestText)
+            if (request[0] != "ok") { return failP5CodexClassifier(result, options, request[0]) }
+            let schemaPath = Path(options.workspace).join("classifier-response.schema.json").toString()
+            let modelOutput = Path(options.workspace).join("classifier-response.model.json").toString()
+            _ = teacherAtomicWrite(schemaPath, p5CodexOutputSchema())
+            try { if (exists(Path(modelOutput))) { remove(Path(modelOutput)) } } catch (_: Exception) {}
+            let prompt = p5CodexPrompt(requestText)
+            // An empty controller runtime-home has no Codex login state. Keep it as
+            // provenance isolation only; --ephemeral/--ignore-* prevent config and
+            // session pollution while the process inherits the real authenticated home.
+            let command = TeacherCommandSpec(codexExecutable,
+                ["exec", "-m", P5_CODEX_MODEL_ARG, "--sandbox", "read-only", "--skip-git-repo-check",
+                 "--ephemeral", "--ignore-user-config", "--ignore-rules", "-C", options.workspace,
+                 "--output-schema", schemaPath, "--output-last-message", modelOutput, prompt],
+                options.workspace, env: [("CANGJIE_TEACHER_SESSION", options.sessionId)],
+                timeoutMillis: options.timeoutMillis)
+            let process = executor.execute(command)
+            if (process.timedOut) { return failP5CodexClassifier(result, options, "codex_timeout") }
+            if (process.exitCode != 0) { return failP5CodexClassifier(result, options, "codex_nonzero_exit") }
+            let raw = p5CodexReadBoundedUtf8(modelOutput,
+                missingDiagnostic: "missing_or_duplicate_terminal_result",
+                tooLargeDiagnostic: "classifier_output_too_large")
+            let response = p5CodexSealResponse(raw)
+            if (response[0] != "ok") { return failP5CodexClassifier(result, options, response[0]) }
+            try { _ = teacherAtomicWrite(options.output, response[1] + "\n") }
+            catch (_: Exception) { return failP5CodexClassifier(result, options, "response_write_failed") }
+            if (!removeP5CodexClassifierDiagnostic(options)) {
+                return failP5CodexClassifier(result, options, "diagnostic_reset_failed")
+            }
+            result.ok = true; result.diagnostic = "ok"; result
+        } catch (e: IllegalArgumentException) {
+            failP5CodexClassifier(result, options, e.message)
+        } catch (_: Exception) {
+            failP5CodexClassifier(result, options, "classifier_failure_unknown")
+        }
     } catch (e: IllegalArgumentException) {
         result.diagnostic = e.message; result
     } catch (_: Exception) {
         result.diagnostic = "adapter_failed"; result
+    }
+}
+
+private func failP5CodexClassifier(result: TeacherP5CodexAdapterResult,
+    options: TeacherP5CodexAdapterOptions, diagnostic: String): TeacherP5CodexAdapterResult {
+    let mapped = p5CodexClassifierSharedDiagnostic(diagnostic)
+    let safe = if (p5CodexClassifierDiagnosticAllowed(mapped)) { mapped } else { "classifier_failure_unknown" }
+    let payload = "{\"schemaVersion\":\"cangjie-teacher-classifier-diagnostic-v1\",\"diagnostic\":\"${safe}\"}\n"
+    try {
+        _ = teacherAtomicWrite(Path(options.workspace).join("classifier-diagnostic.json").toString(), payload)
+        result.diagnostic = safe
+    } catch (_: Exception) { result.diagnostic = "diagnostic_write_failed" }
+    result
+}
+
+private func removeP5CodexClassifierDiagnostic(options: TeacherP5CodexAdapterOptions): Bool {
+    let path = Path(options.workspace).join("classifier-diagnostic.json")
+    try { if (exists(path)) { remove(path) }; !exists(path) } catch (_: Exception) { false }
+}
+
+private func p5CodexClassifierDiagnosticAllowed(value: String): Bool {
+    ["invalid_response_encoding", "request_too_large", "request_contract_invalid", "classifier_timeout",
+        "classifier_process_failed", "classifier_output_too_large", "missing_or_duplicate_terminal_result",
+        "response_contract_invalid", "response_contains_forbidden_data", "malformed_structured_output",
+        "response_write_failed", "diagnostic_reset_failed", "classifier_failure_unknown"].contains(value)
+}
+
+private func p5CodexClassifierSharedDiagnostic(value: String): String {
+    match (value) {
+        case "codex_timeout" => "classifier_timeout"
+        case "codex_nonzero_exit" => "classifier_process_failed"
+        case "request_forbidden" => "request_contract_invalid"
+        case "malformed_request_json" => "request_contract_invalid"
+        case "response_forbidden" => "response_contains_forbidden_data"
+        case "malformed_response_json" => "malformed_structured_output"
+        case _ => value
     }
 }
 
@@ -123,10 +175,11 @@ private func p5CodexSafePaths(options: TeacherP5CodexAdapterOptions): Bool {
         !output.toAsciiLower().contains("ckb-data")
 }
 
-private func p5CodexReadBoundedUtf8(path: String): String {
-    if (!exists(Path(path))) { throw IllegalArgumentException("input_missing") }
+private func p5CodexReadBoundedUtf8(path: String, missingDiagnostic!: String,
+    tooLargeDiagnostic!: String): String {
+    if (!exists(Path(path))) { throw IllegalArgumentException(missingDiagnostic) }
     let bytes = File.readFrom(Path(path))
-    if (bytes.size > P5_CODEX_MAX_BYTES) { throw IllegalArgumentException("input_too_large") }
+    if (bytes.size > P5_CODEX_MAX_BYTES) { throw IllegalArgumentException(tooLargeDiagnostic) }
     try { String.fromUtf8(bytes) } catch (_: Exception) { throw IllegalArgumentException("invalid_response_encoding") }
 }
 

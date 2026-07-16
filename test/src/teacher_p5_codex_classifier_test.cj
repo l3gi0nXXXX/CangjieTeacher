@@ -14,12 +14,14 @@ private class P5CodexFakeExecutor <: TeacherCommandExecutor {
     public init(mode!: String = "ok") { this.mode = mode }
     public func execute(spec: TeacherCommandSpec): TeacherProcessResult {
         specs.add(spec)
+        if (mode == "throw") { throw IllegalStateException("/Users/private/token=secret 秘密🙂") }
         if (mode == "timeout") { return TeacherProcessResult(124, "secret must not surface", timedOut: true) }
         if (mode == "nonzero") { return TeacherProcessResult(7, "Authorization: secret") }
         var output = ""
         for (i in 0..spec.args.size - 1) { if (spec.args[i] == "--output-last-message") { output = spec.args[i + 1] } }
         if (mode == "invalid_utf8") { File.writeTo(Path(output), [UInt8(0xff), UInt8(0xfe)]); return TeacherProcessResult(0, "") }
-        let body = if (mode == "malformed") { "{" } else if (mode == "retrieval") { "{\"category\":\"retrieval_failure\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}" } else {
+        if (mode == "oversized") { File.writeTo(Path(output), Array<UInt8>(262145, repeat: UInt8(65))); return TeacherProcessResult(0, "") }
+        let body = if (mode == "malformed") { "{" } else if (mode == "forbidden") { "/Users/private/秘密🙂 token=secret" } else if (mode == "retrieval") { "{\"category\":\"retrieval_failure\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}" } else {
             "{\"category\":\"knowledge_gap\",\"knowledgeFamily\":\"standard_library\",\"reusable\":true,\"sourceClass\":\"official\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"purificationPassed\":true,\"canonicalKnowledgeId\":\"GENERAL-RUNE\",\"targetVersion\":\"1.0.0\",\"evidenceId\":\"official-rune\",\"knowledgeText\":\"Use Rune boundaries for 中文🙂 text.\"}"
         }
         File.writeTo(Path(output), body.toArray()); TeacherProcessResult(0, "ignored stdout")
@@ -65,7 +67,7 @@ public class TeacherP5CodexClassifierTest {
         let invalid = p5CodexFixture("invalid-utf8"); File.writeTo(Path(invalid.request), [UInt8(0xff), UInt8(0xfe)])
         @Expect(executeTeacherP5CodexClassifierAdapter(invalid.args, executor: fake, codexExecutable: "/fake/codex", timeoutMillis: 1000).diagnostic, "invalid_response_encoding")
         let large = p5CodexFixture("large"); File.writeTo(Path(large.request), Array<UInt8>(262145, repeat: UInt8(65)))
-        @Expect(executeTeacherP5CodexClassifierAdapter(large.args, executor: fake, codexExecutable: "/fake/codex", timeoutMillis: 1000).diagnostic, "input_too_large")
+        @Expect(executeTeacherP5CodexClassifierAdapter(large.args, executor: fake, codexExecutable: "/fake/codex", timeoutMillis: 1000).diagnostic, "request_too_large")
         let unknown=ArrayList<String>();for(value in fixture.args){unknown.add(value)};unknown.add("--unknown");unknown.add("x")
         var rejected=false;try{_=parseTeacherP5CodexAdapterOptions(unknown.toArray())}catch(e:Exception){rejected=e.message=="invalid_adapter_arguments"};@Expect(rejected,true)
     }
@@ -92,7 +94,35 @@ public class TeacherP5CodexClassifierTest {
         let mismatch=executeTeacherP5CodexClassifierAdapter(identity.args,executor:P5CodexFakeExecutor(),codexExecutable:"/fake/codex",timeoutMillis:1000)
         @Expect(mismatch.diagnostic,"adapter_identity_invalid");@Expect(exists(Path(identity.output)),false)
         let malformed=p5CodexFixture("negative-request");File.writeTo(Path(malformed.request),"{".toArray())
-        @Expect(executeTeacherP5CodexClassifierAdapter(malformed.args,executor:P5CodexFakeExecutor(),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"malformed_request_json")
+        @Expect(executeTeacherP5CodexClassifierAdapter(malformed.args,executor:P5CodexFakeExecutor(),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"request_contract_invalid")
+    }
+
+    // P5-C-UT-05/POS-05/NEG-05/BND-05: failures expose only a workspace-local safe enum sidecar.
+    @TestCase public func p5CSafeDiagnosticSidecarIsAtomicBoundedAndStaleSafe(): Unit {
+        let sidecarName = "classifier-diagnostic.json"
+        for ((mode, expected) in [("nonzero", "classifier_process_failed"), ("timeout", "classifier_timeout"),
+            ("invalid_utf8", "invalid_response_encoding"), ("malformed", "malformed_structured_output"),
+            ("oversized", "classifier_output_too_large"), ("forbidden", "response_contains_forbidden_data"),
+            ("throw", "classifier_failure_unknown")]) {
+            let fixture = p5CodexFixture("sidecar-${mode}")
+            let sidecar = Path(fixture.workspace).join(sidecarName)
+            File.writeTo(sidecar, "stale /private/token=secret".toArray())
+            let result = executeTeacherP5CodexClassifierAdapter(fixture.args,
+                executor: P5CodexFakeExecutor(mode: mode), codexExecutable: "/fake/codex", timeoutMillis: 1000)
+            @Expect(result.ok, false); @Expect(result.diagnostic, expected); @Expect(exists(sidecar), true)
+            let safe = if (exists(sidecar)) { teacherReadUtf8File(sidecar.toString()) } else { "" }
+            @Expect(safe, "{\"schemaVersion\":\"cangjie-teacher-classifier-diagnostic-v1\",\"diagnostic\":\"${expected}\"}\n")
+            @Expect(safe.toArray().size <= 160, true); @Expect(safe.contains("/Users"), false)
+            @Expect(safe.contains("/private"), false); @Expect(safe.toAsciiLower().contains("token"), false)
+            @Expect(exists(Path(sidecar.toString() + ".tmp")), false)
+        }
+
+        let success = p5CodexFixture("sidecar-success")
+        let successSidecar = Path(success.workspace).join(sidecarName)
+        File.writeTo(successSidecar, "stale /private/token=secret".toArray())
+        let accepted = executeTeacherP5CodexClassifierAdapter(success.args,
+            executor: P5CodexFakeExecutor(), codexExecutable: "/fake/codex", timeoutMillis: 1000)
+        @Expect(accepted.ok, true); @Expect(accepted.diagnostic, "ok"); @Expect(exists(successSidecar), false)
     }
 }
 
