@@ -53,11 +53,12 @@ public func runClaudeClassifierAdapter(args: Array<String>,
         result.diagnostic = "expected_identity_not_allowed"; return result
     }
     if (!claudeClassifierPathsValid(options)) { result.diagnostic = "classifier_path_boundary_invalid"; return result }
+    if (!removeClaudeClassifierDiagnostic(options)) { return failClaudeClassifier(result, options, "diagnostic_reset_failed") }
     let request = try { readClaudeClassifierUtf8(options.request) } catch (e: IllegalArgumentException) {
-        result.diagnostic = e.message; return result
+        return failClaudeClassifier(result, options, e.message)
     }
-    if (request.toArray().size > CLAUDE_CLASSIFIER_MAX_BYTES) { result.diagnostic = "request_too_large"; return result }
-    if (!validClaudeClassifierRequest(request)) { result.diagnostic = "request_contract_invalid"; return result }
+    if (request.toArray().size > CLAUDE_CLASSIFIER_MAX_BYTES) { return failClaudeClassifier(result, options, "request_too_large") }
+    if (!validClaudeClassifierRequest(request)) { return failClaudeClassifier(result, options, "request_contract_invalid") }
     let schema = claudeClassifierJsonSchema()
     let prompt = "Classify the root cause of this Cangjie benchmark failure using only the supplied JSON; do not merely repeat its surface compiler or test outcome. " +
         "When the supplied evidence itself proves missing or misapplied reusable Cangjie syntax, standard-library, stdx, toolchain, diagnostic, version-migration, or engineering knowledge, choose knowledge_gap even when failureObservation is compile_error or unit_failure. " +
@@ -72,18 +73,36 @@ public func runClaudeClassifierAdapter(args: Array<String>,
         "--bare", "--disable-slash-commands", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--tools", ""],
         options.workspace, env: [("HOME", options.runtimeHome), ("CLAUDE_CONFIG_DIR", options.runtimeHome),
             ("CANGJIE_TEACHER_SESSION", options.sessionId)], timeoutMillis: 300000))
-    if (cli.timedOut) { result.diagnostic = "classifier_timeout"; return result }
-    if (cli.exitCode != 0) { result.diagnostic = "classifier_process_failed"; return result }
-    if (cli.output == "invalid_response_encoding") { result.diagnostic = "invalid_response_encoding"; return result }
-    if (cli.output.toArray().size > CLAUDE_CLASSIFIER_MAX_BYTES) { result.diagnostic = "classifier_output_too_large"; return result }
+    if (cli.timedOut) { return failClaudeClassifier(result, options, "classifier_timeout") }
+    if (cli.exitCode != 0) { return failClaudeClassifier(result, options, "classifier_process_failed") }
+    if (cli.output == "invalid_response_encoding") { return failClaudeClassifier(result, options, "invalid_response_encoding") }
+    if (cli.output.toArray().size > CLAUDE_CLASSIFIER_MAX_BYTES) { return failClaudeClassifier(result, options, "classifier_output_too_large") }
     let decoded = decodeClaudeClassifierStream(cli.output)
-    if (decoded[1] != "ok") { result.diagnostic = decoded[1]; return result }
-    if (!claudeClassifierResponseFactsValid(request, decoded[0])) { result.diagnostic = "classifier_response_source_fact_unsupported"; return result }
+    if (decoded[1] != "ok") { return failClaudeClassifier(result, options, decoded[1]) }
+    if (!claudeClassifierResponseFactsValid(request, decoded[0])) { return failClaudeClassifier(result, options, "classifier_response_source_fact_unsupported") }
     try {
         _ = teacherAtomicWrite(options.output, decoded[0] + "\n")
-        if (readClaudeClassifierUtf8(options.output) != decoded[0] + "\n") { result.diagnostic = "response_write_failed"; return result }
-    } catch (_: Exception) { result.diagnostic = "response_write_failed"; return result }
+        if (readClaudeClassifierUtf8(options.output) != decoded[0] + "\n") { return failClaudeClassifier(result, options, "response_write_failed") }
+    } catch (_: Exception) { return failClaudeClassifier(result, options, "response_write_failed") }
+    if (!removeClaudeClassifierDiagnostic(options)) { return failClaudeClassifier(result, options, "diagnostic_reset_failed") }
     result.ok = true; result.diagnostic = "ok"; result
+}
+
+private func failClaudeClassifier(result:ClaudeClassifierRunResult,options:ClaudeClassifierOptions,diagnostic:String):ClaudeClassifierRunResult{
+    let safe=if(claudeClassifierDiagnosticAllowed(diagnostic)){diagnostic}else{"classifier_failure_unknown"}
+    let payload="{\"schemaVersion\":\"cangjie-teacher-classifier-diagnostic-v1\",\"diagnostic\":\"${safe}\"}\n"
+    try{_=teacherAtomicWrite(Path(options.workspace).join("classifier-diagnostic.json").toString(),payload);result.diagnostic=safe}
+    catch(_:Exception){result.diagnostic="diagnostic_write_failed"};result
+}
+private func removeClaudeClassifierDiagnostic(options:ClaudeClassifierOptions):Bool{
+    let path=Path(options.workspace).join("classifier-diagnostic.json")
+    try{if(exists(path)){remove(path)};!exists(path)}catch(_:Exception){false}
+}
+private func claudeClassifierDiagnosticAllowed(value:String):Bool{
+    ["invalid_response_encoding","request_too_large","request_contract_invalid","classifier_timeout","classifier_process_failed",
+        "classifier_output_too_large","malformed_stream_json","duplicate_init","classifier_unsuccessful_result","missing_init",
+        "observed_model_mismatch","missing_or_duplicate_terminal_result","response_contract_invalid","response_contains_forbidden_data",
+        "malformed_structured_output","classifier_response_source_fact_unsupported","response_write_failed","diagnostic_reset_failed"].contains(value)
 }
 
 private func parseClaudeClassifierOptions(args: Array<String>): (ClaudeClassifierOptions, String) {

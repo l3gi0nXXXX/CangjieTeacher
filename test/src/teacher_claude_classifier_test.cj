@@ -127,4 +127,37 @@ public class TeacherClaudeClassifierTest {
             @Expect(runClaudeClassifierAdapter(setup[1],executor:supported).diagnostic,"ok")
         }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
     }
+
+    // P5-C-UT-04/POS-04/NEG-04/BND-04: failures expose only a workspace-local enum sidecar.
+    @TestCase public func safeFailureDiagnosticSidecarIsAtomicBoundedAndStaleSafe():Unit{
+        let setup=prepare("safe-sidecar");let r=setup[0];let sidecar=Path("${r}/workspace/classifier-diagnostic.json")
+        try{
+            File.writeTo(Path("${r}/workspace/request.json"),absRequest().toArray())
+            let unsafeText="Float64 requires import std.math.* before global abs(value); /Users/private/秘密😀 token=secret."
+            let blocked=runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(unsafeText))))
+            @Expect(blocked.diagnostic,"response_contains_forbidden_data");@Expect(exists(sidecar),true)
+            let safe=if(exists(sidecar)){teacherReadUtf8File(sidecar.toString())}else{""}
+            @Expect(safe,"{\"schemaVersion\":\"cangjie-teacher-classifier-diagnostic-v1\",\"diagnostic\":\"response_contains_forbidden_data\"}\n")
+            @Expect(safe.contains("/Users"),false);@Expect(safe.toAsciiLower().contains("token"),false);@Expect(safe.contains("秘密😀"),false)
+
+            File.writeTo(sidecar,"stale /private/token=secret".toArray())
+            let correct=ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("Float64 receiver .abs() is unavailable; use the global documented abs(value) form.")))
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:correct).diagnostic,"ok")
+            @Expect(exists(sidecar),false)
+            remove(Path("${r}/workspace/response.json"))
+
+            File.writeTo(Path("${r}/workspace/request.json"),[UInt8(0xff),UInt8(0xfe)])
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,structured()))).diagnostic,"invalid_response_encoding")
+            let encodingSafe=if(exists(sidecar)){teacherReadUtf8File(sidecar.toString())}else{""}
+            @Expect(encodingSafe.contains("invalid_response_encoding"),true)
+            @Expect(encodingSafe!=""&&encodingSafe.toArray().size<=160,true)
+
+            File.writeTo(Path("${r}/workspace/request.json"),absRequest().toArray())
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(124,"private timeout payload",timedOut:true))).diagnostic,"classifier_timeout")
+            @Expect(teacherReadUtf8File(sidecar.toString()).contains("classifier_timeout"),true)
+            @Expect(teacherReadUtf8File(sidecar.toString()).contains("private timeout payload"),false)
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,"{bad"))).diagnostic,"malformed_stream_json")
+            @Expect(teacherReadUtf8File(sidecar.toString()).contains("malformed_stream_json"),true)
+        }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
+    }
 }
