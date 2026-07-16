@@ -554,6 +554,27 @@ public class TeacherP0P3Test {
         @Expect(runeArrayWrong.ok,false);@Expect(runeArrayWrong.feedback.contains("string-constructor"),true)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRequiresStdxDependencyProjectEvidence():Unit{
+        let compiler="root package imports package 'stdx.crypto.digest' but it is not added as a dependency in cjpm.toml"
+        let source="import stdx.crypto.digest.SHA256\nmain(){ let digest=SHA256(); digest.write(Array<UInt8>()); println(digest.finish().size) }"
+        let negative="import stdx.crypto.digest.SHA256\nmain(){ let digest=SHA256(); println(digest.finish().size) }"
+        let missingNarrative=validateTeacherAuthorityRelevance(compiler,"G-CJPM-DEPENDENCY",
+            "Import stdx.crypto.digest.SHA256 before use.","Call SHA256 from stdx.crypto.digest.",source,negative,source,
+            positiveDependencyProfile:"stdx-magic",negativeDependencyProfile:"none",boundaryDependencyProfile:"stdx-magic")
+        @Expect(missingNarrative.ok,false);@Expect(missingNarrative.feedback.contains("cjpm.toml"),true)
+        @Expect(missingNarrative.feedback.contains("bin-dependencies"),true);@Expect(missingNarrative.feedback.contains("path-option"),true)
+        let narrative="Declare stdx in cjpm.toml under target bin-dependencies with path-option, then import stdx.crypto.digest.SHA256."
+        let wrongProfiles=validateTeacherAuthorityRelevance(compiler,"G-CJPM-DEPENDENCY",narrative,narrative,source,negative,source,
+            positiveDependencyProfile:"none",negativeDependencyProfile:"stdx-magic",boundaryDependencyProfile:"none")
+        @Expect(wrongProfiles.ok,false);@Expect(wrongProfiles.feedback.contains("stdx-magic"),true)
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-CJPM-DEPENDENCY",narrative,narrative,source,negative,source,
+            positiveDependencyProfile:"stdx-magic",negativeDependencyProfile:"none",boundaryDependencyProfile:"stdx-magic")
+        @Expect(relevant.ok,true)
+        let unsafeResult=validateTeacherAuthorityRelevance(compiler+" 中文😀 /Users/private/token Authorization","G-CJPM-DEPENDENCY","generic","generic",source,negative,source,
+            positiveDependencyProfile:"none",negativeDependencyProfile:"none",boundaryDependencyProfile:"none")
+        @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false)
+    }
+
     @TestCase public func candidateControlFakeEndToEndAndBoundaries(): Unit {
         let root = "/tmp/teacher-candidate-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         try {

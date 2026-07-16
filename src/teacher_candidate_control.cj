@@ -107,7 +107,9 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
                 let extraction=extractTeacherAtom(options,row,run,solutionRoot,atomFeedback,extractorExecutor)
                 if(extraction[1]!="ok"){result.diagnostic=extraction[1];return result};let currentSpec=extraction[0]
                 let relevance=validateTeacherAuthorityRelevance(row.compilerOutput,row.missingKnowledge,currentSpec.explanation,currentSpec.example,
-                    currentSpec.positiveSource,currentSpec.negativeSource,currentSpec.boundarySource)
+                    currentSpec.positiveSource,currentSpec.negativeSource,currentSpec.boundarySource,
+                    positiveDependencyProfile:currentSpec.positiveDependencyProfile,negativeDependencyProfile:currentSpec.negativeDependencyProfile,
+                    boundaryDependencyProfile:currentSpec.boundaryDependencyProfile)
                 if(!relevance.ok){atomFeedback=relevance.feedback;continue}
                 let observation=deriveKnowledgeObservation(caseValue,currentSpec.family,currentSpec.concept,row.targetVersion,currentSpec.explanation,currentSpec.citation,currentSpec.sourceClass,row.evidence+currentSpec.transcriptHash)
                 if(!validateObservationNoSolutionLeak(observation)){result.diagnostic="observation_leakage";return result}
@@ -175,7 +177,8 @@ private func candidateStableDiagnostic(value: String): Bool {
 }
 
 public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowledge:String,explanation:String,example:String,
-    positiveSource:String,negativeSource:String,boundarySource:String):TeacherAuthorityRelevanceResult {
+    positiveSource:String,negativeSource:String,boundarySource:String,positiveDependencyProfile!:String="",
+    negativeDependencyProfile!:String="",boundaryDependencyProfile!:String=""):TeacherAuthorityRelevanceResult {
     let out=TeacherAuthorityRelevanceResult()
     // Extract only allow-listed quoted tokens before line sanitization: a pipe-flattened
     // compiler line may also contain "return code", which causes the whole line to be redacted.
@@ -207,6 +210,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
     if(gap.contains("rune-unicode-import")&&!strong.contains("std.unicode")){strong.add("std.unicode")}
     let required=if(strong.isEmpty()){teacherAuthorityGapAnchors(missingKnowledge)}else{let anchors=ArrayList<String>();for(anchor in strong){anchors.add(anchor)};for(anchor in primary){teacherAuthorityAddAnchor(anchors,anchor)};anchors}
     for(anchor in required){out.anchors.add(anchor)}
+    let stdxProjectAware=gap.contains("cjpm-dependency")&&compilerOutput.toAsciiLower().contains("stdx.")
+    if(stdxProjectAware){for(anchor in ["cjpm.toml","bin-dependencies","path-option"]){teacherAuthorityAddAnchor(out.anchors,anchor)}}
     if(required.isEmpty()){out.diagnostic="authority_anchor_missing";out.feedback="Authority relevance failed: no safe public failure anchor was available; return knowledge that directly explains the canonical gap.";return out}
     let narrative=(explanation+"\n"+example).toAsciiLower()
     let positive=positiveSource.toAsciiLower();let negative=negativeSource.toAsciiLower();let boundary=boundarySource.toAsciiLower()
@@ -217,7 +222,14 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
     let eachSource=teacherAuthorityAnyAnchor(positive,required)&&teacherAuthorityAnyAnchor(negative,required)&&teacherAuthorityAnyAnchor(boundary,required)
     let strongCoverage=strong.isEmpty()||teacherAuthorityAllAnchors(narrative,strong)&&teacherAuthorityAllAnchors(narrative,primary)&&teacherAuthorityAllSourceAnchors(positiveSource,strong)&&
         teacherAuthorityAllSourceAnchors(boundarySource,strong)&&teacherAuthorityAllSourceAnchors(negativeSource,primary)
-    if(narrativeHits>=minimum&&sourceHits>=minimum&&eachSource&&strongCoverage){out.ok=true;out.diagnostic="ok";return out}
+    if(narrativeHits>=minimum&&sourceHits>=minimum&&eachSource&&strongCoverage){
+        if(stdxProjectAware&&(!(narrative.contains("cjpm.toml")&&narrative.contains("bin-dependencies")&&narrative.contains("path-option"))||
+            positiveDependencyProfile!="stdx-magic"||negativeDependencyProfile!="none"||boundaryDependencyProfile!="stdx-magic")){
+            out.feedback=teacherAuthorityBoundedFeedback("Stdx dependency knowledge must explain cjpm.toml, target bin-dependencies, and path-option. Its positive and boundary atom tests must use dependency profile stdx-magic; its missing-dependency negative atom test must use profile none.")
+            return out
+        }
+        out.ok=true;out.diagnostic="ok";return out
+    }
     var names="";for(i in 0..required.size){if(i>0){names+=","};names+=required[i]}
     out.feedback=teacherAuthorityBoundedFeedback("Authority relevance failed. Required public failure anchors and prerequisites: ${names}. The explanation and example, plus positive and boundary sources, must demonstrate every listed item. The negative source must demonstrate the primary public failure anchor but may intentionally omit a prerequisite to prove the failure. Do not satisfy this check with comments, substitute a generic type fact, or include private paths, secrets, solutions, hidden tests, or references.")
     out
@@ -277,6 +289,7 @@ private func teacherAuthorityAllSourceAnchors(source:String,anchors:ArrayList<St
         else if(anchor=="string-constructor"){if(!code.contains("string(")){return false}}
         else if(anchor=="array<rune>"){if(!code.contains("array<rune>")){return false}}
         else if(anchor=="fromrunearray"){if(!code.contains(".fromrunearray(")){return false}}
+        else if(anchor.startsWith("stdx.")){var imported=false;for(line in code.split("\n")){if(line.trimAscii().startsWith("import ${anchor}")){imported=true;break}};if(!imported){return false}}
         else if(!teacherAuthorityAnchorPresent(code,anchor)){return false}
     };true
 }
