@@ -157,18 +157,32 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
     let solutionHash=teacherDirectoryHash(solutionRoot)
     let allowedEvidence=teacherSanitizeEvidence(row.evidence+"\n"+row.compilerOutput)
     let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail with negativeDiagnostic. Bind to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}"
-    let result=executor.execute(TeacherCommandSpec(options.extractor,["exec","--model",options.model,"--sandbox","read-only","--skip-git-repo-check","--ephemeral","--ignore-user-config","--ignore-rules","-C",solutionRoot,prompt],solutionRoot,timeoutMillis:options.timeoutMillis))
-    if(result.timedOut){return(emptyTeacherAtomSpec(),"extractor_timeout")};if(result.exitCode!=0){return(emptyTeacherAtomSpec(),"extractor_failed")}
-    if(result.output.toRuneArray().size>262144){return(emptyTeacherAtomSpec(),"extractor_output_too_large")}
+    let extractorRoot="${options.root}/runs/${options.runId}/extractor-workspaces/${row.caseId}"
+    try { if(!exists(Path(extractorRoot))){Directory.create(Path(extractorRoot),recursive:true)} } catch(_:Exception){return(emptyTeacherAtomSpec(),"extractor_workspace_failed")}
+    let schemaPath="${extractorRoot}/response.schema.json";let responsePath="${extractorRoot}/response.json"
+    try{_=teacherAtomicWrite(schemaPath,teacherExtractorOutputSchema())}catch(_:Exception){return(emptyTeacherAtomSpec(),"extractor_schema_write_failed")}
+    var raw=""
+    while(true){
+        try{if(exists(Path(responsePath))){remove(Path(responsePath))}}catch(_:Exception){}
+        let process=executor.execute(TeacherCommandSpec(options.extractor,["exec","--model",options.model,"--sandbox","read-only","--skip-git-repo-check","--ephemeral","--ignore-user-config","--ignore-rules","-C",solutionRoot,"--output-schema",schemaPath,"--output-last-message",responsePath,prompt],solutionRoot,timeoutMillis:options.timeoutMillis))
+        if(process.timedOut||process.exitCode!=0||!exists(Path(responsePath))){continue}
+        try{raw=teacherReadUtf8File(responsePath)}catch(_:Exception){continue}
+        if(raw.trimAscii()==""){continue};break
+    }
+    if(raw.toRuneArray().size>262144){return(emptyTeacherAtomSpec(),"extractor_output_too_large")}
     try {
-        let o=JsonValue.fromStr(result.output.trimAscii()).asObject();let provider=candidateString(o,"provider");let model=candidateString(o,"model")
+        let o=JsonValue.fromStr(raw.trimAscii()).asObject();let provider=candidateString(o,"provider");let model=candidateString(o,"model")
         if(provider!="codex"||model!=options.model){return(emptyTeacherAtomSpec(),"extractor_identity_mismatch")}
-        let spec=TeacherAtomSpec(candidateString(o,"knowledgeFamily"),candidateString(o,"concept"),candidateString(o,"explanation"),candidateString(o,"example"),candidateString(o,"citation"),candidateString(o,"sourceClass"),candidateString(o,"positiveSource"),candidateString(o,"negativeSource"),candidateString(o,"boundarySource"),candidateString(o,"negativeDiagnostic"),"sha256:${teacherStableHash(result.output)}",provider,model)
+        let spec=TeacherAtomSpec(candidateString(o,"knowledgeFamily"),candidateString(o,"concept"),candidateString(o,"explanation"),candidateString(o,"example"),candidateString(o,"citation"),candidateString(o,"sourceClass"),candidateString(o,"positiveSource"),candidateString(o,"negativeSource"),candidateString(o,"boundarySource"),candidateString(o,"negativeDiagnostic"),"sha256:${teacherStableHash(raw)}",provider,model)
         if(!teacherK4Family(spec.family)||spec.concept==""||spec.explanation==""||spec.example==""||spec.positiveSource==""||spec.negativeSource==""||spec.boundarySource==""||spec.negativeDiagnostic==""){return(emptyTeacherAtomSpec(),"extractor_contract_invalid")}
         if(spec.sourceClass!="official"||spec.citation!=row.citation||!spec.citation.startsWith("https://docs.cangjie-lang.cn/")){return(emptyTeacherAtomSpec(),"extractor_source_invalid")}
         if(candidateForbidden(spec.concept+spec.explanation+spec.example+spec.positiveSource+spec.negativeSource+spec.boundarySource)){return(emptyTeacherAtomSpec(),"extractor_contamination")}
         (spec,"ok")
     }catch(_:Exception){(emptyTeacherAtomSpec(),"malformed_extractor_json")}
+}
+
+private func teacherExtractorOutputSchema():String{
+    "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"provider\",\"model\",\"knowledgeFamily\",\"concept\",\"explanation\",\"example\",\"citation\",\"sourceClass\",\"positiveSource\",\"negativeSource\",\"boundarySource\",\"negativeDiagnostic\"],\"properties\":{\"provider\":{\"type\":\"string\",\"enum\":[\"codex\"]},\"model\":{\"type\":\"string\",\"enum\":[\"gpt-5.6-sol\"]},\"knowledgeFamily\":{\"type\":\"string\",\"enum\":[\"syntax\",\"standard_library\",\"stdx\",\"toolchain\",\"compiler_diagnostic\",\"version_migration\",\"engineering_practice\"]},\"concept\":{\"type\":\"string\"},\"explanation\":{\"type\":\"string\"},\"example\":{\"type\":\"string\"},\"citation\":{\"type\":\"string\"},\"sourceClass\":{\"type\":\"string\",\"enum\":[\"official\"]},\"positiveSource\":{\"type\":\"string\"},\"negativeSource\":{\"type\":\"string\"},\"boundarySource\":{\"type\":\"string\"},\"negativeDiagnostic\":{\"type\":\"string\"}}}"
 }
 
 private func emptyTeacherAtomSpec():TeacherAtomSpec{TeacherAtomSpec("","","","","","","","","","","","","")}

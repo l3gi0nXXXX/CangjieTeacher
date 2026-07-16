@@ -22,6 +22,7 @@ private class RecordingExecutor <: TeacherCommandExecutor {
         if (exists(Path("${spec.cwd}/src/TestMain.cj"))) { observedInjectedTests = true }
         let selected = if (index < results.size) { results[index] } else { results[results.size - 1] }
         index += 1
+        for(i in 0..spec.args.size-1){if(spec.args[i]=="--output-last-message"&&i+1<spec.args.size&&selected.exitCode==0&&!selected.timedOut){File.writeTo(Path(spec.args[i+1]),selected.output.toArray())}}
         selected
     }
 }
@@ -398,16 +399,19 @@ public class TeacherP0P3Test {
             let options = TeacherCliOptions(); options.command="candidate-build"; options.root=root; options.manifest="${root}/manifest.jsonl"
             options.checksum=teacherStableHash(teacherJoin(caseLines(), "\n"));options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.outputRoot="${root}/exports/r1";options.model="gpt-5.6-sol"
             let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 Rune iteration\",\"explanation\":\"Use Rune iteration for Unicode character boundaries.\",\"example\":\"Iterate over text.runes() for Chinese and emoji.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let x = 1 }\",\"negativeSource\":\"main() { unknownName }\",\"boundarySource\":\"main() { let text = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\"}"
-            let extractor=RecordingExecutor(results:[TeacherProcessResult(0,extractorJson)])
+            let extractor=RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true),TeacherProcessResult(7,"provider unavailable"),TeacherProcessResult(0,extractorJson)])
             let atom=RecordingExecutor(results:[TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(1,"undefined name"),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,"")])
             let result = buildTeacherCandidates(options,extractorExecutor:extractor,atomExecutor:atom)
             @Expect(result.ok, true); @Expect(result.accepted, 1)
-            @Expect(extractor.specs[0].args.contains("gpt-5.6-sol"), true)
-            @Expect(extractor.specs[0].args.contains("read-only"), true)
-            @Expect(extractor.specs[0].args.contains("--ephemeral"), true)
-            @Expect(extractor.specs[0].args.contains("-C"), true)
-            @Expect(extractor.specs[0].args.contains("--cwd"), false)
-            @Expect(extractor.specs[0].args.contains("--full-auto"), false)
+            @Expect(extractor.specs.size,3)
+            @Expect(extractor.specs[2].args.contains("gpt-5.6-sol"), true)
+            @Expect(extractor.specs[2].args.contains("read-only"), true)
+            @Expect(extractor.specs[2].args.contains("--ephemeral"), true)
+            @Expect(extractor.specs[2].args.contains("-C"), true)
+            @Expect(extractor.specs[2].args.contains("--output-schema"), true)
+            @Expect(extractor.specs[2].args.contains("--output-last-message"), true)
+            @Expect(extractor.specs[2].args.contains("--cwd"), false)
+            @Expect(extractor.specs[2].args.contains("--full-auto"), false)
             @Expect(exists(Path("${root}/exports/r1/observations.tsv")), true)
             @Expect(exists(Path("${root}/exports/r1/atom-tests.jsonl")), true)
             @Expect(exists(Path("${root}/exports/r1/candidate-knowledge.tsv")), true)
@@ -425,8 +429,6 @@ public class TeacherP0P3Test {
             @Expect(buildTeacherCandidates(options).diagnostic, "invalid_response_encoding")
             options.authorityGap="${root}/gap.jsonl";options.outputRoot="${root}/exports/bad-extractor"
             @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(0,"not-json")])).diagnostic,"malformed_extractor_json")
-            options.outputRoot="${root}/exports/timeout"
-            @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true)])).diagnostic,"extractor_timeout")
             options.model="unexpected-model";options.outputRoot="${root}/exports/model"
             @Expect(buildTeacherCandidates(options,extractorExecutor:extractor).diagnostic,"extractor_model_identity_invalid")
             options.model="gpt-5.6-sol";_=teacherAtomicWrite("${root}/runs/teacher-r1/evidence/CJ-HUMANEVAL-000/solution.binding","wrong\twrong\twrong\n");options.outputRoot="${root}/exports/binding"
