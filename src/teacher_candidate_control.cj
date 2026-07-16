@@ -79,7 +79,7 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
             let caseValue = match (cases.get(row.caseId)) { case Some(v) => v; case None => result.diagnostic = "gap_case_not_in_manifest"; return result }
             let run = match (runs.get(row.caseId)) { case Some(v) => v; case None => result.diagnostic = "complete_teacher_run_required"; return result }
             if (row.datasetVersion != caseValue.datasetVersion || run.datasetVersion != row.datasetVersion) { result.diagnostic = "dataset_version_mismatch"; return result }
-            if(run.promptHash!=caseValue.promptHash||run.modelId!="gpt-5.6"||run.evidenceHash==""){result.diagnostic="complete_run_identity_invalid";return result}
+            if(run.promptHash!=caseValue.promptHash||run.modelId!="gpt-5.6-sol"||run.evidenceHash==""){result.diagnostic="complete_run_identity_invalid";return result}
             let solutionRoot = TeacherPaths(options.root).solution(row.caseId)
             if (!exists(Path(solutionRoot))||!validateTeacherSolutionBinding(options.root,run)) { result.diagnostic = "solution_evidence_binding_invalid"; return result }
             let protected = teacherPrivateArtifacts(solutionRoot)
@@ -153,11 +153,11 @@ private func parseTeacherAuthorityGapJsonl(text: String): (Array<TeacherGapRow>,
 
 private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:TeacherRunManifest,solutionRoot:String,
     executor:TeacherCommandExecutor):(TeacherAtomSpec,String) {
-    if(options.model!="gpt-5.6"){return (emptyTeacherAtomSpec(),"extractor_model_identity_invalid")}
+    if(options.model!="gpt-5.6-sol"){return (emptyTeacherAtomSpec(),"extractor_model_identity_invalid")}
     let solutionHash=teacherDirectoryHash(solutionRoot)
     let allowedEvidence=teacherSanitizeEvidence(row.evidence+"\n"+row.compilerOutput)
     let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail with negativeDiagnostic. Bind to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}"
-    let result=executor.execute(TeacherCommandSpec(options.extractor,["exec","--model",options.model,"--full-auto","--skip-git-repo-check","--cwd",solutionRoot,prompt],solutionRoot,timeoutMillis:options.timeoutMillis))
+    let result=executor.execute(TeacherCommandSpec(options.extractor,["exec","--model",options.model,"--sandbox","read-only","--skip-git-repo-check","--ephemeral","--ignore-user-config","--ignore-rules","-C",solutionRoot,prompt],solutionRoot,timeoutMillis:options.timeoutMillis))
     if(result.timedOut){return(emptyTeacherAtomSpec(),"extractor_timeout")};if(result.exitCode!=0){return(emptyTeacherAtomSpec(),"extractor_failed")}
     if(result.output.toRuneArray().size>262144){return(emptyTeacherAtomSpec(),"extractor_output_too_large")}
     try {

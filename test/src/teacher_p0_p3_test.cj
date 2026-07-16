@@ -388,7 +388,7 @@ public class TeacherP0P3Test {
             File.writeTo(Path("${root}/manifest.jsonl"), manifest.toArray())
             Directory.create(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src"), recursive: true)
             File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"), "private opaque implementation 987654".toArray())
-            let run = TeacherRunManifest("teacher-r1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6", "prompt-hash", 1, "complete", 0, "evidence")
+            let run = TeacherRunManifest("teacher-r1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol", "prompt-hash", 1, "complete", 0, "evidence")
             _ = persistCompletedTeacherRuns("${root}/runs/teacher-r1/completed.manifest", [run])
             _ = persistTeacherRunArtifacts(root,run,"generation","verification")
             _ = persistTeacherSolutionBinding(root,run)
@@ -396,12 +396,18 @@ public class TeacherP0P3Test {
             let gap = "{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"dataset-v1\",\"teacherRunId\":\"development-r1\",\"evidenceHash\":\"sha256:${teacherStableHash(evidence)}\",\"evidence\":\"${evidence}\",\"failureTaxonomy\":\"knowledge_gap\",\"knowledgeGapConfirmations\":2,\"caseId\":\"CJ-HUMANEVAL-000\",\"benchmark\":\"Cangjie-HumanEval\",\"taskText\":\"authority bound task\",\"visibleTestExcerpt\":\"\",\"compilerOutput\":\"knowledge gap\",\"missingKnowledge\":\"G-STRING\",\"interfaceId\":\"KI-02\",\"contentFamily\":\"KC-02\",\"updateMechanism\":\"KU-11\",\"targetVersion\":\"1.0.0\",\"officialCitation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\"}\n"
             File.writeTo(Path("${root}/gap.jsonl"), gap.toArray())
             let options = TeacherCliOptions(); options.command="candidate-build"; options.root=root; options.manifest="${root}/manifest.jsonl"
-            options.checksum=teacherStableHash(teacherJoin(caseLines(), "\n"));options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.outputRoot="${root}/exports/r1"
-            let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 Rune iteration\",\"explanation\":\"Use Rune iteration for Unicode character boundaries.\",\"example\":\"Iterate over text.runes() for Chinese and emoji.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let x = 1 }\",\"negativeSource\":\"main() { unknownName }\",\"boundarySource\":\"main() { let text = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\"}"
+            options.checksum=teacherStableHash(teacherJoin(caseLines(), "\n"));options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.outputRoot="${root}/exports/r1";options.model="gpt-5.6-sol"
+            let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 Rune iteration\",\"explanation\":\"Use Rune iteration for Unicode character boundaries.\",\"example\":\"Iterate over text.runes() for Chinese and emoji.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let x = 1 }\",\"negativeSource\":\"main() { unknownName }\",\"boundarySource\":\"main() { let text = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\"}"
             let extractor=RecordingExecutor(results:[TeacherProcessResult(0,extractorJson)])
             let atom=RecordingExecutor(results:[TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(1,"undefined name"),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,"")])
             let result = buildTeacherCandidates(options,extractorExecutor:extractor,atomExecutor:atom)
             @Expect(result.ok, true); @Expect(result.accepted, 1)
+            @Expect(extractor.specs[0].args.contains("gpt-5.6-sol"), true)
+            @Expect(extractor.specs[0].args.contains("read-only"), true)
+            @Expect(extractor.specs[0].args.contains("--ephemeral"), true)
+            @Expect(extractor.specs[0].args.contains("-C"), true)
+            @Expect(extractor.specs[0].args.contains("--cwd"), false)
+            @Expect(extractor.specs[0].args.contains("--full-auto"), false)
             @Expect(exists(Path("${root}/exports/r1/observations.tsv")), true)
             @Expect(exists(Path("${root}/exports/r1/atom-tests.jsonl")), true)
             @Expect(exists(Path("${root}/exports/r1/candidate-knowledge.tsv")), true)
@@ -423,7 +429,7 @@ public class TeacherP0P3Test {
             @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true)])).diagnostic,"extractor_timeout")
             options.model="unexpected-model";options.outputRoot="${root}/exports/model"
             @Expect(buildTeacherCandidates(options,extractorExecutor:extractor).diagnostic,"extractor_model_identity_invalid")
-            options.model="gpt-5.6";_=teacherAtomicWrite("${root}/runs/teacher-r1/evidence/CJ-HUMANEVAL-000/solution.binding","wrong\twrong\twrong\n");options.outputRoot="${root}/exports/binding"
+            options.model="gpt-5.6-sol";_=teacherAtomicWrite("${root}/runs/teacher-r1/evidence/CJ-HUMANEVAL-000/solution.binding","wrong\twrong\twrong\n");options.outputRoot="${root}/exports/binding"
             @Expect(buildTeacherCandidates(options,extractorExecutor:extractor).diagnostic,"solution_evidence_binding_invalid")
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
