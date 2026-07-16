@@ -237,9 +237,11 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         if(gap.contains("unnecessary-undeclared-import-for-available-api")&&
             (!(narrative.contains("api")&&(narrative.contains("provides")||narrative.contains("ownership")||narrative.contains("belongs"))&&
                 narrative.contains("remove")&&narrative.contains("std.text"))||narrative.contains("add std.text")||narrative.contains("add a dependency")||
-                teacherAuthorityHasImport(positiveSource,"std.text")||teacherAuthorityHasImport(boundarySource,"std.text")||
-                !teacherAuthorityHasImport(negativeSource,"std.text"))){
-            out.feedback=teacherAuthorityBoundedFeedback("First verify which package provides the StringBuilder and Rune APIs, then remove the unnecessary undeclared import std.text instead of adding a dependency. Positive and boundary sources must use StringBuilder and Rune without importing std.text; the negative source must add import std.text to reproduce the original dependency diagnostic.")
+                narrative.contains("retain")||narrative.contains("preserve")||narrative.contains("runtime data")||
+                narrative.contains("string literal")||narrative.contains("label")||narrative.contains("context")||
+                positiveSource.toAsciiLower().contains("std.text")||boundarySource.toAsciiLower().contains("std.text")||
+                !teacherAuthorityOnlyImportMentions(negativeSource,"std.text"))){
+            out.feedback=teacherAuthorityBoundedFeedback("First verify which package provides the StringBuilder and Rune APIs, then remove the unnecessary undeclared import std.text instead of adding a dependency or retaining it as a label, context, runtime string, or comment. Positive and boundary sources must not contain std.text anywhere; the negative source may mention std.text only in its legal import line to reproduce the original dependency diagnostic.")
             return out
         }
         out.ok=true;out.diagnostic="ok";return out
@@ -319,12 +321,20 @@ private func teacherAuthorityCodeOnly(source:String):String{
 
 private func teacherAuthorityHasImport(source:String,packageName:String):Bool{
     let code=teacherAuthorityCodeOnly(source)
-    let prefix="import ${packageName}";let prefixSize=prefix.toRuneArray().size
-    for(line in code.split("\n")){
-        let trimmed=line.trimAscii();if(trimmed==prefix){return true}
-        if(trimmed.startsWith(prefix)){let runes=trimmed.toRuneArray();if(runes.size>prefixSize&&(runes[prefixSize]==r'.'||runes[prefixSize]==r' '||runes[prefixSize]==r'\t')){return true}}
-    }
+    for(line in code.split("\n")){if(teacherAuthorityImportLineMatches(line,packageName)){return true}}
     false
+}
+
+private func teacherAuthorityOnlyImportMentions(source:String,packageName:String):Bool{
+    var found=false;let token=packageName.toAsciiLower()
+    for(line in source.split("\n")){let lower=line.toAsciiLower();if(lower.contains(token)){if(lower.split(token).size!=2||!teacherAuthorityImportLineMatches(line,packageName)){return false};found=true}}
+    found
+}
+
+private func teacherAuthorityImportLineMatches(line:String,packageName:String):Bool{
+    let trimmed=line.trimAscii();let prefix="import ${packageName}";if(trimmed==prefix){return true}
+    if(!trimmed.startsWith(prefix)){return false};let runes=trimmed.toRuneArray();let prefixSize=prefix.toRuneArray().size
+    runes.size>prefixSize&&(runes[prefixSize]==r'.'||runes[prefixSize]==r' '||runes[prefixSize]==r'\t')
 }
 
 private func teacherAuthorityBoundedFeedback(value:String):String{
@@ -360,7 +370,7 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
     let solutionHash=teacherDirectoryHash(solutionRoot)
     let allowedEvidence=teacherSanitizeEvidence(row.evidence+"\n"+row.compilerOutput)
     let repair=if(atomFeedback==""){""}else{"\nA previous authority relevance or atom test failed. Correct the proposed knowledge explanation, example, test sources, or expected diagnostic using this sanitized compiler evidence, then return a complete replacement object:\n${atomFeedback}"}
-    let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic, positiveDependencyProfile, negativeDependencyProfile, boundaryDependencyProfile. Dependency profile values must be none or stdx-magic. Use stdx-magic only when a source imports stdx and its cjpm project must declare the bundled stdx binary dependency; for a missing-dependency negative test use none. For an stdx CJPM dependency gap, explanation/example must show an applicable [target.<triple>.bin-dependencies] table with a direct path-option line using the literal ${"$"+"{MAGIC_PATH}"} prefix and ending in /dynamic/stdx; do not invent an stdx = table entry or a placeholder path. For an unnecessary undeclared import gap, explanation/example must say to verify API ownership and remove the unnecessary import instead of adding a dependency; positive and boundary sources omit that import while the negative source adds it to reproduce the diagnostic. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}${repair}"
+    let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic, positiveDependencyProfile, negativeDependencyProfile, boundaryDependencyProfile. Dependency profile values must be none or stdx-magic. Use stdx-magic only when a source imports stdx and its cjpm project must declare the bundled stdx binary dependency; for a missing-dependency negative test use none. For an stdx CJPM dependency gap, explanation/example must show an applicable [target.<triple>.bin-dependencies] table with a direct path-option line using the literal ${"$"+"{MAGIC_PATH}"} prefix and ending in /dynamic/stdx; do not invent an stdx = table entry or a placeholder path. For an unnecessary undeclared import gap, explanation/example must say to verify API ownership and remove the unnecessary import instead of adding a dependency; positive and boundary sources must not contain std.text anywhere, including comments or strings, while the negative source mentions std.text only in the legal import line that reproduces the diagnostic. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}${repair}"
     let extractorRoot="${options.root}/runs/${options.runId}/extractor-workspaces/${row.caseId}"
     try { if(!exists(Path(extractorRoot))){Directory.create(Path(extractorRoot),recursive:true)} } catch(_:Exception){return(emptyTeacherAtomSpec(),"extractor_workspace_failed")}
     let schemaPath="${extractorRoot}/response.schema.json";let responsePath="${extractorRoot}/response.json"

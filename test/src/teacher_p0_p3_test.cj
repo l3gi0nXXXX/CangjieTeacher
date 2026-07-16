@@ -605,6 +605,26 @@ public class TeacherP0P3Test {
         let textualIsNotText=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
             narrative,narrative,positive,textualImport,boundary)
         @Expect(textualIsNotText.ok,false)
+        let runtimeLabel=positive.replace("main(){","main(){ let apiOwner=\"std.text\";")
+        let runtimeLabelResult=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            narrative,narrative,runtimeLabel,negative,boundary)
+        @Expect(runtimeLabelResult.ok,false)
+        let commentDisguise=boundary+" // preserve std.text as context"
+        let commentResult=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            narrative,narrative,positive,negative,commentDisguise)
+        @Expect(commentResult.ok,false)
+        let noisyNarrative="Remove the import but retain the std.text label as runtime data in a string literal for context. StringBuilder and Rune APIs remain available."
+        let noisyResult=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            noisyNarrative,noisyNarrative,positive,negative,boundary)
+        @Expect(noisyResult.ok,false)
+        let negativeNoise=negative+"\n// preserve std.text label"
+        let negativeNoiseResult=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            narrative,narrative,positive,negativeNoise,boundary)
+        @Expect(negativeNoiseResult.ok,false)
+        let sameLineNoise="import std.text.* // preserve std.text label\n"+positive
+        let sameLineNoiseResult=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            narrative,narrative,positive,sameLineNoise,boundary)
+        @Expect(sameLineNoiseResult.ok,false)
         let unsafeResult=validateTeacherAuthorityRelevance(compiler+" 中文😀 /Users/private/token Authorization","G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
             "generic","generic",positive,negative,boundary)
         @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false)
