@@ -41,6 +41,10 @@ public class TeacherAtomExecutionResult {
     public var ok=false;public var diagnostic="atom_test_failed";public var evidenceJson="";public var feedback="";public init(){}
 }
 
+public func teacherRunCompleteForCandidate(run: TeacherRunManifest, expectedRunId: String): Bool {
+    run.runId == expectedRunId && run.status == "complete" && run.attempt >= 1 && run.exitCode == 0
+}
+
 public func runTeacherCandidateBuild(options: TeacherCliOptions): Int64 {
     let result = buildTeacherCandidates(options)
     if (!result.ok) { println("candidate build blocked diagnostic=${result.diagnostic}"); return 1 }
@@ -67,7 +71,7 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
         let runs = HashMap<String, TeacherRunManifest>()
         for (run in completed) {
             if (runs.contains(run.caseId)) { result.diagnostic = "duplicate_complete_run"; return result }
-            if (run.runId == options.runId && run.status == "complete" && run.attempt == 1 && run.exitCode == 0) { runs.add(run.caseId, run) }
+            if (teacherRunCompleteForCandidate(run, options.runId)) { runs.add(run.caseId, run) }
         }
         let parsed = parseTeacherAuthorityGapJsonl(teacherReadUtf8File(options.authorityGap))
         if (parsed[1] != "ok") { result.diagnostic = parsed[1]; return result }

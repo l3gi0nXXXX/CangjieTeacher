@@ -390,6 +390,24 @@ public class TeacherP0P3Test {
         try{remove(Path("/tmp/teacher-atom-fail"),recursive:true)}catch(_:Exception){}
     }
 
+    @TestCase public func candidateControlAcceptsEveryCompletedTeacherAttemptAndRejectsInvalidRuns(): Unit {
+        let accepted = TeacherRunManifest("teacher-重试😀", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol",
+            "prompt-hash", 1, "complete", 0, "验证证据中文😀")
+        let repaired = TeacherRunManifest(accepted.runId, accepted.caseId, accepted.datasetVersion, accepted.modelId,
+            accepted.promptHash, 3, accepted.status, accepted.exitCode, accepted.evidenceHash)
+        @Expect(teacherRunCompleteForCandidate(accepted, accepted.runId), true)
+        @Expect(teacherRunCompleteForCandidate(repaired, accepted.runId), true)
+        @Expect(teacherRunCompleteForCandidate(TeacherRunManifest(accepted.runId, accepted.caseId, accepted.datasetVersion,
+            accepted.modelId, accepted.promptHash, 0, "complete", 0, accepted.evidenceHash), accepted.runId), false)
+        @Expect(teacherRunCompleteForCandidate(TeacherRunManifest(accepted.runId, accepted.caseId, accepted.datasetVersion,
+            accepted.modelId, accepted.promptHash, -1, "complete", 0, accepted.evidenceHash), accepted.runId), false)
+        @Expect(teacherRunCompleteForCandidate(TeacherRunManifest(accepted.runId, accepted.caseId, accepted.datasetVersion,
+            accepted.modelId, accepted.promptHash, 2, "verified", 0, accepted.evidenceHash), accepted.runId), false)
+        @Expect(teacherRunCompleteForCandidate(TeacherRunManifest(accepted.runId, accepted.caseId, accepted.datasetVersion,
+            accepted.modelId, accepted.promptHash, 2, "complete", 7, accepted.evidenceHash), accepted.runId), false)
+        @Expect(teacherRunCompleteForCandidate(repaired, "other-run"), false)
+    }
+
     @TestCase public func candidateControlFakeEndToEndAndBoundaries(): Unit {
         let root = "/tmp/teacher-candidate-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         try {
@@ -398,7 +416,7 @@ public class TeacherP0P3Test {
             File.writeTo(Path("${root}/manifest.jsonl"), manifest.toArray())
             Directory.create(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src"), recursive: true)
             File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"), "private opaque implementation 987654".toArray())
-            let run = TeacherRunManifest("teacher-r1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol", "prompt-hash", 1, "complete", 0, "evidence")
+            let run = TeacherRunManifest("teacher-r1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol", "prompt-hash", 2, "complete", 0, "evidence-中文😀")
             _ = persistCompletedTeacherRuns("${root}/runs/teacher-r1/completed.manifest", [run])
             _ = persistTeacherRunArtifacts(root,run,"generation","verification")
             _ = persistTeacherSolutionBinding(root,run)
