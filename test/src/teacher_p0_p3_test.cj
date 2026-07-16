@@ -412,6 +412,8 @@ public class TeacherP0P3Test {
             @Expect(extractor.specs[2].args.contains("--output-last-message"), true)
             @Expect(extractor.specs[2].args.contains("--cwd"), false)
             @Expect(extractor.specs[2].args.contains("--full-auto"), false)
+            @Expect(extractor.specs[2].args[extractor.specs[2].args.size-1].contains("Set citation to exactly 'https://docs.cangjie-lang.cn/docs/1.0.0/'"),true)
+            @Expect(extractor.specs[2].args[extractor.specs[2].args.size-1].contains("negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler"),true)
             @Expect(exists(Path("${root}/exports/r1/observations.tsv")), true)
             @Expect(exists(Path("${root}/exports/r1/atom-tests.jsonl")), true)
             @Expect(exists(Path("${root}/exports/r1/candidate-knowledge.tsv")), true)
