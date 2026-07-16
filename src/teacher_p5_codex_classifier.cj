@@ -174,7 +174,8 @@ private func p5CodexPrompt(request: String): String {
     "Return exactly one JSON object matching the output schema. Categories: knowledge_gap, retrieval_failure, reasoning_failure, compile_error, unit_failure, dataset_failure, runner_failure, environment_failure, tool_error, timeout, protocol_violation. " +
     "When the supplied evidence itself proves that the failure came from missing or misapplied reusable Cangjie syntax, standard-library, stdx, toolchain, diagnostic, version-migration, or engineering knowledge, choose knowledge_gap even when the observed surface is compile_error or unit_failure. " +
     "Choose compile_error or unit_failure only when the evidence does not establish an allowed reusable knowledge gap and the cause is case-specific. " +
-    "All ten fields are required. For knowledge_gap, provide only reusable general knowledge with official or approved-trusted citation. " +
+    "All ten fields are required. For knowledge_gap, knowledgeFamily must be exactly one of syntax, standard_library, stdx, toolchain, compiler_diagnostic, version_migration, engineering_practice; sourceClass must be exactly official; citation must be an HTTPS URL under https://docs.cangjie-lang.cn/ (use https://docs.cangjie-lang.cn/docs/1.0.0/ when the request has no more specific official URL); targetVersion must be 1.0.0 for this dataset; evidenceId must bind the supplied resultEvidenceHash; canonicalKnowledgeId must identify general knowledge and must not contain the case id. " +
+    "Provide only reusable general knowledge, never the case answer or solution. " +
     "For every other category, set every knowledge string to an empty string and both reusable and purificationPassed to false. Request:\n${request}"
 }
 

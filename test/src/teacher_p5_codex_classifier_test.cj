@@ -43,6 +43,10 @@ public class TeacherP5CodexClassifierTest {
         @Expect(spec.args[spec.args.size - 1].contains("root cause"), true)
         @Expect(spec.args[spec.args.size - 1].contains("even when the observed surface is compile_error or unit_failure"), true)
         @Expect(spec.args[spec.args.size - 1].contains("case-specific"), true)
+        @Expect(spec.args[spec.args.size - 1].contains("knowledgeFamily must be exactly one of syntax, standard_library"), true)
+        @Expect(spec.args[spec.args.size - 1].contains("sourceClass must be exactly official"), true)
+        @Expect(spec.args[spec.args.size - 1].contains("https://docs.cangjie-lang.cn/docs/1.0.0/"), true)
+        @Expect(spec.args[spec.args.size - 1].contains("targetVersion must be 1.0.0"), true)
         var homeOverridden=false;var sessionBound=false
         for(entry in spec.env){if(entry[0]=="CODEX_HOME"){homeOverridden=true};if(entry[0]=="CANGJIE_TEACHER_SESSION"&&entry[1]=="session-ut"){sessionBound=true}}
         @Expect(homeOverridden,false);@Expect(sessionBound,true)

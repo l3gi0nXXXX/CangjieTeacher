@@ -62,7 +62,8 @@ public func runClaudeClassifierAdapter(args: Array<String>,
     let prompt = "Classify the root cause of this Cangjie benchmark failure using only the supplied JSON; do not merely repeat its surface compiler or test outcome. " +
         "When the supplied evidence itself proves missing or misapplied reusable Cangjie syntax, standard-library, stdx, toolchain, diagnostic, version-migration, or engineering knowledge, choose knowledge_gap even when failureObservation is compile_error or unit_failure. " +
         "Choose compile_error or unit_failure only when the evidence does not establish an allowed reusable knowledge gap and the cause is case-specific. " +
-        "For knowledge_gap provide only general reusable knowledge backed by an official Cangjie documentation citation; otherwise leave all knowledge fields empty and both booleans false. " +
+        "For knowledge_gap, knowledgeFamily must be exactly one of syntax, standard_library, stdx, toolchain, compiler_diagnostic, version_migration, engineering_practice; sourceClass must be exactly official; citation must be an HTTPS URL under https://docs.cangjie-lang.cn/ (use https://docs.cangjie-lang.cn/docs/1.0.0/ when no more specific official URL is supplied); targetVersion must be 1.0.0; evidenceId must bind resultEvidenceHash; canonicalKnowledgeId must be general and must not contain the case id. " +
+        "Provide only general reusable knowledge; otherwise leave all knowledge fields empty and both booleans false. " +
         "Return one schema-valid object. Never infer or reveal hidden tests, reference answers, credentials, or local paths. Request:\n" + request
     let cli = executor.execute(TeacherCommandSpec("claude", ["-p", prompt, "--model", CLAUDE_CLASSIFIER_MODEL,
         "--json-schema", schema, "--output-format", "stream-json", "--verbose", "--no-session-persistence",
