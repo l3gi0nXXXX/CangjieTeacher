@@ -36,6 +36,7 @@ public class TeacherClaudeClassifierTest {
             let spec=executor.specs[0];@Expect(spec.executable,"claude");@Expect(spec.args.contains("-p"),true);@Expect(spec.args.contains("--json-schema"),true)
             @Expect(spec.args.contains("stream-json"),true);@Expect(spec.args.contains("--no-session-persistence"),true);@Expect(spec.args.contains("--bare"),true)
             @Expect(spec.args.contains("--strict-mcp-config"),true);@Expect(spec.args.contains("--tools"),true);@Expect(spec.args.contains("GLM-5.2"),true)
+            @Expect(spec.args.contains("{\"mcpServers\":{}}"),true);@Expect(spec.args.contains("{}"),false)
             let output=teacherReadUtf8File("${r}/workspace/response.json");@Expect(output.contains("\"schemaVersion\":\"ckb-p5-classifier-response-v1\""),true)
             @Expect(output.contains("\"observedProvider\":\"claude-code\""),true);@Expect(output.contains("\"observedModel\":\"GLM-5.2\""),true)
         }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}

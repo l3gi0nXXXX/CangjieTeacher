@@ -19,7 +19,7 @@ private class P5CodexFakeExecutor <: TeacherCommandExecutor {
         var output = ""
         for (i in 0..spec.args.size - 1) { if (spec.args[i] == "--output-last-message") { output = spec.args[i + 1] } }
         if (mode == "invalid_utf8") { File.writeTo(Path(output), [UInt8(0xff), UInt8(0xfe)]); return TeacherProcessResult(0, "") }
-        let body = if (mode == "malformed") { "{" } else if (mode == "retrieval") { "{\"category\":\"retrieval_failure\"}" } else {
+        let body = if (mode == "malformed") { "{" } else if (mode == "retrieval") { "{\"category\":\"retrieval_failure\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}" } else {
             "{\"category\":\"knowledge_gap\",\"knowledgeFamily\":\"standard_library\",\"reusable\":true,\"sourceClass\":\"official\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"purificationPassed\":true,\"canonicalKnowledgeId\":\"GENERAL-RUNE\",\"targetVersion\":\"1.0.0\",\"evidenceId\":\"official-rune\",\"knowledgeText\":\"Use Rune boundaries for 中文🙂 text.\"}"
         }
         File.writeTo(Path(output), body.toArray()); TeacherProcessResult(0, "ignored stdout")
@@ -36,7 +36,7 @@ public class TeacherP5CodexClassifierTest {
         @Expect(result.ok, true); @Expect(fake.specs.size, 1)
         let spec = fake.specs[0]
         @Expect(spec.executable, "/fake/codex"); @Expect(spec.cwd, fixture.workspace); @Expect(spec.timeoutMillis, 4321)
-        @Expect(spec.args[0], "exec"); @Expect(spec.args.contains("-m"), true); @Expect(spec.args.contains("gpt-5.6"), true)
+        @Expect(spec.args[0], "exec"); @Expect(spec.args.contains("-m"), true); @Expect(spec.args.contains("gpt-5.6-sol"), true); @Expect(spec.args.contains("gpt-5.6"), false)
         @Expect(spec.args.contains("--sandbox"), true); @Expect(spec.args.contains("read-only"), true)
         @Expect(spec.args.contains("--ephemeral"), true); @Expect(spec.args.contains("--ignore-user-config"), true); @Expect(spec.args.contains("--ignore-rules"), true)
         @Expect(spec.args.contains("--output-schema"), true); @Expect(spec.args.contains("--output-last-message"), true)
@@ -45,7 +45,9 @@ public class TeacherP5CodexClassifierTest {
         @Expect(homeOverridden,false);@Expect(sessionBound,true)
         let output = teacherReadUtf8File(fixture.output)
         @Expect(output.contains("\"schemaVersion\":\"ckb-p5-classifier-response-v1\""), true)
-        @Expect(output.contains("\"observedProvider\":\"codex\""), true); @Expect(output.contains("\"observedModel\":\"GPT-5.6\""), true)
+        @Expect(output.contains("\"observedProvider\":\"codex\""), true); @Expect(output.contains("\"observedModel\":\"GPT-5.6-Sol\""), true)
+        let schema=teacherReadUtf8File("${fixture.workspace}/classifier-response.schema.json")
+        @Expect(schema.contains("\"required\":[\"category\",\"knowledgeFamily\",\"reusable\",\"sourceClass\",\"citation\",\"purificationPassed\",\"canonicalKnowledgeId\",\"targetVersion\",\"evidenceId\",\"knowledgeText\"]"),true)
     }
 
     // P5-C-BND-01
@@ -68,7 +70,7 @@ public class TeacherP5CodexClassifierTest {
         @Expect(teacherReadUtf8File(knowledge.output).contains("\"category\":\"knowledge_gap\""), true)
         let retrieval = p5CodexFixture("positive-retrieval")
         @Expect(runTeacherP5CodexClassifierAdapter(retrieval.args, executor: P5CodexFakeExecutor(mode:"retrieval"), codexExecutable: "/fake/codex", timeoutMillis: 1000), 0)
-        let body=teacherReadUtf8File(retrieval.output);@Expect(body.contains("\"category\":\"retrieval_failure\""),true);@Expect(body.contains("knowledgeFamily"),false)
+        let body=teacherReadUtf8File(retrieval.output);@Expect(body.contains("\"category\":\"retrieval_failure\""),true);@Expect(body.contains("\"knowledgeFamily\":\"\""),true);@Expect(body.contains("\"reusable\":false"),true)
         @Expect(exists(Path(retrieval.output+".tmp")),false)
     }
 
@@ -92,7 +94,7 @@ private class P5CodexFixture {
     public init(root:String,workspace:String,runtimeHome:String,request:String,output:String,args:Array<String>){this.root=root;this.workspace=workspace;this.runtimeHome=runtimeHome;this.request=request;this.output=output;this.args=args}
 }
 
-private func p5CodexFixture(label:String,model!:String="GPT-5.6"):P5CodexFixture{
+private func p5CodexFixture(label:String,model!:String="GPT-5.6-Sol"):P5CodexFixture{
     let root="/tmp/teacher-p5-codex-${label}-${DateTime.now().toUnixTimeStamp().toNanoseconds()}";let workspace="${root}/workspace";let runtime="${root}/runtime-home"
     Directory.create(Path(workspace),recursive:true);let request="${workspace}/request.json";let output="${workspace}/response.json"
     let body="{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-016\",\"runId\":\"run-中文🙂\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"failureObservation\":\"缺少可复用 Rune 知识🙂\",\"resultEvidenceHash\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"

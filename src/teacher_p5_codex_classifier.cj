@@ -8,8 +8,8 @@ import stdx.encoding.json.*
 private let P5_CODEX_REQUEST_SCHEMA = "ckb-p5-classifier-request-v1"
 private let P5_CODEX_RESPONSE_SCHEMA = "ckb-p5-classifier-response-v1"
 private let P5_CODEX_PROVIDER = "codex"
-private let P5_CODEX_MODEL = "GPT-5.6"
-private let P5_CODEX_MODEL_ARG = "gpt-5.6"
+private let P5_CODEX_MODEL = "GPT-5.6-Sol"
+private let P5_CODEX_MODEL_ARG = "gpt-5.6-sol"
 private let P5_CODEX_MAX_BYTES: Int64 = 262144
 
 public class TeacherP5CodexAdapterOptions {
@@ -149,8 +149,7 @@ private func p5CodexSealResponse(raw: String): (String, String) {
     try {
         let o = JsonValue.fromStr(raw).asObject()
         let category = p5CodexString(o, "category").toAsciiLower()
-        if (!p5CodexCategory(category)) { return ("response_contract_invalid", "") }
-        var body = "{\"schemaVersion\":\"${P5_CODEX_RESPONSE_SCHEMA}\",\"observedProvider\":\"${P5_CODEX_PROVIDER}\",\"observedModel\":\"${P5_CODEX_MODEL}\",\"category\":\"${p5CodexEscape(category)}\""
+        if (!p5CodexCategory(category) || !p5CodexResponseFieldsPresent(o)) { return ("response_contract_invalid", "") }
         if (category == "knowledge_gap") {
             let family = p5CodexString(o, "knowledgeFamily").toAsciiLower(); let source = p5CodexString(o, "sourceClass").toAsciiLower()
             let citation = p5CodexString(o, "citation"); let knowledge = p5CodexString(o, "knowledgeText")
@@ -158,19 +157,26 @@ private func p5CodexSealResponse(raw: String): (String, String) {
                 p5CodexString(o, "canonicalKnowledgeId") == "" || p5CodexString(o, "targetVersion") == "" ||
                 p5CodexString(o, "evidenceId") == "" || knowledge == "" || !p5CodexBool(o, "reusable") ||
                 !p5CodexBool(o, "purificationPassed")) { return ("response_contract_invalid", "") }
-            body += ",\"knowledgeFamily\":\"${p5CodexEscape(family)}\",\"reusable\":true,\"sourceClass\":\"${p5CodexEscape(source)}\",\"citation\":\"${p5CodexEscape(citation)}\",\"purificationPassed\":true,\"canonicalKnowledgeId\":\"${p5CodexEscape(p5CodexString(o,"canonicalKnowledgeId"))}\",\"targetVersion\":\"${p5CodexEscape(p5CodexString(o,"targetVersion"))}\",\"evidenceId\":\"${p5CodexEscape(p5CodexString(o,"evidenceId"))}\",\"knowledgeText\":\"${p5CodexEscape(knowledge)}\""
+        } else if (p5CodexString(o,"knowledgeFamily")!="" || p5CodexBool(o,"reusable") || p5CodexString(o,"sourceClass")!="" ||
+            p5CodexString(o,"citation")!="" || p5CodexBool(o,"purificationPassed") || p5CodexString(o,"canonicalKnowledgeId")!="" ||
+            p5CodexString(o,"targetVersion")!="" || p5CodexString(o,"evidenceId")!="" || p5CodexString(o,"knowledgeText")!="") {
+            return ("response_contract_invalid", "")
         }
-        ("ok", body + "}")
+        let knowledge=category=="knowledge_gap"
+        let body="{\"schemaVersion\":\"${P5_CODEX_RESPONSE_SCHEMA}\",\"observedProvider\":\"${P5_CODEX_PROVIDER}\",\"observedModel\":\"${P5_CODEX_MODEL}\",\"category\":\"${p5CodexEscape(category)}\",\"knowledgeFamily\":\"${p5CodexEscape(if(knowledge){p5CodexString(o,"knowledgeFamily").toAsciiLower()}else{""})}\",\"reusable\":${knowledge&&p5CodexBool(o,"reusable")},\"sourceClass\":\"${p5CodexEscape(if(knowledge){p5CodexString(o,"sourceClass").toAsciiLower()}else{""})}\",\"citation\":\"${p5CodexEscape(if(knowledge){p5CodexString(o,"citation")}else{""})}\",\"purificationPassed\":${knowledge&&p5CodexBool(o,"purificationPassed")},\"canonicalKnowledgeId\":\"${p5CodexEscape(if(knowledge){p5CodexString(o,"canonicalKnowledgeId")}else{""})}\",\"targetVersion\":\"${p5CodexEscape(if(knowledge){p5CodexString(o,"targetVersion")}else{""})}\",\"evidenceId\":\"${p5CodexEscape(if(knowledge){p5CodexString(o,"evidenceId")}else{""})}\",\"knowledgeText\":\"${p5CodexEscape(if(knowledge){p5CodexString(o,"knowledgeText")}else{""})}\"}"
+        ("ok",body)
     } catch (_: Exception) { ("malformed_response_json", "") }
 }
 
 private func p5CodexPrompt(request: String): String {
-    "Classify this first-attempt Cangjie evaluation failure. Use only the supplied request; do not access files, tools, hidden tests, reference solutions, Teacher solutions, or external data. Return exactly one JSON object matching the output schema. Categories: knowledge_gap, retrieval_failure, reasoning_failure, compile_error, unit_failure, dataset_failure, runner_failure, environment_failure, tool_error, timeout, protocol_violation. For knowledge_gap, provide only reusable general knowledge with official or approved-trusted citation and all schema fields. Request:\n${request}"
+    "Classify this first-attempt Cangjie evaluation failure. Use only the supplied request; do not access files, tools, hidden tests, reference solutions, Teacher solutions, or external data. Return exactly one JSON object matching the output schema. Categories: knowledge_gap, retrieval_failure, reasoning_failure, compile_error, unit_failure, dataset_failure, runner_failure, environment_failure, tool_error, timeout, protocol_violation. All ten fields are required. For knowledge_gap, provide only reusable general knowledge with official or approved-trusted citation. For every other category, set every knowledge string to an empty string and both reusable and purificationPassed to false. Request:\n${request}"
 }
 
 private func p5CodexOutputSchema(): String {
-    "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"category\"],\"properties\":{\"category\":{\"type\":\"string\",\"enum\":[\"knowledge_gap\",\"retrieval_failure\",\"reasoning_failure\",\"compile_error\",\"unit_failure\",\"dataset_failure\",\"runner_failure\",\"environment_failure\",\"tool_error\",\"timeout\",\"protocol_violation\"]},\"knowledgeFamily\":{\"type\":\"string\"},\"reusable\":{\"type\":\"boolean\"},\"sourceClass\":{\"type\":\"string\"},\"citation\":{\"type\":\"string\"},\"purificationPassed\":{\"type\":\"boolean\"},\"canonicalKnowledgeId\":{\"type\":\"string\"},\"targetVersion\":{\"type\":\"string\"},\"evidenceId\":{\"type\":\"string\"},\"knowledgeText\":{\"type\":\"string\"}}}"
+    "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"category\",\"knowledgeFamily\",\"reusable\",\"sourceClass\",\"citation\",\"purificationPassed\",\"canonicalKnowledgeId\",\"targetVersion\",\"evidenceId\",\"knowledgeText\"],\"properties\":{\"category\":{\"type\":\"string\",\"enum\":[\"knowledge_gap\",\"retrieval_failure\",\"reasoning_failure\",\"compile_error\",\"unit_failure\",\"dataset_failure\",\"runner_failure\",\"environment_failure\",\"tool_error\",\"timeout\",\"protocol_violation\"]},\"knowledgeFamily\":{\"type\":\"string\"},\"reusable\":{\"type\":\"boolean\"},\"sourceClass\":{\"type\":\"string\"},\"citation\":{\"type\":\"string\"},\"purificationPassed\":{\"type\":\"boolean\"},\"canonicalKnowledgeId\":{\"type\":\"string\"},\"targetVersion\":{\"type\":\"string\"},\"evidenceId\":{\"type\":\"string\"},\"knowledgeText\":{\"type\":\"string\"}}}"
 }
+
+private func p5CodexResponseFieldsPresent(o:JsonObject):Bool{for(k in ["category","knowledgeFamily","reusable","sourceClass","citation","purificationPassed","canonicalKnowledgeId","targetVersion","evidenceId","knowledgeText"]){match(o.get(k)){case Some(_)=>();case None=>return false}};true}
 
 private func p5CodexForbidden(value: String): Bool { let v=value.toAsciiLower(); v.contains("teacher-solutions")||v.contains("canonical_solution")||v.contains("hidden_test")||v.contains("hidden-test")||v.contains("/reference/")||v.contains("authorization:")||v.contains("api_key")||v.contains("token=")||v.contains("password") }
 private func p5CodexCategory(v:String):Bool{v=="knowledge_gap"||v=="retrieval_failure"||v=="reasoning_failure"||v=="compile_error"||v=="unit_failure"||v=="dataset_failure"||v=="runner_failure"||v=="environment_failure"||v=="tool_error"||v=="timeout"||v=="protocol_violation"}

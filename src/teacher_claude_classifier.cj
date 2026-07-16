@@ -63,7 +63,7 @@ public func runClaudeClassifierAdapter(args: Array<String>,
         "Never infer or reveal hidden tests, reference answers, credentials, or local paths. Request:\n" + request
     let cli = executor.execute(TeacherCommandSpec("claude", ["-p", prompt, "--model", CLAUDE_CLASSIFIER_MODEL,
         "--json-schema", schema, "--output-format", "stream-json", "--verbose", "--no-session-persistence",
-        "--bare", "--disable-slash-commands", "--strict-mcp-config", "--mcp-config", "{}", "--tools", ""],
+        "--bare", "--disable-slash-commands", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--tools", ""],
         options.workspace, env: [("HOME", options.runtimeHome), ("CLAUDE_CONFIG_DIR", options.runtimeHome),
             ("CANGJIE_TEACHER_SESSION", options.sessionId)], timeoutMillis: 300000))
     if (cli.timedOut) { result.diagnostic = "classifier_timeout"; return result }
