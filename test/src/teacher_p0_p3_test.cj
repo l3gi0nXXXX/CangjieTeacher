@@ -470,7 +470,6 @@ public class TeacherP0P3Test {
 
     @TestCase public func candidateAuthorityRelevanceKeepsKnownGapFamiliesAndFeedbackSafe():Unit{
         let fixtures=[
-            ("error: undeclared identifier 'toUpper'; undeclared identifier 'toLower'","G-RUNE-UNICODE-CASE","Use Rune.toUpperCase and Rune.toLowerCase.","r.toUpperCase(); r.toLowerCase()"),
             ("imports package 'std.text' but it is not declared","G-CJPM-DEPENDENCY","Declare std.text as an explicit dependency.","import std.text.*"),
             ("expected 001, actual 484849","G-STRING-INDEX-BYTES","String indexing can yield UTF-8 bytes; use Rune indexing for characters.","String byte UInt8 index"),
             ("expected '{' after 'if', found '||'","G-LOGICAL-OR","Use || inside a complete if condition.","if (a || b)"),
@@ -480,6 +479,47 @@ public class TeacherP0P3Test {
         let unsafeResult=validateTeacherAuthorityRelevance(long,"G-FLOAT64","generic Float64 fact","Float64 literal","Float64","Float64","Float64")
         @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.toRuneArray().size<=803,true)
         @Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false);@Expect(unsafeResult.feedback.contains("Authorization"),false)
+    }
+
+    @TestCase public func candidateAuthorityRelevanceRequiresExactRuneUnicodeCaseConversion():Unit{
+        let compiler="error: undeclared identifier 'toUpper'; undeclared identifier 'toLower'"
+        let narrative="For a Rune, import std.unicode.* and call Rune.toUpperCase() and Rune.toLowerCase(); Rune.toUpper() and Rune.toLower() are not declared. 中文😀"
+        let positive="import std.unicode.*\nmain(){ let value: Rune = r'a'; println(value.toUpperCase()); println(value.toLowerCase()) }"
+        let boundary="import std.unicode.*\nmain(){ let chinese: Rune = r'中'; let emoji: Rune = r'😀'; println(chinese.toUpperCase()); println(chinese.toLowerCase()); println(emoji.toUpperCase()); println(emoji.toLowerCase()) }"
+        let negative="import std.unicode.*\nmain(){ let lower: Rune = r'a'; let upper: Rune = r'Z'; println(lower.toUpper()); println(upper.toLower()) }"
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-RUNE-UNICODE-CASE",narrative,narrative,positive,negative,boundary)
+        @Expect(relevant.ok,true);@Expect(relevant.anchors.contains("std.unicode"),true)
+        @Expect(relevant.anchors.contains("touppercase"),true);@Expect(relevant.anchors.contains("tolowercase"),true)
+
+        let stale="A Rune literal contains exactly one Unicode scalar."
+        let staleSource="main(){ let chinese: Rune = r'中'; let emoji: Rune = r'😀'; println(chinese); println(emoji) }"
+        let staleResult=validateTeacherAuthorityRelevance(compiler,"G-RUNE-UNICODE-CASE",stale,staleSource,staleSource,staleSource,staleSource)
+        @Expect(staleResult.ok,false);@Expect(staleResult.feedback.contains("Rune.toUpperCase()"),true)
+        @Expect(staleResult.feedback.contains("Rune.toLowerCase()"),true);@Expect(staleResult.feedback.contains("CJ-HUMANEVAL"),false)
+
+        let missingImport=positive.replace("import std.unicode.*\n","")
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RUNE-UNICODE-CASE",narrative,narrative,missingImport,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RUNE-UNICODE-CASE",narrative,narrative,positive,negative,positive).ok,false)
+        let wrongNegative="import std.unicode.*\nmain(){ let value: Rune = r'a'; println(value.toUpperCase()); println(value.toLowerCase()) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RUNE-UNICODE-CASE",narrative,narrative,positive,wrongNegative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RUNE-UNICODE-CASE",narrative,narrative,positive,negative,boundary,
+            positiveDependencyProfile:"stdx-magic",negativeDependencyProfile:"none",boundaryDependencyProfile:"none").ok,false)
+        let stringReceivers="import std.unicode.*\nmain(){ let value: String = \"a\"; println(value.toUpperCase()); println(value.toLowerCase()); let rune: Rune = r'a'; println(rune) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RUNE-UNICODE-CASE",narrative,narrative,stringReceivers,negative,boundary).ok,false)
+        let disguised="import std.unicode.*\nmain(){ let value: Rune = r'a'; println(\"value.toUpperCase() value.toLowerCase()\"); // value.toUpperCase(); value.toLowerCase()\n println(value) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RUNE-UNICODE-CASE",narrative,narrative,disguised,negative,disguised).ok,false)
+        let blockDisguised="import std.unicode.*\nmain(){ let value: Rune = r'a'; /* value.toUpperCase(); value.toLowerCase() */ println(value) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RUNE-UNICODE-CASE",narrative,narrative,blockDisguised,negative,blockDisguised).ok,false)
+
+        let unsafeEvidence=compiler+" 中文😀 '/Users/private/token' Authorization Bearer secret "+String(Array<Rune>(2000,repeat:r'界'))
+        let unsafeResult=validateTeacherAuthorityRelevance(unsafeEvidence,"G-RUNE-UNICODE-CASE",stale,staleSource,staleSource,staleSource,staleSource)
+        @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.toRuneArray().size<=803,true)
+        @Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false)
+        @Expect(unsafeResult.feedback.contains("Authorization"),false);@Expect(unsafeResult.feedback.contains("😀"),false)
+
+        let unrelated=validateTeacherAuthorityRelevance("invalid binary operator '==' on type 'UInt8' and 'Rune'","G-RUNE-BYTE-COMPARE",
+            "Do not compare UInt8 == Rune without conversion.","UInt8 == Rune","UInt8 == Rune","UInt8 == Rune","UInt8 == Rune")
+        @Expect(unrelated.ok,true)
     }
 
     @TestCase public func candidateAuthorityRelevanceDerivesUnicodeStringAndBytePrerequisites():Unit{
