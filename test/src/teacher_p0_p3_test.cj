@@ -313,10 +313,14 @@ public class TeacherP0P3Test {
 
     // P3/P4 candidate control UT/BND/POS/NEG/fake-E2E
     @TestCase public func candidateControlExecutesAllThreeTestCategories(): Unit {
-        let bundle = "{\"tests\":[{\"category\":\"positive\",\"operation\":\"contains\",\"input\":\"中文😀 Rune\",\"needle\":\"Rune\",\"expected\":\"true\"},{\"category\":\"negative\",\"operation\":\"contains\",\"input\":\"safe\",\"needle\":\"answer\",\"expected\":\"false\"},{\"category\":\"boundary\",\"operation\":\"rune_count\",\"input\":\"😀\",\"expected\":\"1\"}]}"
-        @Expect(executeTeacherAtomTestBundle(bundle)[0], true)
-        @Expect(executeTeacherAtomTestBundle(bundle.replace("\"expected\":\"1\"", "\"expected\":\"2\""))[1], "atom_test_failed")
-        @Expect(executeTeacherAtomTestBundle("not-json")[1], "malformed_atom_test_bundle")
+        let bundle = "{\"tests\":[{\"category\":\"positive\",\"source\":\"main() {}\"},{\"category\":\"negative\",\"source\":\"main() { bad }\",\"expectedDiagnostic\":\"undefined\"},{\"category\":\"boundary\",\"source\":\"main() {}\"}]}"
+        let passing=RecordingExecutor(results:[TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(1,"undefined name"),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,"")])
+        @Expect(executeTeacherAtomTestBundle(bundle,"/tmp/teacher-atom-fake",executor:passing).ok, true)
+        let failing=RecordingExecutor(results:[TeacherProcessResult(0,""),TeacherProcessResult(2,"build failed")])
+        @Expect(executeTeacherAtomTestBundle(bundle,"/tmp/teacher-atom-fail",executor:failing).diagnostic, "atom_test_failed")
+        @Expect(executeTeacherAtomTestBundle("not-json","/tmp/teacher-atom-malformed").diagnostic, "malformed_atom_test_bundle")
+        try{remove(Path("/tmp/teacher-atom-fake"),recursive:true)}catch(_:Exception){}
+        try{remove(Path("/tmp/teacher-atom-fail"),recursive:true)}catch(_:Exception){}
     }
 
     @TestCase public func candidateControlFakeEndToEndAndBoundaries(): Unit {
@@ -329,12 +333,17 @@ public class TeacherP0P3Test {
             File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"), "private opaque implementation 987654".toArray())
             let run = TeacherRunManifest("teacher-r1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6", "prompt-hash", 1, "complete", 0, "evidence")
             _ = persistCompletedTeacherRuns("${root}/runs/teacher-r1/completed.manifest", [run])
+            _ = persistTeacherRunArtifacts(root,run,"generation","verification")
+            _ = persistTeacherSolutionBinding(root,run)
             let evidence = "case=confirmed|taxonomy=knowledge_gap|independent=sha256:abc"
             let gap = "{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"dataset-v1\",\"teacherRunId\":\"development-r1\",\"evidenceHash\":\"sha256:${teacherStableHash(evidence)}\",\"evidence\":\"${evidence}\",\"failureTaxonomy\":\"knowledge_gap\",\"knowledgeGapConfirmations\":2,\"caseId\":\"CJ-HUMANEVAL-000\",\"benchmark\":\"Cangjie-HumanEval\",\"taskText\":\"authority bound task\",\"visibleTestExcerpt\":\"\",\"compilerOutput\":\"knowledge gap\",\"missingKnowledge\":\"G-STRING\",\"interfaceId\":\"KI-02\",\"contentFamily\":\"KC-02\",\"updateMechanism\":\"KU-11\",\"targetVersion\":\"1.0.0\",\"officialCitation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\"}\n"
             File.writeTo(Path("${root}/gap.jsonl"), gap.toArray())
             let options = TeacherCliOptions(); options.command="candidate-build"; options.root=root; options.manifest="${root}/manifest.jsonl"
             options.checksum=teacherStableHash(teacherJoin(caseLines(), "\n"));options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.outputRoot="${root}/exports/r1"
-            let result = buildTeacherCandidates(options)
+            let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 Rune iteration\",\"explanation\":\"Use Rune iteration for Unicode character boundaries.\",\"example\":\"Iterate over text.runes() for Chinese and emoji.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let x = 1 }\",\"negativeSource\":\"main() { unknownName }\",\"boundarySource\":\"main() { let text = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\"}"
+            let extractor=RecordingExecutor(results:[TeacherProcessResult(0,extractorJson)])
+            let atom=RecordingExecutor(results:[TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(1,"undefined name"),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,"")])
+            let result = buildTeacherCandidates(options,extractorExecutor:extractor,atomExecutor:atom)
             @Expect(result.ok, true); @Expect(result.accepted, 1)
             @Expect(exists(Path("${root}/exports/r1/observations.tsv")), true)
             @Expect(exists(Path("${root}/exports/r1/atom-tests.jsonl")), true)
@@ -351,7 +360,21 @@ public class TeacherP0P3Test {
             File.writeTo(Path("${root}/bad-gap.jsonl"), [UInt8(0xff), UInt8(0xfe)])
             options.authorityGap="${root}/bad-gap.jsonl"; options.outputRoot="${root}/exports/bad-encoding"
             @Expect(buildTeacherCandidates(options).diagnostic, "invalid_response_encoding")
+            options.authorityGap="${root}/gap.jsonl";options.outputRoot="${root}/exports/bad-extractor"
+            @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(0,"not-json")])).diagnostic,"malformed_extractor_json")
+            options.outputRoot="${root}/exports/timeout"
+            @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true)])).diagnostic,"extractor_timeout")
+            options.model="unexpected-model";options.outputRoot="${root}/exports/model"
+            @Expect(buildTeacherCandidates(options,extractorExecutor:extractor).diagnostic,"extractor_model_identity_invalid")
+            options.model="gpt-5.6";_=teacherAtomicWrite("${root}/runs/teacher-r1/evidence/CJ-HUMANEVAL-000/solution.binding","wrong\twrong\twrong\n");options.outputRoot="${root}/exports/binding"
+            @Expect(buildTeacherCandidates(options,extractorExecutor:extractor).diagnostic,"solution_evidence_binding_invalid")
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    @TestCase public func candidateAtomRunsInRealLocalCangjieWorkspaces():Unit {
+        let root="/tmp/teacher-real-atom-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        let bundle="{\"tests\":[{\"category\":\"positive\",\"source\":\"main() { let value: Int64 = 1 }\"},{\"category\":\"negative\",\"source\":\"main() { let value: MissingType = 1 }\",\"expectedDiagnostic\":\"undeclared type name\"},{\"category\":\"boundary\",\"source\":\"main() { let text = \\\"中文😀\\\"; let count = text.toRuneArray().size }\"}]}"
+        try{@Expect(executeTeacherAtomTestBundle(bundle,root).ok,true)}finally{try{remove(Path(root),recursive:true)}catch(_:Exception){}}
     }
 
     @TestCase public func candidateControlFailsClosedForCliAndCorruptEvidence(): Unit {

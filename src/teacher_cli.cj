@@ -21,6 +21,7 @@ public class TeacherCliOptions {
     public var caseId = ""
     public var authorityGap = ""
     public var outputRoot = ""
+    public var extractor = "codex"
     public init() {}
 }
 
@@ -50,6 +51,7 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
             case "--timeout-ms" => out.timeoutMillis = try { Int64.parse(value) } catch (_: Exception) { throw IllegalArgumentException("invalid_timeout") }
             case "--authority-gap" => out.authorityGap = value
             case "--output-root" => out.outputRoot = value
+            case "--extractor" => out.extractor = value
             case _ => throw IllegalArgumentException("unknown_cli_option")
         }
         i += 2
@@ -99,6 +101,7 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
                 if (run.status == "complete") {
                     teacherCopyTree(TeacherPaths(options.root).workspace(options.runId, caseValue.caseId),
                         TeacherPaths(options.root).solution(caseValue.caseId))
+                    _ = persistTeacherSolutionBinding(options.root, run)
                 }
                 _ = persistTeacherRunArtifacts(options.root, run, teacherSanitizeEvidence(execution.generationEvidence),
                     teacherSanitizeEvidence(execution.verifierEvidence))
@@ -151,5 +154,5 @@ public func cangjieTeacherCliMain(args: Array<String>): Int64 {
 }
 
 private func teacherCliUsage(): String {
-    "usage: cangjie_teacher manifest-check --manifest <path> --checksum <sha256> | hash-directory --starter-root <path> | run --root <private-root> --manifest <path> --checksum <sha256> --starter-root <path> --tests-root <path> --run-id <id> --repo-root <path> --local-only [--case-id <id>] [--codex <path>] [--model <id>] [--timeout-ms <ms>] | candidate-build --root <private-root> --manifest <path> --checksum <sha256> --authority-gap <path> --run-id <id> --output-root <path>"
+    "usage: cangjie_teacher manifest-check --manifest <path> --checksum <sha256> | hash-directory --starter-root <path> | run --root <private-root> --manifest <path> --checksum <sha256> --starter-root <path> --tests-root <path> --run-id <id> --repo-root <path> --local-only [--case-id <id>] [--codex <path>] [--model <id>] [--timeout-ms <ms>] | candidate-build --root <private-root> --manifest <path> --checksum <sha256> --authority-gap <path> --run-id <id> --output-root <path> [--extractor <path>] [--model <id>] [--timeout-ms <ms>]"
 }

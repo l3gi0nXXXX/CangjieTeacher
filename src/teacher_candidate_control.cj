@@ -4,6 +4,7 @@ import std.collection.*
 import std.fs.*
 import std.convert.Parsable
 import stdx.encoding.json.*
+import std.time.*
 
 public class TeacherCandidateBuildResult {
     public var ok = false
@@ -23,9 +24,21 @@ private class TeacherGapRow {
 
 private class TeacherAtomSpec {
     let family: String; let concept: String; let explanation: String; let example: String
-    init(family: String, concept: String, explanation: String, example: String) {
+    let citation: String; let sourceClass: String
+    let positiveSource: String; let negativeSource: String; let boundarySource: String; let negativeDiagnostic: String
+    let transcriptHash: String; let provider: String; let model: String
+    init(family: String, concept: String, explanation: String, example: String, citation: String, sourceClass: String,
+        positiveSource: String, negativeSource: String, boundarySource: String, negativeDiagnostic: String,
+        transcriptHash: String, provider: String, model: String) {
         this.family = family; this.concept = concept; this.explanation = explanation; this.example = example
+        this.citation=citation;this.sourceClass=sourceClass;this.positiveSource=positiveSource;this.negativeSource=negativeSource
+        this.boundarySource=boundarySource;this.negativeDiagnostic=negativeDiagnostic;this.transcriptHash=transcriptHash
+        this.provider=provider;this.model=model
     }
+}
+
+public class TeacherAtomExecutionResult {
+    public var ok=false;public var diagnostic="atom_test_failed";public var evidenceJson="";public init(){}
 }
 
 public func runTeacherCandidateBuild(options: TeacherCliOptions): Int64 {
@@ -35,7 +48,9 @@ public func runTeacherCandidateBuild(options: TeacherCliOptions): Int64 {
     0
 }
 
-public func buildTeacherCandidates(options: TeacherCliOptions): TeacherCandidateBuildResult {
+public func buildTeacherCandidates(options: TeacherCliOptions,
+    extractorExecutor!:TeacherCommandExecutor=NativeTeacherCommandExecutor(),
+    atomExecutor!:TeacherCommandExecutor=NativeTeacherCommandExecutor()): TeacherCandidateBuildResult {
     let result = TeacherCandidateBuildResult()
     try {
         if (options.root == "" || options.manifest == "" || options.checksum == "" || options.authorityGap == "" || options.runId == "" || options.outputRoot == "") {
@@ -64,11 +79,13 @@ public func buildTeacherCandidates(options: TeacherCliOptions): TeacherCandidate
             let caseValue = match (cases.get(row.caseId)) { case Some(v) => v; case None => result.diagnostic = "gap_case_not_in_manifest"; return result }
             let run = match (runs.get(row.caseId)) { case Some(v) => v; case None => result.diagnostic = "complete_teacher_run_required"; return result }
             if (row.datasetVersion != caseValue.datasetVersion || run.datasetVersion != row.datasetVersion) { result.diagnostic = "dataset_version_mismatch"; return result }
+            if(run.promptHash!=caseValue.promptHash||run.modelId!="gpt-5.6"||run.evidenceHash==""){result.diagnostic="complete_run_identity_invalid";return result}
             let solutionRoot = TeacherPaths(options.root).solution(row.caseId)
-            if (!exists(Path(solutionRoot))) { result.diagnostic = "private_solution_required"; return result }
+            if (!exists(Path(solutionRoot))||!validateTeacherSolutionBinding(options.root,run)) { result.diagnostic = "solution_evidence_binding_invalid"; return result }
             let protected = teacherPrivateArtifacts(solutionRoot)
-            let spec = teacherAtomSpec(row.missingKnowledge)
-            let observation = deriveKnowledgeObservation(caseValue, spec.family, spec.concept, row.targetVersion, spec.explanation, row.citation, "official", row.evidence)
+            let extraction=extractTeacherAtom(options,row,run,solutionRoot,extractorExecutor)
+            if(extraction[1]!="ok"){result.diagnostic=extraction[1];return result};let spec=extraction[0]
+            let observation = deriveKnowledgeObservation(caseValue, spec.family, spec.concept, row.targetVersion, spec.explanation, spec.citation, spec.sourceClass, row.evidence+spec.transcriptHash)
             if (!validateObservationNoSolutionLeak(observation)) { result.diagnostic = "observation_leakage"; return result }
             let normalized = normalizeObservation(observation)
             let identity = canonicalKnowledgeIdentity(normalized)
@@ -77,17 +94,17 @@ public func buildTeacherCandidates(options: TeacherCliOptions): TeacherCandidate
                 case None => identities.add(identity, normalized)
             }
             var bundle = teacherExecutableAtomBundle(identity, row, spec)
-            let execution = executeTeacherAtomTestBundle(bundle)
-            if (!execution[0]) { result.diagnostic = execution[1]; return result }
-            bundle = recordTeacherAtomTestExecution(bundle)
-            let simpleTests = buildKnowledgeAtomTestBundle("executed:positive", "executed:negative", "executed:boundary")
+            let execution = executeTeacherAtomTestBundle(bundle, "${options.root}/runs/${options.runId}/atom-test-workspaces/${identity}", executor:atomExecutor, timeoutMillis:options.timeoutMillis)
+            if (!execution.ok) { result.diagnostic = execution.diagnostic; return result }
+            bundle = recordTeacherAtomTestExecution(bundle,execution.evidenceJson)
+            let simpleTests = buildKnowledgeAtomTestBundle(spec.positiveSource, spec.negativeSource, spec.boundarySource)
             let candidate = renderCandidateKnowledgeExport(normalized, spec.example, simpleTests)
             if (!auditCandidateAgainstSolutions(candidate, protected).passed || !auditCaseSpecificity(candidate, [caseValue.signature]).passed) {
                 result.diagnostic = "candidate_leakage"; return result
             }
             let candidateText = renderTeacherCandidateExport(candidate)
             if (candidateForbidden(candidateText + bundle)) { result.diagnostic = "candidate_contamination"; return result }
-            let ckbLine = renderTeacherCkbGap(row, options.runId, bundle)
+            let ckbLine = renderTeacherCkbGap(row, options.runId, bundle, spec.transcriptHash)
             if (observations != "") { observations += "\n"; atoms += "\n"; tests += "\n"; candidates += "\n"; ckb += "\n" }
             observations += renderTeacherObservation(normalized); atoms += "${identity}\t${teacherEscapeField(spec.explanation)}"
             tests += bundle; candidates += candidateText; ckb += ckbLine; result.accepted += 1
@@ -134,40 +151,59 @@ private func parseTeacherAuthorityGapJsonl(text: String): (Array<TeacherGapRow>,
     (rows.toArray(), "ok")
 }
 
-private func teacherAtomSpec(raw: String): TeacherAtomSpec {
-    let code = raw.split(",")[0].trimAscii().toAsciiUpper()
-    if (code=="G-ARRAYLIST") { return TeacherAtomSpec("standard_library","arraylist fundamentals","ArrayList is a growable sequence; use its typed element API and inspect size for boundaries.","Create an ArrayList<Int64>, append values, and inspect size.") }
-    if (code=="G-HASHMAP") { return TeacherAtomSpec("standard_library","hashmap fundamentals","HashMap associates hashable keys with typed values and requires explicit missing-key handling.","Create a HashMap<String, Int64> and handle lookup absence.") }
-    if (code=="G-STRING") { return TeacherAtomSpec("syntax","unicode string boundaries","Use Rune iteration or Rune arrays when character boundaries matter because UTF-8 byte positions are not character positions.","Count the Runes in a string containing Chinese text and emoji.") }
-    if (code=="G-FLOAT64") { return TeacherAtomSpec("syntax","float64 arithmetic","Float64 literals include a decimal point and floating-point comparisons should account for representation precision.","Use 4.0 as a Float64 literal and compare within a tolerance.") }
-    if (code=="G-INT64") { return TeacherAtomSpec("syntax","int64 arithmetic","Int64 arithmetic is signed integer arithmetic; validate overflow-sensitive and empty-input boundaries explicitly.","Accumulate typed Int64 values while handling an empty collection.") }
-    if (code=="G-EDGE"||code=="G-RECIPE") { return TeacherAtomSpec("engineering_practice","boundary-first implementation","Handle empty, singleton, repeated, and maximum supported inputs before applying the core transformation.","Define behavior for empty and singleton inputs before the general case.") }
-    throw IllegalArgumentException("unsupported_knowledge_gap")
+private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:TeacherRunManifest,solutionRoot:String,
+    executor:TeacherCommandExecutor):(TeacherAtomSpec,String) {
+    if(options.model!="gpt-5.6"){return (emptyTeacherAtomSpec(),"extractor_model_identity_invalid")}
+    let solutionHash=teacherDirectoryHash(solutionRoot)
+    let allowedEvidence=teacherSanitizeEvidence(row.evidence+"\n"+row.compilerOutput)
+    let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail with negativeDiagnostic. Bind to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}"
+    let result=executor.execute(TeacherCommandSpec(options.extractor,["exec","--model",options.model,"--full-auto","--skip-git-repo-check","--cwd",solutionRoot,prompt],solutionRoot,timeoutMillis:options.timeoutMillis))
+    if(result.timedOut){return(emptyTeacherAtomSpec(),"extractor_timeout")};if(result.exitCode!=0){return(emptyTeacherAtomSpec(),"extractor_failed")}
+    if(result.output.toRuneArray().size>262144){return(emptyTeacherAtomSpec(),"extractor_output_too_large")}
+    try {
+        let o=JsonValue.fromStr(result.output.trimAscii()).asObject();let provider=candidateString(o,"provider");let model=candidateString(o,"model")
+        if(provider!="codex"||model!=options.model){return(emptyTeacherAtomSpec(),"extractor_identity_mismatch")}
+        let spec=TeacherAtomSpec(candidateString(o,"knowledgeFamily"),candidateString(o,"concept"),candidateString(o,"explanation"),candidateString(o,"example"),candidateString(o,"citation"),candidateString(o,"sourceClass"),candidateString(o,"positiveSource"),candidateString(o,"negativeSource"),candidateString(o,"boundarySource"),candidateString(o,"negativeDiagnostic"),"sha256:${teacherStableHash(result.output)}",provider,model)
+        if(!teacherK4Family(spec.family)||spec.concept==""||spec.explanation==""||spec.example==""||spec.positiveSource==""||spec.negativeSource==""||spec.boundarySource==""||spec.negativeDiagnostic==""){return(emptyTeacherAtomSpec(),"extractor_contract_invalid")}
+        if(spec.sourceClass!="official"||spec.citation!=row.citation||!spec.citation.startsWith("https://docs.cangjie-lang.cn/")){return(emptyTeacherAtomSpec(),"extractor_source_invalid")}
+        if(candidateForbidden(spec.concept+spec.explanation+spec.example+spec.positiveSource+spec.negativeSource+spec.boundarySource)){return(emptyTeacherAtomSpec(),"extractor_contamination")}
+        (spec,"ok")
+    }catch(_:Exception){(emptyTeacherAtomSpec(),"malformed_extractor_json")}
 }
+
+private func emptyTeacherAtomSpec():TeacherAtomSpec{TeacherAtomSpec("","","","","","","","","","","","","")}
+private func teacherK4Family(v:String):Bool{["syntax","standard_library","stdx","toolchain","compiler_diagnostic","version_migration","engineering_practice"].contains(v)}
 
 private func teacherExecutableAtomBundle(identity: String, row: TeacherGapRow, spec: TeacherAtomSpec): String {
-    let tests = "[{\"category\":\"positive\",\"operation\":\"contains\",\"input\":\"中文😀 Rune boundary\",\"needle\":\"Rune\",\"expected\":\"true\"},{\"category\":\"negative\",\"operation\":\"contains\",\"input\":\"typed knowledge\",\"needle\":\"answer marker\",\"expected\":\"false\"},{\"category\":\"boundary\",\"operation\":\"rune_count\",\"input\":\"😀\",\"expected\":\"1\"}]"
-    let canonical = candidatePart(identity)+candidatePart("official")+candidatePart(row.citation.toAsciiLower())+candidatePart(row.targetVersion)+candidatePart(spec.explanation)+candidatePart("true")+candidatePart(tests)
+    let tests = "[{\"category\":\"positive\",\"operation\":\"contains\",\"input\":\"atom\",\"needle\":\"atom\",\"expected\":\"true\",\"source\":\"${candidateEscape(spec.positiveSource)}\",\"expectedMode\":\"pass\"},{\"category\":\"negative\",\"operation\":\"contains\",\"input\":\"safe\",\"needle\":\"forbidden\",\"expected\":\"false\",\"source\":\"${candidateEscape(spec.negativeSource)}\",\"expectedMode\":\"compile_reject\",\"expectedDiagnostic\":\"${candidateEscape(spec.negativeDiagnostic)}\"},{\"category\":\"boundary\",\"operation\":\"rune_count\",\"input\":\"😀\",\"expected\":\"1\",\"source\":\"${candidateEscape(spec.boundarySource)}\",\"expectedMode\":\"pass\"}]"
+    let canonical = candidatePart(identity)+candidatePart(spec.sourceClass)+candidatePart(spec.citation.toAsciiLower())+candidatePart(row.targetVersion)+candidatePart(spec.explanation)+candidatePart("true")+candidatePart(tests)
     let hash = "sha256:${teacherStableHash(canonical)}"
-    "{\"atomId\":\"${candidateEscape(identity)}\",\"sourceClass\":\"official\",\"citation\":\"${candidateEscape(row.citation)}\",\"targetVersion\":\"${candidateEscape(row.targetVersion)}\",\"candidateHash\":\"${hash}\",\"knowledgeText\":\"${candidateEscape(spec.explanation)}\",\"purificationPassed\":true,\"tests\":${tests}}"
+    "{\"atomId\":\"${candidateEscape(identity)}\",\"knowledgeFamily\":\"${candidateEscape(spec.family)}\",\"sourceClass\":\"${candidateEscape(spec.sourceClass)}\",\"citation\":\"${candidateEscape(spec.citation)}\",\"targetVersion\":\"${candidateEscape(row.targetVersion)}\",\"candidateHash\":\"${hash}\",\"knowledgeText\":\"${candidateEscape(spec.explanation)}\",\"example\":\"${candidateEscape(spec.example)}\",\"extractor\":{\"provider\":\"${spec.provider}\",\"model\":\"${spec.model}\",\"exitCode\":0,\"transcriptHash\":\"${spec.transcriptHash}\"},\"purificationPassed\":true,\"tests\":${tests}}"
 }
 
-public func executeTeacherAtomTestBundle(raw: String): (Bool,String) {
+public func executeTeacherAtomTestBundle(raw:String,workspaceRoot:String,
+    executor!:TeacherCommandExecutor=NativeTeacherCommandExecutor(),timeoutMillis!:Int64=600000):TeacherAtomExecutionResult {
+    let out=TeacherAtomExecutionResult()
     try {
-        let tests=JsonValue.fromStr(raw).asObject().get("tests").getOrThrow().asArray().getItems();let categories=HashSet<String>();var passed:Int64=0
-        for(v in tests){let o=v.asObject();let category=candidateString(o,"category");categories.add(category);let operation=candidateString(o,"operation");let input=candidateString(o,"input");let expected=candidateString(o,"expected");let actual=if(operation=="contains"){"${input.contains(candidateString(o,"needle"))}"}else if(operation=="rune_count"){"${input.toRuneArray().size}"}else{"unsupported"};if(actual==expected){passed++}}
-        if(categories.contains("positive")&&categories.contains("negative")&&categories.contains("boundary")&&passed==tests.size){(true,"ok")}else{(false,"atom_test_failed")}
-    } catch (_: Exception) {(false,"malformed_atom_test_bundle")}
+        let tests=JsonValue.fromStr(raw).asObject().get("tests").getOrThrow().asArray().getItems();let categories=HashSet<String>();var evidence="";var passed:Int64=0
+        for(v in tests){let t=v.asObject();let category=candidateString(t,"category");categories.add(category);let root="${workspaceRoot}/${category}";if(exists(Path(root))){remove(Path(root),recursive:true)};Directory.create(Path("${root}/src"),recursive:true)
+            _=teacherAtomicWrite("${root}/cjpm.toml","[package]\n  cjc-version = \"1.0.0\"\n  name = \"teacher_atom_${category}\"\n  version = \"1.0.0\"\n  output-type = \"executable\"\n")
+            let source=candidateString(t,"source");if(source.trimAscii().startsWith("package ")){out.diagnostic="atom_source_package_forbidden";return out}
+            _=teacherAtomicWrite("${root}/src/main.cj","package teacher_atom_${category}\n\n${source}\n");var categoryOk=true;var categoryEvidence=""
+            for(args in [["clean"],["build","-i"],["test","-j","1"]]){let r=executor.execute(TeacherCommandSpec("cjpm",args,root,timeoutMillis:timeoutMillis));categoryEvidence+="${args[0]}:${r.exitCode}:sha256:${teacherStableHash(r.output)}|";if(r.timedOut){out.diagnostic="atom_test_timeout";return out};if(category=="negative"&&args[0]=="build"){categoryOk=r.exitCode!=0&&r.output.contains(candidateString(t,"expectedDiagnostic"));break};if(r.exitCode!=0){categoryOk=false;break}}
+            if(categoryOk){passed++};evidence+="${category}:${categoryEvidence}passed=${categoryOk};"
+        }
+        if(categories.contains("positive")&&categories.contains("negative")&&categories.contains("boundary")&&passed==3){out.ok=true;out.diagnostic="ok";out.evidenceJson="{\"total\":3,\"passed\":3,\"failed\":0,\"status\":\"passed\",\"commandEvidence\":\"${candidateEscape(evidence)}\",\"commandEvidenceHash\":\"sha256:${teacherStableHash(evidence)}\"}"}else{out.diagnostic="atom_test_failed"}
+    }catch(_:Exception){out.diagnostic="malformed_atom_test_bundle"};out
 }
 
-private func recordTeacherAtomTestExecution(raw:String):String {
-    let total=try{JsonValue.fromStr(raw).asObject().get("tests").getOrThrow().asArray().getItems().size}catch(_:Exception){0}
+private func recordTeacherAtomTestExecution(raw:String,evidence:String):String {
     let runes=raw.toRuneArray()
-    String(runes[..runes.size-1])+",\"execution\":{\"total\":${total},\"passed\":${total},\"failed\":0,\"status\":\"passed\"}}"
+    String(runes[..runes.size-1])+",\"execution\":${evidence}}"
 }
 
-private func renderTeacherCkbGap(row: TeacherGapRow, runId: String, bundle: String): String {
-    let candidatePath="candidate-knowledge/ckb-benchmark-gap.jsonl";let evidence="${row.evidence}|teacherAtomHash=sha256:${teacherStableHash(bundle)}";let evidenceHash="sha256:${teacherStableHash(evidence)}"
+private func renderTeacherCkbGap(row: TeacherGapRow, runId: String, bundle: String,transcriptHash:String): String {
+    let candidatePath="candidate-knowledge/ckb-benchmark-gap.jsonl";let evidence="${row.evidence}|teacherAtomHash=sha256:${teacherStableHash(bundle)}|extractorTranscriptHash=${transcriptHash}";let evidenceHash="sha256:${teacherStableHash(evidence)}"
     let identity="${row.benchmark.trimAscii().toAsciiLower()}:${row.datasetVersion.toAsciiLower()}:${row.caseId.toAsciiLower()}:${row.missingKnowledge.toAsciiUpper()}:${row.targetVersion.toAsciiLower()}"
     let canonical=candidatePart(identity)+candidatePart(row.taskText)+candidatePart(row.visibleTestExcerpt)+candidatePart(row.compilerOutput)+candidatePart(row.missingKnowledge.toAsciiUpper())+candidatePart(row.interfaceId)+candidatePart(row.contentFamily)+candidatePart(row.updateMechanism)+candidatePart(row.targetVersion)+candidatePart(row.citation)+candidatePart(bundle)+candidatePart("true")+candidatePart(runId)+candidatePart(evidenceHash)+candidatePart(evidence)+candidatePart(candidatePath)+candidatePart("1")+candidatePart("1")+candidatePart("knowledge_gap")+candidatePart("2")
     let hash="sha256:${teacherStableHash(canonical)}"

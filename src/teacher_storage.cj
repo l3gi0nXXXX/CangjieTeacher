@@ -105,3 +105,28 @@ public func loadCompletedTeacherRuns(path: String): Array<TeacherRunManifest> {
 public func persistCompletedTeacherRuns(path: String, runs: Array<TeacherRunManifest>): String {
     teacherAtomicWrite(path, teacherJoin(runs.map({r: TeacherRunManifest => renderTeacherRunManifest(r)}), "\n") + "\n")
 }
+
+public func persistTeacherSolutionBinding(root:String,run:TeacherRunManifest):String {
+    let hash=teacherDirectoryHash(TeacherPaths(root).solution(run.caseId))
+    if(hash==""){throw IllegalArgumentException("solution_hash_missing")}
+    teacherAtomicWrite("${root}/runs/${run.runId}/evidence/${run.caseId}/solution.binding",
+        "${hash}\t${run.evidenceHash}\t${run.promptHash}\n")
+}
+
+public func validateTeacherSolutionBinding(root:String,run:TeacherRunManifest):Bool {
+    let path="${root}/runs/${run.runId}/evidence/${run.caseId}"
+    try {
+        let persisted=parseTeacherRunManifest(teacherReadUtf8File("${path}/run.manifest").trimAscii())
+        if(renderTeacherRunManifest(persisted)!=renderTeacherRunManifest(run)||!validateTeacherPersistedEvidenceIndex(path)){return false}
+        let fields=teacherReadUtf8File("${path}/solution.binding").trimAscii().split("\t")
+        fields.size==3&&fields[0]==teacherDirectoryHash(TeacherPaths(root).solution(run.caseId))&&fields[1]==run.evidenceHash&&fields[2]==run.promptHash
+    }catch(_:Exception){false}
+}
+
+private func validateTeacherPersistedEvidenceIndex(base:String):Bool {
+    try {
+        let index=teacherReadUtf8File("${base}/index.tsv")
+        for(name in ["generation.txt","verification.txt","run.manifest"]){let path="${base}/${name}";let expected="${path}\t${teacherStableHash(teacherReadUtf8File(path))}";if(!index.split("\n").contains(expected)){return false}}
+        true
+    }catch(_:Exception){false}
+}
