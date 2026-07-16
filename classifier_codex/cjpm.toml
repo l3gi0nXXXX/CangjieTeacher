@@ -1,0 +1,12 @@
+[package]
+  cjc-version = "1.0.0"
+  name = "cangjie_teacher_p5_codex_classifier"
+  version = "1.0.0"
+  output-type = "executable"
+  compile-option = "-Woff unused"
+
+[dependencies]
+  cangjie_teacher = { path = ".." }
+
+[target.aarch64-apple-darwin.bin-dependencies]
+  path-option = ["${MAGIC_PATH}/libs/cangjie-stdx-mac-aarch64-1.0.0.1/darwin_aarch64_llvm/dynamic/stdx"]
