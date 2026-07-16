@@ -38,7 +38,7 @@ private class TeacherAtomSpec {
 }
 
 public class TeacherAtomExecutionResult {
-    public var ok=false;public var diagnostic="atom_test_failed";public var evidenceJson="";public init(){}
+    public var ok=false;public var diagnostic="atom_test_failed";public var evidenceJson="";public var feedback="";public init(){}
 }
 
 public func runTeacherCandidateBuild(options: TeacherCliOptions): Int64 {
@@ -83,20 +83,22 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
             let solutionRoot = TeacherPaths(options.root).solution(row.caseId)
             if (!exists(Path(solutionRoot))||!validateTeacherSolutionBinding(options.root,run)) { result.diagnostic = "solution_evidence_binding_invalid"; return result }
             let protected = teacherPrivateArtifacts(solutionRoot)
-            let extraction=extractTeacherAtom(options,row,run,solutionRoot,extractorExecutor)
-            if(extraction[1]!="ok"){result.diagnostic=extraction[1];return result};let spec=extraction[0]
-            let observation = deriveKnowledgeObservation(caseValue, spec.family, spec.concept, row.targetVersion, spec.explanation, spec.citation, spec.sourceClass, row.evidence+spec.transcriptHash)
-            if (!validateObservationNoSolutionLeak(observation)) { result.diagnostic = "observation_leakage"; return result }
-            let normalized = normalizeObservation(observation)
-            let identity = canonicalKnowledgeIdentity(normalized)
-            match (identities.get(identity)) {
-                case Some(existing) => if (mergeKnowledgeObservations([existing, normalized]).reviewRequired) { result.diagnostic = "review_required"; return result }
-                case None => identities.add(identity, normalized)
+            var atomFeedback="";var acceptedSpec:?TeacherAtomSpec=None;var acceptedObservation:?TeacherObservation=None;var identity="";var bundle=""
+            while(true){
+                let extraction=extractTeacherAtom(options,row,run,solutionRoot,atomFeedback,extractorExecutor)
+                if(extraction[1]!="ok"){result.diagnostic=extraction[1];return result};let currentSpec=extraction[0]
+                let observation=deriveKnowledgeObservation(caseValue,currentSpec.family,currentSpec.concept,row.targetVersion,currentSpec.explanation,currentSpec.citation,currentSpec.sourceClass,row.evidence+currentSpec.transcriptHash)
+                if(!validateObservationNoSolutionLeak(observation)){result.diagnostic="observation_leakage";return result}
+                let normalized=normalizeObservation(observation);let currentIdentity=canonicalKnowledgeIdentity(normalized)
+                match(identities.get(currentIdentity)){case Some(existing)=>if(mergeKnowledgeObservations([existing,normalized]).reviewRequired){result.diagnostic="review_required";return result};case None=>()}
+                let currentBundle=teacherExecutableAtomBundle(currentIdentity,row,currentSpec)
+                let execution=executeTeacherAtomTestBundle(currentBundle,"${options.root}/runs/${options.runId}/atom-test-workspaces/${currentIdentity}",executor:atomExecutor,timeoutMillis:options.timeoutMillis)
+                if(!execution.ok){if(execution.diagnostic=="atom_test_timeout"){result.diagnostic=execution.diagnostic;return result};atomFeedback=execution.feedback;continue}
+                acceptedSpec=Some(currentSpec);acceptedObservation=Some(normalized);identity=currentIdentity;bundle=recordTeacherAtomTestExecution(currentBundle,execution.evidenceJson);break
             }
-            var bundle = teacherExecutableAtomBundle(identity, row, spec)
-            let execution = executeTeacherAtomTestBundle(bundle, "${options.root}/runs/${options.runId}/atom-test-workspaces/${identity}", executor:atomExecutor, timeoutMillis:options.timeoutMillis)
-            if (!execution.ok) { result.diagnostic = execution.diagnostic; return result }
-            bundle = recordTeacherAtomTestExecution(bundle,execution.evidenceJson)
+            let spec=match(acceptedSpec){case Some(v)=>v;case None=>throw IllegalStateException("accepted_atom_missing")}
+            let normalized=match(acceptedObservation){case Some(v)=>v;case None=>throw IllegalStateException("accepted_observation_missing")}
+            identities.add(identity,normalized)
             let simpleTests = buildKnowledgeAtomTestBundle(spec.positiveSource, spec.negativeSource, spec.boundarySource)
             let candidate = renderCandidateKnowledgeExport(normalized, spec.example, simpleTests)
             if (!auditCandidateAgainstSolutions(candidate, protected).passed || !auditCaseSpecificity(candidate, [caseValue.signature]).passed) {
@@ -151,12 +153,13 @@ private func parseTeacherAuthorityGapJsonl(text: String): (Array<TeacherGapRow>,
     (rows.toArray(), "ok")
 }
 
-private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:TeacherRunManifest,solutionRoot:String,
+private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:TeacherRunManifest,solutionRoot:String,atomFeedback:String,
     executor:TeacherCommandExecutor):(TeacherAtomSpec,String) {
     if(options.model!="gpt-5.6-sol"){return (emptyTeacherAtomSpec(),"extractor_model_identity_invalid")}
     let solutionHash=teacherDirectoryHash(solutionRoot)
     let allowedEvidence=teacherSanitizeEvidence(row.evidence+"\n"+row.compilerOutput)
-    let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}"
+    let repair=if(atomFeedback==""){""}else{"\nA previous atom test failed. Correct the proposed knowledge test sources or expected diagnostic using this sanitized compiler evidence, then return a complete replacement object:\n${atomFeedback}"}
+    let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}${repair}"
     let extractorRoot="${options.root}/runs/${options.runId}/extractor-workspaces/${row.caseId}"
     try { if(!exists(Path(extractorRoot))){Directory.create(Path(extractorRoot),recursive:true)} } catch(_:Exception){return(emptyTeacherAtomSpec(),"extractor_workspace_failed")}
     let schemaPath="${extractorRoot}/response.schema.json";let responsePath="${extractorRoot}/response.json"
@@ -204,10 +207,10 @@ public func executeTeacherAtomTestBundle(raw:String,workspaceRoot:String,
             _=teacherAtomicWrite("${root}/cjpm.toml","[package]\n  cjc-version = \"1.0.0\"\n  name = \"teacher_atom_${category}\"\n  version = \"1.0.0\"\n  output-type = \"executable\"\n")
             let source=candidateString(t,"source");if(source.trimAscii().startsWith("package ")){out.diagnostic="atom_source_package_forbidden";return out}
             _=teacherAtomicWrite("${root}/src/main.cj","package teacher_atom_${category}\n\n${source}\n");var categoryOk=true;var categoryEvidence=""
-            for(args in [["clean"],["build","-i"],["test","-j","1"]]){let r=executor.execute(TeacherCommandSpec("cjpm",args,root,timeoutMillis:timeoutMillis));categoryEvidence+="${args[0]}:${r.exitCode}:sha256:${teacherStableHash(r.output)}|";if(r.timedOut){out.diagnostic="atom_test_timeout";return out};if(category=="negative"&&args[0]=="build"){categoryOk=r.exitCode!=0&&r.output.contains(candidateString(t,"expectedDiagnostic"));break};if(r.exitCode!=0){categoryOk=false;break}}
+            for(args in [["clean"],["build","-i"],["test","-j","1"]]){let r=executor.execute(TeacherCommandSpec("cjpm",args,root,timeoutMillis:timeoutMillis));categoryEvidence+="${args[0]}:${r.exitCode}:sha256:${teacherStableHash(r.output)}|";if(r.timedOut){out.diagnostic="atom_test_timeout";return out};if(category=="negative"&&args[0]=="build"){categoryOk=r.exitCode!=0&&r.output.contains(candidateString(t,"expectedDiagnostic"));if(!categoryOk){out.feedback=teacherSanitizeEvidence("category=negative expectedDiagnostic=${candidateString(t,"expectedDiagnostic")} actualCompilerOutput=${r.output.replace(root,"[atom-workspace]")}")};break};if(r.exitCode!=0){categoryOk=false;out.feedback=teacherSanitizeEvidence("category=${category} command=${args[0]} expected=success actualCompilerOutput=${r.output.replace(root,"[atom-workspace]")}");break}}
             if(categoryOk){passed++};evidence+="${category}:${categoryEvidence}passed=${categoryOk};"
         }
-        if(categories.contains("positive")&&categories.contains("negative")&&categories.contains("boundary")&&passed==3){out.ok=true;out.diagnostic="ok";out.evidenceJson="{\"total\":3,\"passed\":3,\"failed\":0,\"status\":\"passed\",\"commandEvidence\":\"${candidateEscape(evidence)}\",\"commandEvidenceHash\":\"sha256:${teacherStableHash(evidence)}\"}"}else{out.diagnostic="atom_test_failed"}
+        if(categories.contains("positive")&&categories.contains("negative")&&categories.contains("boundary")&&passed==3){out.ok=true;out.diagnostic="ok";out.evidenceJson="{\"total\":3,\"passed\":3,\"failed\":0,\"status\":\"passed\",\"commandEvidence\":\"${candidateEscape(evidence)}\",\"commandEvidenceHash\":\"sha256:${teacherStableHash(evidence)}\"}"}else{out.diagnostic="atom_test_failed";if(out.feedback==""){out.feedback="atom categories incomplete or failed"}}
     }catch(_:Exception){out.diagnostic="malformed_atom_test_bundle"};out
 }
 

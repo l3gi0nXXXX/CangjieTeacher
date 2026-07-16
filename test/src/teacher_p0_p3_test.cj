@@ -26,6 +26,13 @@ private class RecordingExecutor <: TeacherCommandExecutor {
         selected
     }
 }
+private class AtomRepairExecutor <: TeacherCommandExecutor {
+    private var negativeBuilds:Int64=0
+    public func execute(spec:TeacherCommandSpec):TeacherProcessResult{
+        if(spec.cwd.contains("/negative")&&spec.args.contains("build")){negativeBuilds+=1;return TeacherProcessResult(1,"undefined name 中文😀")}
+        TeacherProcessResult(0,"")
+    }
+}
 
 @Test
 public class TeacherRuntimeTest {
@@ -399,21 +406,24 @@ public class TeacherP0P3Test {
             let options = TeacherCliOptions(); options.command="candidate-build"; options.root=root; options.manifest="${root}/manifest.jsonl"
             options.checksum=teacherStableHash(teacherJoin(caseLines(), "\n"));options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.outputRoot="${root}/exports/r1";options.model="gpt-5.6-sol"
             let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 Rune iteration\",\"explanation\":\"Use Rune iteration for Unicode character boundaries.\",\"example\":\"Iterate over text.runes() for Chinese and emoji.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let x = 1 }\",\"negativeSource\":\"main() { unknownName }\",\"boundarySource\":\"main() { let text = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\"}"
-            let extractor=RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true),TeacherProcessResult(7,"provider unavailable"),TeacherProcessResult(0,extractorJson)])
-            let atom=RecordingExecutor(results:[TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(1,"undefined name"),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,"")])
+            let badExtractorJson=extractorJson.replace("\"negativeDiagnostic\":\"undefined\"","\"negativeDiagnostic\":\"wrong diagnostic 中文😀\"")
+            let extractor=RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true),TeacherProcessResult(7,"provider unavailable"),TeacherProcessResult(0,badExtractorJson),TeacherProcessResult(0,extractorJson)])
+            let atom=AtomRepairExecutor()
             let result = buildTeacherCandidates(options,extractorExecutor:extractor,atomExecutor:atom)
             @Expect(result.ok, true); @Expect(result.accepted, 1)
-            @Expect(extractor.specs.size,3)
-            @Expect(extractor.specs[2].args.contains("gpt-5.6-sol"), true)
-            @Expect(extractor.specs[2].args.contains("read-only"), true)
-            @Expect(extractor.specs[2].args.contains("--ephemeral"), true)
-            @Expect(extractor.specs[2].args.contains("-C"), true)
-            @Expect(extractor.specs[2].args.contains("--output-schema"), true)
-            @Expect(extractor.specs[2].args.contains("--output-last-message"), true)
-            @Expect(extractor.specs[2].args.contains("--cwd"), false)
-            @Expect(extractor.specs[2].args.contains("--full-auto"), false)
-            @Expect(extractor.specs[2].args[extractor.specs[2].args.size-1].contains("Set citation to exactly 'https://docs.cangjie-lang.cn/docs/1.0.0/'"),true)
-            @Expect(extractor.specs[2].args[extractor.specs[2].args.size-1].contains("negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler"),true)
+            @Expect(extractor.specs.size,4)
+            @Expect(extractor.specs[3].args.contains("gpt-5.6-sol"), true)
+            @Expect(extractor.specs[3].args.contains("read-only"), true)
+            @Expect(extractor.specs[3].args.contains("--ephemeral"), true)
+            @Expect(extractor.specs[3].args.contains("-C"), true)
+            @Expect(extractor.specs[3].args.contains("--output-schema"), true)
+            @Expect(extractor.specs[3].args.contains("--output-last-message"), true)
+            @Expect(extractor.specs[3].args.contains("--cwd"), false)
+            @Expect(extractor.specs[3].args.contains("--full-auto"), false)
+            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].contains("Set citation to exactly 'https://docs.cangjie-lang.cn/docs/1.0.0/'"),true)
+            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].contains("negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler"),true)
+            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].contains("wrong diagnostic 中文😀"),true)
+            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].contains("undefined name 中文😀"),true)
             @Expect(exists(Path("${root}/exports/r1/observations.tsv")), true)
             @Expect(exists(Path("${root}/exports/r1/atom-tests.jsonl")), true)
             @Expect(exists(Path("${root}/exports/r1/candidate-knowledge.tsv")), true)
