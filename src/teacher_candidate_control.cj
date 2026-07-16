@@ -205,6 +205,9 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         strong.clear();primary.clear()
         for(anchor in ["uint8","rune","torunearray","=="]){teacherAuthorityAddAnchor(strong,anchor)}
         primary.add("==")
+    }else if(gap.contains("rune-numeric-conversion")){
+        strong.clear();primary.clear()
+        strong.add("rune");strong.add("uint32");primary.add("rune")
     }else if(gap.contains("rune-byte-compare")&&strong.isEmpty()){
         for(anchor in ["uint8","rune","torunearray"]){teacherAuthorityAddAnchor(strong,anchor)}
         primary.add("uint8");primary.add("rune")
@@ -269,10 +272,19 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
             out.feedback=teacherAuthorityStringRuneContainsFeedback()
             return out
         }
+        if(gap=="g-rune-numeric-conversion"&&
+            (!teacherAuthorityRuneNumericPositive(narrative,positiveSource)||
+             !teacherAuthorityRuneNumericPositive(narrative,boundarySource)||
+             !teacherAuthorityRuneNumericNegative(negativeSource))){
+            out.feedback=teacherAuthorityRuneNumericFeedback()
+            return out
+        }
         out.ok=true;out.diagnostic="ok";return out
     }
     var names="";for(i in 0..required.size){if(i>0){names+=","};names+=required[i]}
-    if(gap=="g-string-rune-contains"){
+    if(gap=="g-rune-numeric-conversion"){
+        out.feedback=teacherAuthorityRuneNumericFeedback()
+    }else if(gap=="g-string-rune-contains"){
         out.feedback=teacherAuthorityStringRuneContainsFeedback()
     }else if(gap.contains("float64-abs")){
         out.feedback=teacherAuthorityFloat64AbsFeedback()
@@ -404,6 +416,37 @@ private func teacherAuthorityAsciiSpace(value:Rune):Bool{
 
 private func teacherAuthorityStringRuneContainsFeedback():String{
     teacherAuthorityBoundedFeedback("Use explicit type annotations in every source, and the explanation or example must state exactly Array<Rune>.contains(Rune). Positive and boundary sources must declare runes: Array<Rune> from toRuneArray, needle: Rune, and byte: UInt8, then call the Array<Rune> receiver's contains with that Rune. The negative source must declare either text: String and needle: Rune before calling text.contains(needle) on that String receiver, or bytes: Array<UInt8> and needle: Rune before calling bytes.contains(needle) on that Array<UInt8> receiver, to reproduce the mismatched-types diagnostic. String construction from UInt8, String.contains(String), comments, and string labels do not satisfy this gate.")
+}
+
+private func teacherAuthorityRuneNumericPositive(narrative:String,source:String):Bool{
+    if(!narrative.contains("uint32(rune)")||
+        !(narrative.contains("first")||narrative.contains("two-step")||narrative.contains("two step"))){return false}
+    let raw=teacherAuthorityCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    for(rune in teacherAuthorityNamesBeforeType(raw,"rune")){
+        for(target in teacherAuthorityRuneNumericTargets()){
+            if(code.contains("${target}(uint32(${rune}))")){return true}
+        }
+    }
+    false
+}
+
+private func teacherAuthorityRuneNumericNegative(source:String):Bool{
+    let raw=teacherAuthorityCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    for(rune in teacherAuthorityNamesBeforeType(raw,"rune")){
+        if(code.contains("uint32(${rune})")){continue}
+        for(target in teacherAuthorityRuneNumericTargets()){
+            if(code.contains("${target}(${rune})")){return true}
+        }
+    }
+    false
+}
+
+private func teacherAuthorityRuneNumericTargets():Array<String>{
+    ["int8","int16","int32","int64","intnative","uint8","uint16","uint64","uintnative","float16","float32","float64"]
+}
+
+private func teacherAuthorityRuneNumericFeedback():String{
+    teacherAuthorityBoundedFeedback("Rune numeric conversion is two-step: first obtain the Unicode scalar with UInt32(rune), then apply the target numeric conversion, for example Float64(UInt32(rune)) or Int64(UInt32(rune)). Positive and boundary sources must declare rune: Rune and execute that nested conversion for ASCII, zero, Chinese, or emoji values. The negative source must declare rune: Rune and use a direct target conversion such as Float64(rune) or Int64(rune) to reproduce the numeric-conversion diagnostic. Comments and string labels do not count as evidence.")
 }
 
 private func teacherAuthorityQuotedAnchors(value:String):ArrayList<String>{

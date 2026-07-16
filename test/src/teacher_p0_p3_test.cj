@@ -656,6 +656,31 @@ public class TeacherP0P3Test {
         @Expect(unrelated.feedback.contains("global abs(value)"),false)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRequiresTwoStepRuneNumericConversion():Unit{
+        let compiler="the expression for numeric type conversion must have a numeric type 中文😀 /Users/private/token Authorization"
+        let narrative="Rune is not directly numeric. First obtain its Unicode scalar with UInt32(rune), then perform the target numeric conversion such as Float64(UInt32(rune)) or Int64(UInt32(rune))."
+        let positive="main(){ let rune:Rune=r'A'; let value:Float64=Float64(UInt32(rune)); println(value) }"
+        let boundary="main(){ let zero:Rune=Rune(0); let emoji:Rune=r'😀'; let a:Float64=Float64(UInt32(zero)); let b:Int64=Int64(UInt32(emoji)); println(a); println(b) }"
+        let negative="main(){ let rune:Rune=r'中'; let value:Float64=Float64(rune); println(value) }"
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-RUNE-NUMERIC-CONVERSION",narrative,narrative,positive,negative,boundary)
+        @Expect(relevant.ok,true)
+
+        let directPositive="main(){ let rune:Rune=r'A'; let value:Float64=Float64(rune); println(value) }"
+        let directResult=validateTeacherAuthorityRelevance(compiler,"G-RUNE-NUMERIC-CONVERSION",narrative,narrative,directPositive,negative,boundary)
+        @Expect(directResult.ok,false);@Expect(directResult.feedback.contains("Float64(UInt32(rune))"),true)
+        let uint32Only="main(){ let rune:Rune=r'A'; let scalar:UInt32=UInt32(rune); println(scalar) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RUNE-NUMERIC-CONVERSION",narrative,narrative,uint32Only,negative,boundary).ok,false)
+        let wrongNegativeResult=validateTeacherAuthorityRelevance(compiler,"G-RUNE-NUMERIC-CONVERSION",narrative,narrative,positive,positive,boundary)
+        @Expect(wrongNegativeResult.ok,false);@Expect(wrongNegativeResult.feedback.contains("direct target conversion"),true)
+        let disguised="// Float64(UInt32(rune))\nmain(){ let rune:Rune=r'A'; println(\"Float64(UInt32(rune))\"); println(rune) }"
+        let disguisedResult=validateTeacherAuthorityRelevance(compiler,"G-RUNE-NUMERIC-CONVERSION",narrative,narrative,disguised,negative,boundary)
+        @Expect(disguisedResult.ok,false);@Expect(disguisedResult.feedback.contains("UInt32(rune)"),true)
+        @Expect(disguisedResult.feedback.contains("/Users"),false);@Expect(disguisedResult.feedback.toAsciiLower().contains("token"),false)
+        let unrelated=validateTeacherAuthorityRelevance("invalid binary operator '<' on type 'UInt8' and 'Rune'","G-RUNE-BYTE-COMPARE",
+            narrative,narrative,positive,negative,boundary)
+        @Expect(unrelated.feedback.contains("direct target conversion"),false)
+    }
+
     @TestCase public func candidateAuthorityRelevanceRequiresStdxDependencyProjectEvidence():Unit{
         let compiler="root package imports package 'stdx.crypto.digest' but it is not added as a dependency in cjpm.toml"
         let source="import stdx.crypto.digest.SHA256\nmain(){ let digest=SHA256(); digest.write(Array<UInt8>()); println(digest.finish().size) }"
