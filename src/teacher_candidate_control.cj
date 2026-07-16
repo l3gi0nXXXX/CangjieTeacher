@@ -403,7 +403,7 @@ private func teacherAuthorityAsciiSpace(value:Rune):Bool{
 }
 
 private func teacherAuthorityStringRuneContainsFeedback():String{
-    teacherAuthorityBoundedFeedback("Use explicit type annotations in every source. Positive and boundary sources must declare runes: Array<Rune> from toRuneArray, needle: Rune, and byte: UInt8, then call the Array<Rune> receiver's contains with that Rune. The negative source must declare either text: String and needle: Rune before calling text.contains(needle) on that String receiver, or bytes: Array<UInt8> and needle: Rune before calling bytes.contains(needle) on that Array<UInt8> receiver, to reproduce the mismatched-types diagnostic. String construction from UInt8, String.contains(String), comments, and string labels do not satisfy this gate.")
+    teacherAuthorityBoundedFeedback("Use explicit type annotations in every source, and the explanation or example must state exactly Array<Rune>.contains(Rune). Positive and boundary sources must declare runes: Array<Rune> from toRuneArray, needle: Rune, and byte: UInt8, then call the Array<Rune> receiver's contains with that Rune. The negative source must declare either text: String and needle: Rune before calling text.contains(needle) on that String receiver, or bytes: Array<UInt8> and needle: Rune before calling bytes.contains(needle) on that Array<UInt8> receiver, to reproduce the mismatched-types diagnostic. String construction from UInt8, String.contains(String), comments, and string labels do not satisfy this gate.")
 }
 
 private func teacherAuthorityQuotedAnchors(value:String):ArrayList<String>{

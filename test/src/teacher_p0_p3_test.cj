@@ -547,6 +547,12 @@ public class TeacherP0P3Test {
         @Expect(wrongPositiveResult.feedback.contains("needle: Rune"),true)
         @Expect(wrongPositiveResult.feedback.contains("text: String"),true)
         @Expect(wrongPositiveResult.feedback.contains("bytes: Array<UInt8>"),true)
+        @Expect(wrongPositiveResult.feedback.contains("explanation or example must state exactly Array<Rune>.contains(Rune)"),true)
+        for(requiredFeedback in ["explicit type annotations","runes: Array<Rune>","toRuneArray","needle: Rune","byte: UInt8",
+            "text: String","text.contains(needle)","bytes: Array<UInt8>","bytes.contains(needle)","mismatched-types diagnostic",
+            "String construction from UInt8","String.contains(String)"]){
+            @Expect(wrongPositiveResult.feedback.contains(requiredFeedback),true)
+        }
         let inferredPositive="main(){ let text=\"A\"; let byte=UInt8(65); let runes=text.toRuneArray(); let needle=r'A'; println(runes.contains(needle)); println(byte) }"
         let inferredResult=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS",
             "Use Array<Rune>.contains(Rune) after toRuneArray with UInt8 kept distinct.","Array<Rune>.contains(Rune)",inferredPositive,containsNegative,inferredPositive)
