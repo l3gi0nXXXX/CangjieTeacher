@@ -188,6 +188,19 @@ private class RepairVerifier <: TeacherVerifier {
         else { TeacherProcessResult(0, "passed") }
     }
 }
+private class TransportRetryProcess <: TeacherProcess {
+    public var calls: Int64 = 0
+    public let feedback = ArrayList<String>()
+    public func generate(caseValue: TeacherCaseManifest, workspace: String, session: String, runtimeHome: String,
+        verifierFeedback: String): TeacherProcessResult {
+        calls += 1
+        feedback.add(verifierFeedback)
+        if (calls == 1) { return TeacherProcessResult(124, "timeout", timedOut: true) }
+        if (calls == 2) { return TeacherProcessResult(7, "provider unavailable") }
+        if (calls == 3) { return TeacherProcessResult(0, "") }
+        TeacherProcessResult(0, "completed")
+    }
+}
 private func options(generate!: TeacherProcessResult = TeacherProcessResult(0, "solution"),
     verify!: TeacherProcessResult = TeacherProcessResult(0, "tests passed")): TeacherRunOptions {
     TeacherRunOptions("run-1", "/tmp/teacher-fixture", "gpt-fake", FakeProcess(generate), FakeVerifier(verify), FakeClock())
@@ -273,6 +286,19 @@ public class TeacherP0P3Test {
         @Expect(process.feedback[1].contains("编译错误🙂"), true)
         @Expect(process.feedback[1].contains("public func leaked"), false)
         @Expect(process.feedback[1].contains("[solution_content_redacted]"), true)
+    }
+    @TestCase public func p2TeacherRetriesTransportFailuresInSameRun(): Unit {
+        let process = TransportRetryProcess()
+        let run = runTeacherCase(testCase(), TeacherRunOptions("transport-retry-run", "/tmp/teacher-retry-fixture",
+            "gpt-5.6-sol", process, FakeVerifier(TeacherProcessResult(0, "passed")), FakeClock(),
+            repairUntilVerified: true))
+        @Expect(run.status, "verified")
+        @Expect(run.attempt, 4)
+        @Expect(process.calls, 4)
+        @Expect(process.feedback[0], "")
+        @Expect(process.feedback[1].contains("transport attempt"), true)
+        @Expect(process.feedback[2].contains("transport attempt"), true)
+        @Expect(process.feedback[3].contains("transport attempt"), true)
     }
     // P2-BND-01
     @TestCase public func p2TimeoutEmptyUtf8AndResumeAreStable(): Unit {

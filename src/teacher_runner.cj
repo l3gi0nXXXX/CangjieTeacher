@@ -54,9 +54,16 @@ public func executeTeacherCase(caseValue: TeacherCaseManifest, options: TeacherR
         let generated = options.process.generate(caseValue, paths.workspace(options.runId, caseValue.caseId),
             paths.session(options.runId, caseValue.caseId), paths.runtimeHome(options.runId, caseValue.caseId), feedback)
         generationEvidence += generated.output
-        if (generated.timedOut) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "timeout", 124, "${started}:timeout", attempt: teacherAttempt), generationEvidence, verifierEvidence) }
-        if (generated.exitCode != 0) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "generation_failed", generated.exitCode, generationEvidence, attempt: teacherAttempt), generationEvidence, verifierEvidence) }
-        if (generated.output.isEmpty()) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "empty_output", 3, "empty", attempt: teacherAttempt), "empty", verifierEvidence) }
+        if (generated.timedOut || generated.exitCode != 0 || generated.output.isEmpty()) {
+            if (options.repairUntilVerified) {
+                feedback = "The previous model transport attempt did not produce a valid terminal result. " +
+                    "Continue from the current workspace and finish the implementation."
+                continue
+            }
+            if (generated.timedOut) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "timeout", 124, "${started}:timeout", attempt: teacherAttempt), generationEvidence, verifierEvidence) }
+            if (generated.exitCode != 0) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "generation_failed", generated.exitCode, generationEvidence, attempt: teacherAttempt), generationEvidence, verifierEvidence) }
+            return TeacherCaseExecution(buildTeacherRun(caseValue, options, "empty_output", 3, "empty", attempt: teacherAttempt), "empty", verifierEvidence)
+        }
         let checked = options.verifier.verify(caseValue, paths.workspace(options.runId, caseValue.caseId))
         verifierEvidence += checked.output
         if (checked.exitCode == 0) {
