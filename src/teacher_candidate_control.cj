@@ -255,10 +255,19 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
             out.feedback=teacherAuthorityStringRuneIterationFeedback()
             return out
         }
+        if(gap.contains("float64-abs")&&
+            (!teacherAuthorityFloat64AbsPositive(narrative,positiveSource)||
+             !teacherAuthorityFloat64AbsBoundary(narrative,boundarySource)||
+             !teacherAuthorityFloat64AbsNegative(negativeSource))){
+            out.feedback=teacherAuthorityFloat64AbsFeedback()
+            return out
+        }
         out.ok=true;out.diagnostic="ok";return out
     }
     var names="";for(i in 0..required.size){if(i>0){names+=","};names+=required[i]}
-    if(gap.contains("string-rune-iteration")){
+    if(gap.contains("float64-abs")){
+        out.feedback=teacherAuthorityFloat64AbsFeedback()
+    }else if(gap.contains("string-rune-iteration")){
         out.feedback=teacherAuthorityStringRuneIterationFeedback()
     }else if(gap.contains("rune-unicode-import")){
         out.feedback=teacherAuthorityBoundedFeedback("Authority relevance failed. Positive and boundary sources must each import std.unicode.* and call both Rune.isLowerCase() and isUpperCase(). The negative source must omit that import and call at least one of those APIs to reproduce the undeclared-identifier diagnostic. Keep the explanation and example aligned with those same public APIs; do not use comments or private evidence to satisfy the check.")
@@ -291,6 +300,48 @@ private func teacherAuthorityStringRuneIterationNegative(source:String):Bool{
 
 private func teacherAuthorityStringRuneIterationFeedback():String{
     teacherAuthorityBoundedFeedback("Direct String iteration produces UInt8 values, which are distinct from Rune values; positive and boundary sources must each demonstrate direct String iteration with UInt8, call toRuneArray to obtain Rune values, and compare only same-typed values with ==. The negative source must iterate a String directly and compare that UInt8 element with a Rune literal to reproduce the UInt8 == Rune diagnostic. Comments and string labels do not count as evidence.")
+}
+
+private func teacherAuthorityFloat64AbsNarrative(narrative:String):Bool{
+    narrative.contains("global")&&narrative.contains("abs(value)")&&narrative.contains(".abs(")&&
+        (narrative.contains("receiver")||narrative.contains("member"))
+}
+
+private func teacherAuthorityFloat64AbsPositive(narrative:String,source:String):Bool{
+    let code=teacherAuthorityCompactCode(source)
+    teacherAuthorityFloat64AbsNarrative(narrative)&&teacherAuthorityHasGlobalAbsCall(code)&&
+        !code.contains(".abs(")&&code.contains(":float64")&&code.contains("-")
+}
+
+private func teacherAuthorityFloat64AbsBoundary(narrative:String,source:String):Bool{
+    let code=teacherAuthorityCompactCode(source)
+    teacherAuthorityFloat64AbsNarrative(narrative)&&teacherAuthorityHasGlobalAbsCall(code)&&
+        !code.contains(".abs(")&&code.contains("abs(-0.0)")&&code.contains("abs(0.0)")
+}
+
+private func teacherAuthorityFloat64AbsNegative(source:String):Bool{
+    let code=teacherAuthorityCompactCode(source)
+    code.contains(":float64")&&code.contains(".abs(")
+}
+
+private func teacherAuthorityHasGlobalAbsCall(code:String):Bool{
+    let runes=code.toRuneArray();let token="abs(".toRuneArray()
+    if(runes.size<token.size){return false}
+    for(i in 0..=runes.size-token.size){
+        var matches=true
+        for(j in 0..token.size){if(runes[i+j]!=token[j]){matches=false;break}}
+        if(matches){
+            if(i==0){return true}
+            let previous=runes[i-1]
+            let identifier=(previous>=r'a'&&previous<=r'z')||(previous>=r'0'&&previous<=r'9')||previous==r'_'
+            if(!identifier&&previous!=r'.'){return true}
+        }
+    }
+    false
+}
+
+private func teacherAuthorityFloat64AbsFeedback():String{
+    teacherAuthorityBoundedFeedback("Float64 absolute value uses the global abs(value) function, not a receiver or member value.abs() call. Positive source must call global abs with a negative Float64; boundary source must call global abs(-0.0) and abs(0.0); neither may contain .abs(. The negative source must call a Float64 member .abs() to reproduce the undeclared-identifier diagnostic. Comments and string labels do not count as evidence.")
 }
 
 private func teacherAuthorityQuotedAnchors(value:String):ArrayList<String>{

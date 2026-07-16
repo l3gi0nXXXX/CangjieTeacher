@@ -587,6 +587,32 @@ public class TeacherP0P3Test {
         @Expect(disguisedResult.feedback.contains("/Users"),false);@Expect(disguisedResult.feedback.toAsciiLower().contains("token"),false)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRequiresGlobalFloat64Abs():Unit{
+        let compiler="undeclared identifier 'abs' 中文😀 /Users/private/token Authorization"
+        let narrative="Float64 absolute value uses the global function abs(value), not a receiver member method value.abs()."
+        let positive="main(){ let negative:Float64=-3.5; println(abs(negative)) }"
+        let boundary="main(){ let negativeZero:Float64=-0.0; let positiveZero:Float64=0.0; println(abs(-0.0)); println(abs(0.0)); println(negativeZero); println(positiveZero) }"
+        let negative="main(){ let value:Float64=-3.5; println(value.abs()) }"
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-FLOAT64-ABS",narrative,narrative,positive,negative,boundary)
+        @Expect(relevant.ok,true)
+
+        let wrongPositive="main(){ let value:Float64=-3.5; println(value.abs()) }"
+        let wrongPositiveResult=validateTeacherAuthorityRelevance(compiler,"G-FLOAT64-ABS",narrative,narrative,wrongPositive,negative,boundary)
+        @Expect(wrongPositiveResult.ok,false);@Expect(wrongPositiveResult.feedback.contains("global abs(value)"),true)
+        let wrongNegativeResult=validateTeacherAuthorityRelevance(compiler,"G-FLOAT64-ABS",narrative,narrative,positive,positive,boundary)
+        @Expect(wrongNegativeResult.ok,false)
+        let wrongBoundary="main(){ let zero:Float64=0.0; println(abs(zero)) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-FLOAT64-ABS",narrative,narrative,positive,negative,wrongBoundary).ok,false)
+        let disguised="// abs(-3.5)\nmain(){ let value:Float64=-3.5; println(\"global abs(value)\"); println(value) }"
+        let disguisedResult=validateTeacherAuthorityRelevance(compiler,"G-FLOAT64-ABS",narrative,narrative,disguised,negative,boundary)
+        @Expect(disguisedResult.ok,false);@Expect(disguisedResult.feedback.contains("global abs(value)"),true)
+        let prefixed="main(){ let value:Float64=-3.5; println(fabs(value)) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-FLOAT64-ABS",narrative,narrative,prefixed,negative,boundary).ok,false)
+        @Expect(disguisedResult.feedback.contains("/Users"),false);@Expect(disguisedResult.feedback.toAsciiLower().contains("token"),false)
+        let unrelated=validateTeacherAuthorityRelevance("undeclared identifier 'parse'","G-FLOAT64",narrative,narrative,positive,negative,boundary)
+        @Expect(unrelated.feedback.contains("global abs(value)"),false)
+    }
+
     @TestCase public func candidateAuthorityRelevanceRequiresStdxDependencyProjectEvidence():Unit{
         let compiler="root package imports package 'stdx.crypto.digest' but it is not added as a dependency in cjpm.toml"
         let source="import stdx.crypto.digest.SHA256\nmain(){ let digest=SHA256(); digest.write(Array<UInt8>()); println(digest.finish().size) }"
