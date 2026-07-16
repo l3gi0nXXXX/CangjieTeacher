@@ -201,6 +201,10 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         for(anchor in ["uint8","rune","contains","torunearray"]){teacherAuthorityAddAnchor(strong,anchor)}
         if(gap.contains("stringbuilder-append")){teacherAuthorityAddAnchor(strong,"stringbuilder.append")}
         primary.add("contains")
+    }else if(gap.contains("string-rune-iteration")){
+        strong.clear();primary.clear()
+        for(anchor in ["uint8","rune","torunearray","=="]){teacherAuthorityAddAnchor(strong,anchor)}
+        primary.add("==")
     }else if(gap.contains("rune-byte-compare")&&strong.isEmpty()){
         for(anchor in ["uint8","rune","torunearray"]){teacherAuthorityAddAnchor(strong,anchor)}
         primary.add("uint8");primary.add("rune")
@@ -244,10 +248,19 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
             out.feedback=teacherAuthorityBoundedFeedback("First verify which package provides the StringBuilder and Rune APIs, then remove the unnecessary undeclared import std.text instead of adding a dependency or retaining it as a label, context, runtime string, or comment. Positive and boundary sources must not contain std.text anywhere; the negative source may mention std.text only in its legal import line to reproduce the original dependency diagnostic.")
             return out
         }
+        if(gap.contains("string-rune-iteration")&&
+            (!teacherAuthorityStringRuneIterationPositive(narrative,positiveSource)||
+             !teacherAuthorityStringRuneIterationPositive(narrative,boundarySource)||
+             !teacherAuthorityStringRuneIterationNegative(negativeSource))){
+            out.feedback=teacherAuthorityStringRuneIterationFeedback()
+            return out
+        }
         out.ok=true;out.diagnostic="ok";return out
     }
     var names="";for(i in 0..required.size){if(i>0){names+=","};names+=required[i]}
-    if(gap.contains("rune-unicode-import")){
+    if(gap.contains("string-rune-iteration")){
+        out.feedback=teacherAuthorityStringRuneIterationFeedback()
+    }else if(gap.contains("rune-unicode-import")){
         out.feedback=teacherAuthorityBoundedFeedback("Authority relevance failed. Positive and boundary sources must each import std.unicode.* and call both Rune.isLowerCase() and isUpperCase(). The negative source must omit that import and call at least one of those APIs to reproduce the undeclared-identifier diagnostic. Keep the explanation and example aligned with those same public APIs; do not use comments or private evidence to satisfy the check.")
     }else if(gap.contains("string-rune-contains")){
         let builderRequirement=if(gap.contains("stringbuilder-append")){" For the StringBuilder variant, also demonstrate StringBuilder.append(Rune)."}else{""}
@@ -256,6 +269,28 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         out.feedback=teacherAuthorityBoundedFeedback("Authority relevance failed. Required public failure anchors and prerequisites: ${names}. The explanation and example, plus positive and boundary sources, must demonstrate every listed item. The negative source must demonstrate the primary public failure anchor but may intentionally omit a prerequisite to prove the failure. Do not satisfy this check with comments, substitute a generic type fact, or include private paths, secrets, solutions, hidden tests, or references.")
     }
     out
+}
+
+private func teacherAuthorityCompactCode(source:String):String{
+    teacherAuthorityCodeOnly(source).toAsciiLower().replace(" ","").replace("\t","").replace("\n","").replace("\r","")
+}
+
+private func teacherAuthorityStringRuneIterationPositive(narrative:String,source:String):Bool{
+    let code=teacherAuthorityCompactCode(source)
+    narrative.contains("direct string iteration")&&narrative.contains("uint8")&&narrative.contains("rune")&&
+        narrative.contains("torunearray")&&(narrative.contains("same type")||narrative.contains("same-type"))&&
+        code.contains(":string")&&code.contains("for(")&&code.contains("in")&&code.contains(":uint8")&&
+        code.contains(":rune")&&code.contains(".torunearray(")&&code.contains("==")
+}
+
+private func teacherAuthorityStringRuneIterationNegative(source:String):Bool{
+    let code=teacherAuthorityCompactCode(source)
+    code.contains(":string")&&code.contains("for(")&&code.contains("in")&&code.contains("==")&&
+        code.contains("r'")&&!code.contains(".torunearray(")
+}
+
+private func teacherAuthorityStringRuneIterationFeedback():String{
+    teacherAuthorityBoundedFeedback("Direct String iteration produces UInt8 values, which are distinct from Rune values; positive and boundary sources must each demonstrate direct String iteration with UInt8, call toRuneArray to obtain Rune values, and compare only same-typed values with ==. The negative source must iterate a String directly and compare that UInt8 element with a Rune literal to reproduce the UInt8 == Rune diagnostic. Comments and string labels do not count as evidence.")
 }
 
 private func teacherAuthorityQuotedAnchors(value:String):ArrayList<String>{
@@ -305,8 +340,8 @@ private func teacherAuthorityAllSourceAnchors(source:String,anchors:ArrayList<St
         else if(anchor=="contains"){if(!code.contains(".contains(")){return false}}
         else if(anchor=="stringbuilder.append"){if(!code.contains("stringbuilder")||!code.contains(".append(")){return false}}
         else if(anchor=="torunearray"){if(!code.contains(".torunearray(")){return false}}
-        else if(anchor=="uint8"){if(!code.contains(": uint8")&&!code.contains("uint8(")){return false}}
-        else if(anchor=="rune"){if(!code.contains(": rune")&&!code.contains("array<rune>")&&!code.contains("r'")){return false}}
+        else if(anchor=="uint8"){if(!code.contains(": uint8")&&!code.contains(":uint8")&&!code.contains("uint8(")){return false}}
+        else if(anchor=="rune"){if(!code.contains(": rune")&&!code.contains(":rune")&&!code.contains("array<rune>")&&!code.contains("r'")){return false}}
         else if(anchor=="repeat"){if(!code.contains("repeat:")){return false}}
         else if(anchor=="item:"){if(!code.contains("item:")){return false}}
         else if(anchor=="string-constructor"){if(!code.contains("string(")){return false}}

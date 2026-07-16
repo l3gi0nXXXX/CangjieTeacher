@@ -562,6 +562,31 @@ public class TeacherP0P3Test {
         @Expect(runeArrayWrong.ok,false);@Expect(runeArrayWrong.feedback.contains("string-constructor"),true)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRequiresStringRuneIterationEvidence():Unit{
+        let compiler="invalid binary operator '==' on type 'UInt8' and 'Rune' 中文😀 /Users/private/token Authorization"
+        let narrative="Direct String iteration yields UInt8 bytes, which are distinct from Rune values. Compare values of the same type, or call toRuneArray and compare Rune with Rune using ==."
+        let positive="main(){ let text:String=\"中😀\"; for(byte in text){ let same:UInt8=byte; println(byte==same) }; let runes:Array<Rune>=text.toRuneArray(); for(rune in runes){ let same:Rune=rune; println(rune==same) } }"
+        let boundary="main(){ let text:String=\"\"; for(byte in text){ let same:UInt8=byte; println(byte==same) }; let runes:Array<Rune>=text.toRuneArray(); for(rune in runes){ let same:Rune=rune; println(rune==same) } }"
+        let negative="main(){ let text:String=\"()\"; for(byte in text){ println(byte==r'(') } }"
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-STRING-RUNE-ITERATION",narrative,narrative,positive,negative,boundary)
+        @Expect(relevant.ok,true)
+
+        let disguised="// UInt8 Rune toRuneArray ==\nmain(){ println(1==1); println(\"String iteration UInt8 Rune toRuneArray\") }"
+        let disguisedResult=validateTeacherAuthorityRelevance(compiler,"G-STRING-RUNE-ITERATION",narrative,narrative,disguised,negative,disguised)
+        @Expect(disguisedResult.ok,false)
+        @Expect(disguisedResult.feedback.contains("Direct String iteration"),true)
+        @Expect(disguisedResult.feedback.contains("positive and boundary"),true)
+
+        let wrongNegative="main(){ let text:String=\"abc\"; for(byte in text){ let same:UInt8=byte; println(byte==same) } }"
+        let wrongNegativeResult=validateTeacherAuthorityRelevance(compiler,"G-STRING-RUNE-ITERATION",narrative,narrative,positive,wrongNegative,boundary)
+        @Expect(wrongNegativeResult.ok,false)
+        let unrelated=validateTeacherAuthorityRelevance("invalid binary operator '<' on type 'UInt8' and 'Rune'","G-RUNE-BYTE-COMPARE",
+            "UInt8 and Rune are distinct; use toRuneArray before Rune comparison.","UInt8 Rune toRuneArray",
+            positive,"main(){ let byte:UInt8=UInt8(65); println(byte<r'A') }",boundary)
+        @Expect(unrelated.feedback.contains("Direct String iteration"),false)
+        @Expect(disguisedResult.feedback.contains("/Users"),false);@Expect(disguisedResult.feedback.toAsciiLower().contains("token"),false)
+    }
+
     @TestCase public func candidateAuthorityRelevanceRequiresStdxDependencyProjectEvidence():Unit{
         let compiler="root package imports package 'stdx.crypto.digest' but it is not added as a dependency in cjpm.toml"
         let source="import stdx.crypto.digest.SHA256\nmain(){ let digest=SHA256(); digest.write(Array<UInt8>()); println(digest.finish().size) }"
