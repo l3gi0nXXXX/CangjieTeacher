@@ -247,7 +247,14 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         out.ok=true;out.diagnostic="ok";return out
     }
     var names="";for(i in 0..required.size){if(i>0){names+=","};names+=required[i]}
-    out.feedback=teacherAuthorityBoundedFeedback("Authority relevance failed. Required public failure anchors and prerequisites: ${names}. The explanation and example, plus positive and boundary sources, must demonstrate every listed item. The negative source must demonstrate the primary public failure anchor but may intentionally omit a prerequisite to prove the failure. Do not satisfy this check with comments, substitute a generic type fact, or include private paths, secrets, solutions, hidden tests, or references.")
+    if(gap.contains("rune-unicode-import")){
+        out.feedback=teacherAuthorityBoundedFeedback("Authority relevance failed. Positive and boundary sources must each import std.unicode.* and call both Rune.isLowerCase() and isUpperCase(). The negative source must omit that import and call at least one of those APIs to reproduce the undeclared-identifier diagnostic. Keep the explanation and example aligned with those same public APIs; do not use comments or private evidence to satisfy the check.")
+    }else if(gap.contains("string-rune-contains")){
+        let builderRequirement=if(gap.contains("stringbuilder-append")){" For the StringBuilder variant, also demonstrate StringBuilder.append(Rune)."}else{""}
+        out.feedback=teacherAuthorityBoundedFeedback("Authority relevance failed. Positive and boundary sources must each demonstrate UInt8, Rune, toRuneArray, and Array<Rune>.contains(Rune). The negative source must demonstrate the original mismatch with String.contains(Rune) or Array<UInt8>.contains(Rune).${builderRequirement} Keep the explanation and example aligned with these public type/API relationships; do not use comments or private evidence to satisfy the check.")
+    }else{
+        out.feedback=teacherAuthorityBoundedFeedback("Authority relevance failed. Required public failure anchors and prerequisites: ${names}. The explanation and example, plus positive and boundary sources, must demonstrate every listed item. The negative source must demonstrate the primary public failure anchor but may intentionally omit a prerequisite to prove the failure. Do not satisfy this check with comments, substitute a generic type fact, or include private paths, secrets, solutions, hidden tests, or references.")
+    }
     out
 }
 

@@ -490,6 +490,10 @@ public class TeacherP0P3Test {
             "main(){ println(r'a'.isLowerCase()); println(r'A'.isUpperCase()) }",
             "main(){ println(r'中'.isLowerCase()); println(r'中'.isUpperCase()) }")
         @Expect(unicodeWithoutImport.ok,false);@Expect(unicodeWithoutImport.feedback.contains("std.unicode"),true)
+        @Expect(unicodeWithoutImport.feedback.toAsciiLower().contains("positive and boundary sources must each import std.unicode.*"),true)
+        @Expect(unicodeWithoutImport.feedback.contains("isLowerCase() and isUpperCase()"),true)
+        @Expect(unicodeWithoutImport.feedback.toAsciiLower().contains("negative source must omit that import"),true)
+        @Expect(unicodeWithoutImport.feedback.contains("CJ-HUMANEVAL"),false)
         let unicodeRelevant=validateTeacherAuthorityRelevance(unicodeCompiler,"G-RUNE-UNICODE-IMPORT",
             "Import std.unicode.* for Rune.isLowerCase and Rune.isUpperCase.","import std.unicode.* before both methods.",
             "import std.unicode.*\nmain(){ println(r'a'.isLowerCase()); println(r'A'.isUpperCase()) }",
@@ -500,7 +504,11 @@ public class TeacherP0P3Test {
         let stringCompiler="expected 'Struct-String', found 'UInt8'; expected 'Rune', found 'UInt8'"
         let generic=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS-STRINGBUILDER-APPEND",
             "A String stores text.","Use String values.","main(){}","main(){ bad }","main(){}")
-        @Expect(generic.ok,false);@Expect(generic.feedback.contains("struct-string"),false);@Expect(generic.feedback.contains("stringbuilder.append"),true)
+        @Expect(generic.ok,false);@Expect(generic.feedback.contains("struct-string"),false);@Expect(generic.feedback.toAsciiLower().contains("stringbuilder.append"),true)
+        @Expect(generic.feedback.toAsciiLower().contains("positive and boundary sources must each demonstrate uint8, rune, torunearray"),true)
+        @Expect(generic.feedback.contains("Array<Rune>.contains(Rune)"),true)
+        @Expect(generic.feedback.contains("String.contains(Rune) or Array<UInt8>.contains(Rune)"),true)
+        @Expect(generic.feedback.contains("/Users"),false);@Expect(generic.feedback.toAsciiLower().contains("solution"),false)
         let stringSource="main(){ let byte: UInt8 = UInt8(65); let rune: Rune = r'A'; let runes: Array<Rune> = \"A\".toRuneArray(); let found = \"A\".contains(\"A\"); let builder = StringBuilder(); builder.append(rune); println(found); println(byte); println(runes.size) }"
         let stringRelevant=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS-STRINGBUILDER-APPEND",
             "String iteration can yield UInt8; convert to Rune with toRuneArray, pass String to contains, and Rune to StringBuilder.append.",
