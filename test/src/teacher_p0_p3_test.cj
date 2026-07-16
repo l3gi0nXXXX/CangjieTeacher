@@ -582,6 +582,34 @@ public class TeacherP0P3Test {
         @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRemovesUnnecessaryUndeclaredImport():Unit{
+        let compiler="root package imports package 'std.text' in source but it is not added as a dependency in cjpm.toml"
+        let positive="main(){ let builder=StringBuilder(); let rune:Rune=r'中'; builder.append(rune); println(builder.toString()) }"
+        let boundary="main(){ let builder=StringBuilder(); let rune:Rune=r'😀'; builder.append(rune); println(builder.toString()) }"
+        let negative="import std.text.*\n"+positive
+        let wrongNarrative="Add std.text as a dependency so StringBuilder and Rune APIs compile."
+        let wrong=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            wrongNarrative,wrongNarrative,positive,negative,boundary)
+        @Expect(wrong.ok,false)
+        let narrative="Check which package provides each API, then remove the unnecessary undeclared import std.text; StringBuilder and Rune are already available without adding a dependency."
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            narrative,narrative,positive,negative,boundary)
+        @Expect(relevant.ok,true)
+        let positiveStillImports=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            narrative,narrative,negative,negative,boundary)
+        @Expect(positiveStillImports.ok,false)
+        let negativeMissingImport=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            narrative,narrative,positive,positive,boundary)
+        @Expect(negativeMissingImport.ok,false)
+        let textualImport="import std.textual.*\n"+positive
+        let textualIsNotText=validateTeacherAuthorityRelevance(compiler,"G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            narrative,narrative,positive,textualImport,boundary)
+        @Expect(textualIsNotText.ok,false)
+        let unsafeResult=validateTeacherAuthorityRelevance(compiler+" 中文😀 /Users/private/token Authorization","G-UNNECESSARY-UNDECLARED-IMPORT-FOR-AVAILABLE-API",
+            "generic","generic",positive,negative,boundary)
+        @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false)
+    }
+
     @TestCase public func candidateControlFakeEndToEndAndBoundaries(): Unit {
         let root = "/tmp/teacher-candidate-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         try {
