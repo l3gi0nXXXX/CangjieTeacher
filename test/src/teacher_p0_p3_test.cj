@@ -567,9 +567,16 @@ public class TeacherP0P3Test {
         let wrongProfiles=validateTeacherAuthorityRelevance(compiler,"G-CJPM-DEPENDENCY",narrative,narrative,source,negative,source,
             positiveDependencyProfile:"none",negativeDependencyProfile:"stdx-magic",boundaryDependencyProfile:"none")
         @Expect(wrongProfiles.ok,false);@Expect(wrongProfiles.feedback.contains("stdx-magic"),true)
-        let relevant=validateTeacherAuthorityRelevance(compiler,"G-CJPM-DEPENDENCY",narrative,narrative,source,negative,source,
+        let magic="$"+"{MAGIC_PATH}"
+        let landed="In cjpm.toml use [target.aarch64-apple-darwin.bin-dependencies] with a direct path-option = [\"${magic}/libs/cangjie-stdx-mac-aarch64-1.0.0.1/darwin_aarch64_llvm/dynamic/stdx\"] line before importing stdx.crypto.digest.SHA256."
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-CJPM-DEPENDENCY",landed,landed,source,negative,source,
             positiveDependencyProfile:"stdx-magic",negativeDependencyProfile:"none",boundaryDependencyProfile:"stdx-magic")
         @Expect(relevant.ok,true)
+        let placeholder=narrative+" [target.<target-triple>.bin-dependencies] stdx = { path-option = [\"<bundled-stdx-path>\"] }"
+        let placeholderResult=validateTeacherAuthorityRelevance(compiler,"G-CJPM-DEPENDENCY",placeholder,placeholder,source,negative,source,
+            positiveDependencyProfile:"stdx-magic",negativeDependencyProfile:"none",boundaryDependencyProfile:"stdx-magic")
+        @Expect(placeholderResult.ok,false);@Expect(placeholderResult.feedback.contains("${magic}"),true)
+        @Expect(placeholderResult.feedback.contains("/dynamic/stdx"),true)
         let unsafeResult=validateTeacherAuthorityRelevance(compiler+" 中文😀 /Users/private/token Authorization","G-CJPM-DEPENDENCY","generic","generic",source,negative,source,
             positiveDependencyProfile:"none",negativeDependencyProfile:"none",boundaryDependencyProfile:"none")
         @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false)
