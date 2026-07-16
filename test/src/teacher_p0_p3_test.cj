@@ -543,6 +543,14 @@ public class TeacherP0P3Test {
         let wrongPositiveResult=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS",
             "Direct String iteration yields UInt8; use toRuneArray for Rune values and contains.","UInt8 Rune toRuneArray contains",wrongPositive,containsNegative,wrongPositive)
         @Expect(wrongPositiveResult.ok,false);@Expect(wrongPositiveResult.feedback.contains("Array<Rune> receiver"),true)
+        @Expect(wrongPositiveResult.feedback.contains("runes: Array<Rune>"),true)
+        @Expect(wrongPositiveResult.feedback.contains("needle: Rune"),true)
+        @Expect(wrongPositiveResult.feedback.contains("text: String"),true)
+        @Expect(wrongPositiveResult.feedback.contains("bytes: Array<UInt8>"),true)
+        let inferredPositive="main(){ let text=\"A\"; let byte=UInt8(65); let runes=text.toRuneArray(); let needle=r'A'; println(runes.contains(needle)); println(byte) }"
+        let inferredResult=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS",
+            "Use Array<Rune>.contains(Rune) after toRuneArray with UInt8 kept distinct.","Array<Rune>.contains(Rune)",inferredPositive,containsNegative,inferredPositive)
+        @Expect(inferredResult.ok,false);@Expect(inferredResult.feedback.contains("explicit type annotations"),true)
         let observedWrongNegative="main(){ let byte:UInt8=UInt8(65); let rune:Rune=r'A'; let bytes:Array<UInt8>=[byte]; let text=String([byte]); println(\"A\".contains(\"A\")); println(rune); println(bytes.size); println(text) }"
         let wrongNegativeResult=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS",
             "Direct String iteration yields UInt8; use toRuneArray for an Array<Rune>, then call Array<Rune>.contains with a Rune.",
