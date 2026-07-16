@@ -681,6 +681,39 @@ public class TeacherP0P3Test {
         @Expect(unrelated.feedback.contains("direct target conversion"),false)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRequiresCombinedStringByteRuneEvidence():Unit{
+        let compiler="invalid binary operator '==' on type 'UInt8' and 'Rune'; mismatched types expected 'Rune', found 'UInt8' 中文😀 /Users/private/token Authorization"
+        let narrative="String element access yields UInt8 bytes. Use toRuneArray for Rune values, compare only the same type, and pass a Rune to a Rune parameter."
+        let helper="func acceptRune(value: Rune){ println(value) }\n"
+        let positive=helper+"main(){ let text:String=\"A\"; let byte:UInt8=UInt8(65); let otherByte:UInt8=UInt8(65); let runes:Array<Rune>=text.toRuneArray(); let rune:Rune=runes[0]; let otherRune:Rune=r'A'; println(byte==otherByte); println(rune==otherRune); acceptRune(rune) }"
+        let boundary=helper+"main(){ let empty:String=\"\"; let byte:UInt8=UInt8(0); let otherByte:UInt8=UInt8(0); let runes:Array<Rune>=\"😀\".toRuneArray(); let rune:Rune=runes[0]; let otherRune:Rune=r'😀'; println(byte==otherByte); println(rune==otherRune); println(empty.size); acceptRune(rune) }"
+        let negative=helper+"main(){ let byte:UInt8=UInt8(65); let rune:Rune=r'A'; println(byte==rune); acceptRune(byte) }"
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-STRING",narrative,narrative,positive,negative,boundary)
+        @Expect(relevant.ok,true)
+        let atomHelper="func acceptRune(value: Rune){ println(value) }\\n"
+        let atomPositive=atomHelper+"main(){ let text:String=String([r'A']); let byte:UInt8=UInt8(65); let otherByte:UInt8=UInt8(65); let runes:Array<Rune>=text.toRuneArray(); let rune:Rune=runes[0]; let otherRune:Rune=r'A'; println(byte==otherByte); println(rune==otherRune); acceptRune(rune) }"
+        let atomBoundary=atomHelper+"main(){ let empty:String=String(Array<Rune>()); let byte:UInt8=UInt8(0); let otherByte:UInt8=UInt8(0); let runes:Array<Rune>=String([r'😀']).toRuneArray(); let rune:Rune=runes[0]; let otherRune:Rune=r'😀'; println(byte==otherByte); println(rune==otherRune); println(empty.size); acceptRune(rune) }"
+        let atomNegative=atomHelper+"main(){ let byte:UInt8=UInt8(65); let rune:Rune=r'A'; println(byte==rune); acceptRune(byte) }"
+        let atomBundle="{\"tests\":[{\"category\":\"positive\",\"source\":\"${atomPositive}\"},{\"category\":\"negative\",\"source\":\"${atomNegative}\",\"expectedDiagnostic\":\"invalid binary operator\"},{\"category\":\"boundary\",\"source\":\"${atomBoundary}\"}]}"
+        let atomRoot="/tmp/teacher-atom-string-byte-rune-combined"
+        try{let atomResult=executeTeacherAtomTestBundle(atomBundle,atomRoot);@Expect(atomResult.ok,true);@Expect(atomResult.feedback,"")}finally{try{remove(Path(atomRoot),recursive:true)}catch(_:Exception){}}
+
+        let compareOnly=helper+"main(){ let byte:UInt8=UInt8(65); let rune:Rune=r'A'; println(byte==rune); acceptRune(rune) }"
+        let compareOnlyResult=validateTeacherAuthorityRelevance(compiler,"G-STRING",narrative,narrative,positive,compareOnly,boundary)
+        @Expect(compareOnlyResult.ok,false);@Expect(compareOnlyResult.feedback.contains("same negative source"),true)
+        let argumentOnly=helper+"main(){ let byte:UInt8=UInt8(65); let otherByte:UInt8=UInt8(65); let rune:Rune=r'A'; println(byte==otherByte); acceptRune(byte); println(rune) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING",narrative,narrative,positive,argumentOnly,boundary).ok,false)
+        let wrongPositive=helper+"main(){ let text:String=\"A\"; let byte:UInt8=UInt8(65); let runes:Array<Rune>=text.toRuneArray(); let rune:Rune=runes[0]; println(byte==rune); acceptRune(byte) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING",narrative,narrative,wrongPositive,negative,boundary).ok,false)
+        let disguised="// UInt8 Rune toRuneArray byte==rune acceptRune(byte)\nmain(){ println(\"UInt8 Rune toRuneArray\") }"
+        let disguisedResult=validateTeacherAuthorityRelevance(compiler,"G-STRING",narrative,narrative,disguised,negative,boundary)
+        @Expect(disguisedResult.ok,false);@Expect(disguisedResult.feedback.contains("acceptRune(value: Rune)"),true)
+        @Expect(disguisedResult.feedback.contains("/Users"),false);@Expect(disguisedResult.feedback.toAsciiLower().contains("token"),false)
+        let unrelated=validateTeacherAuthorityRelevance("invalid binary operator '==' on type 'UInt8' and 'Rune'","G-STRING",
+            narrative,narrative,positive,negative,boundary)
+        @Expect(unrelated.feedback.contains("same negative source"),false)
+    }
+
     @TestCase public func candidateAuthorityRelevanceRequiresStdxDependencyProjectEvidence():Unit{
         let compiler="root package imports package 'stdx.crypto.digest' but it is not added as a dependency in cjpm.toml"
         let source="import stdx.crypto.digest.SHA256\nmain(){ let digest=SHA256(); digest.write(Array<UInt8>()); println(digest.finish().size) }"

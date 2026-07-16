@@ -183,6 +183,9 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
     // Extract only allow-listed quoted tokens before line sanitization: a pipe-flattened
     // compiler line may also contain "return code", which causes the whole line to be redacted.
     let gap=missingKnowledge.toAsciiLower()
+    let compilerLower=compilerOutput.toAsciiLower()
+    let combinedStringByteRune=gap=="g-string"&&compilerLower.contains("invalid binary operator '=='")&&
+        compilerLower.contains("expected 'rune', found 'uint8'")
     let quoted=teacherAuthorityQuotedAnchors(compilerOutput)
     let extracted=ArrayList<String>()
     for(anchor in quoted){if(teacherAuthorityStrongAnchor(anchor)&&!extracted.contains(anchor.toAsciiLower())){extracted.add(anchor.toAsciiLower())}}
@@ -208,6 +211,10 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
     }else if(gap.contains("rune-numeric-conversion")){
         strong.clear();primary.clear()
         strong.add("rune");strong.add("uint32");primary.add("rune")
+    }else if(combinedStringByteRune){
+        strong.clear();primary.clear()
+        strong.add("uint8");strong.add("rune");strong.add("torunearray")
+        primary.add("uint8");primary.add("rune")
     }else if(gap.contains("rune-byte-compare")&&strong.isEmpty()){
         for(anchor in ["uint8","rune","torunearray"]){teacherAuthorityAddAnchor(strong,anchor)}
         primary.add("uint8");primary.add("rune")
@@ -279,10 +286,19 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
             out.feedback=teacherAuthorityRuneNumericFeedback()
             return out
         }
+        if(combinedStringByteRune&&
+            (!teacherAuthorityCombinedStringByteRunePositive(narrative,positiveSource)||
+             !teacherAuthorityCombinedStringByteRunePositive(narrative,boundarySource)||
+             !teacherAuthorityCombinedStringByteRuneNegative(negativeSource))){
+            out.feedback=teacherAuthorityCombinedStringByteRuneFeedback()
+            return out
+        }
         out.ok=true;out.diagnostic="ok";return out
     }
     var names="";for(i in 0..required.size){if(i>0){names+=","};names+=required[i]}
-    if(gap=="g-rune-numeric-conversion"){
+    if(combinedStringByteRune){
+        out.feedback=teacherAuthorityCombinedStringByteRuneFeedback()
+    }else if(gap=="g-rune-numeric-conversion"){
         out.feedback=teacherAuthorityRuneNumericFeedback()
     }else if(gap=="g-string-rune-contains"){
         out.feedback=teacherAuthorityStringRuneContainsFeedback()
@@ -447,6 +463,41 @@ private func teacherAuthorityRuneNumericTargets():Array<String>{
 
 private func teacherAuthorityRuneNumericFeedback():String{
     teacherAuthorityBoundedFeedback("Rune numeric conversion is two-step: first obtain the Unicode scalar with UInt32(rune), then apply the target numeric conversion, for example Float64(UInt32(rune)) or Int64(UInt32(rune)). Positive and boundary sources must declare rune: Rune and execute that nested conversion for ASCII, zero, Chinese, or emoji values. The negative source must declare rune: Rune and use a direct target conversion such as Float64(rune) or Int64(rune) to reproduce the numeric-conversion diagnostic. Comments and string labels do not count as evidence.")
+}
+
+private func teacherAuthorityCombinedStringByteRunePositive(narrative:String,source:String):Bool{
+    if(!narrative.contains("string")||!narrative.contains("uint8")||!narrative.contains("torunearray")||
+        !narrative.contains("rune")||!(narrative.contains("same type")||narrative.contains("same-type"))||
+        !narrative.contains("rune parameter")){return false}
+    let raw=teacherAuthorityCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    let bytes=teacherAuthorityNamesBeforeType(raw,"uint8");let runes=teacherAuthorityNamesBeforeType(raw,"rune")
+    if(!code.contains(":string")||!code.contains(":array<rune>")||!code.contains(".torunearray(")||
+        !code.contains("funcacceptrune(value:rune)")){return false}
+    if(!teacherAuthorityHasSameTypeEquality(code,bytes)||!teacherAuthorityHasSameTypeEquality(code,runes)){return false}
+    for(rune in runes){if(code.contains("acceptrune(${rune})")){return true}}
+    false
+}
+
+private func teacherAuthorityCombinedStringByteRuneNegative(source:String):Bool{
+    let raw=teacherAuthorityCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    let bytes=teacherAuthorityNamesBeforeType(raw,"uint8");let runes=teacherAuthorityNamesBeforeType(raw,"rune")
+    if(!code.contains("funcacceptrune(value:rune)")){return false}
+    for(byte in bytes){
+        for(rune in runes){
+            if((code.contains("${byte}==${rune}")||code.contains("${rune}==${byte}"))&&
+                code.contains("acceptrune(${byte})")){return true}
+        }
+    }
+    false
+}
+
+private func teacherAuthorityHasSameTypeEquality(code:String,names:ArrayList<String>):Bool{
+    for(left in names){for(right in names){if(left!=right&&code.contains("${left}==${right}")){return true}}}
+    false
+}
+
+private func teacherAuthorityCombinedStringByteRuneFeedback():String{
+    teacherAuthorityBoundedFeedback("String element access produces UInt8, while toRuneArray produces Rune values. Positive and boundary sources must explicitly declare text: String, byte/otherByte: UInt8, runes: Array<Rune>, and rune/otherRune: Rune; compare UInt8 == UInt8 and Rune == Rune, define acceptRune(value: Rune), and call acceptRune(rune). The same negative source must reproduce both authority failures by comparing byte == rune and calling acceptRune(byte). The explanation/example must state same-type comparison and that a Rune parameter requires a Rune. Comments and string labels do not count as evidence.")
 }
 
 private func teacherAuthorityQuotedAnchors(value:String):ArrayList<String>{
