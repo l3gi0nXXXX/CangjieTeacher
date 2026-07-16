@@ -134,7 +134,8 @@ public func parseTeacherObservation(text: String): TeacherObservation {
     return TeacherObservation(f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7])
 }
 public func validateTeacherObservation(value: TeacherObservation): Bool {
-    let families = ["language", "standard_library", "type_adaptation", "algorithm_pattern", "diagnostic", "boundary_check"]
+    let families = ["language", "standard_library", "type_adaptation", "algorithm_pattern", "diagnostic", "boundary_check",
+        "syntax", "stdx", "toolchain", "compiler_diagnostic", "version_migration", "engineering_practice"]
     return families.contains(value.knowledgeFamily) && !value.concept.isEmpty() && !value.targetVersion.isEmpty() &&
         !value.citation.isEmpty() && (value.sourceClass == "official" || value.sourceClass == "approved")
 }

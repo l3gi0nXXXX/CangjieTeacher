@@ -138,10 +138,10 @@ private func teacherAtomSpec(raw: String): TeacherAtomSpec {
     let code = raw.split(",")[0].trimAscii().toAsciiUpper()
     if (code=="G-ARRAYLIST") { return TeacherAtomSpec("standard_library","arraylist fundamentals","ArrayList is a growable sequence; use its typed element API and inspect size for boundaries.","Create an ArrayList<Int64>, append values, and inspect size.") }
     if (code=="G-HASHMAP") { return TeacherAtomSpec("standard_library","hashmap fundamentals","HashMap associates hashable keys with typed values and requires explicit missing-key handling.","Create a HashMap<String, Int64> and handle lookup absence.") }
-    if (code=="G-STRING") { return TeacherAtomSpec("language","unicode string boundaries","Use Rune iteration or Rune arrays when character boundaries matter because UTF-8 byte positions are not character positions.","Count the Runes in a string containing Chinese text and emoji.") }
-    if (code=="G-FLOAT64") { return TeacherAtomSpec("language","float64 arithmetic","Float64 literals include a decimal point and floating-point comparisons should account for representation precision.","Use 4.0 as a Float64 literal and compare within a tolerance.") }
-    if (code=="G-INT64") { return TeacherAtomSpec("language","int64 arithmetic","Int64 arithmetic is signed integer arithmetic; validate overflow-sensitive and empty-input boundaries explicitly.","Accumulate typed Int64 values while handling an empty collection.") }
-    if (code=="G-EDGE"||code=="G-RECIPE") { return TeacherAtomSpec("boundary_check","boundary-first implementation","Handle empty, singleton, repeated, and maximum supported inputs before applying the core transformation.","Define behavior for empty and singleton inputs before the general case.") }
+    if (code=="G-STRING") { return TeacherAtomSpec("syntax","unicode string boundaries","Use Rune iteration or Rune arrays when character boundaries matter because UTF-8 byte positions are not character positions.","Count the Runes in a string containing Chinese text and emoji.") }
+    if (code=="G-FLOAT64") { return TeacherAtomSpec("syntax","float64 arithmetic","Float64 literals include a decimal point and floating-point comparisons should account for representation precision.","Use 4.0 as a Float64 literal and compare within a tolerance.") }
+    if (code=="G-INT64") { return TeacherAtomSpec("syntax","int64 arithmetic","Int64 arithmetic is signed integer arithmetic; validate overflow-sensitive and empty-input boundaries explicitly.","Accumulate typed Int64 values while handling an empty collection.") }
+    if (code=="G-EDGE"||code=="G-RECIPE") { return TeacherAtomSpec("engineering_practice","boundary-first implementation","Handle empty, singleton, repeated, and maximum supported inputs before applying the core transformation.","Define behavior for empty and singleton inputs before the general case.") }
     throw IllegalArgumentException("unsupported_knowledge_gap")
 }
 
