@@ -4,7 +4,38 @@ import std.collection.*
 import std.fs.*
 import std.time.*
 import std.unittest.testmacro.*
+import stdx.encoding.json.*
 import cangjie_teacher.*
+
+private func p3CkbString(object: JsonObject, key: String): String {
+    object.get(key).getOrThrow().asString().getValue()
+}
+
+private func p3CkbPart(value: String): String { "${value.size}:${value}" }
+
+private func p3CkbCandidateHash(raw: String): String {
+    let object = JsonValue.fromStr(raw.trimAscii()).asObject()
+    let benchmark = p3CkbString(object, "benchmark").trimAscii().toAsciiLower()
+    let dataset = p3CkbString(object, "datasetVersion").trimAscii().toAsciiLower()
+    let caseId = p3CkbString(object, "caseId").trimAscii().toAsciiLower()
+    let gap = p3CkbString(object, "missingKnowledge").trimAscii().toAsciiUpper()
+    let target = p3CkbString(object, "targetVersion").trimAscii().toAsciiLower()
+    let identity = "${benchmark}:${dataset}:${caseId}:${gap}:${target}"
+    let bundle = object.get("knowledgeAtomTestBundle").getOrThrow().toString()
+    let canonical = p3CkbPart(identity) + p3CkbPart(p3CkbString(object, "taskText")) +
+        p3CkbPart(p3CkbString(object, "visibleTestExcerpt")) + p3CkbPart(p3CkbString(object, "compilerOutput")) +
+        p3CkbPart(gap) + p3CkbPart(p3CkbString(object, "interfaceId").trimAscii()) +
+        p3CkbPart(p3CkbString(object, "contentFamily").trimAscii()) +
+        p3CkbPart(p3CkbString(object, "updateMechanism").trimAscii()) +
+        p3CkbPart(p3CkbString(object, "targetVersion").trimAscii()) +
+        p3CkbPart(p3CkbString(object, "officialCitation").trimAscii()) + p3CkbPart(bundle) +
+        p3CkbPart("${object.get("knowledgeAtomCandidate").getOrThrow().asBool().getValue()}") +
+        p3CkbPart(p3CkbString(object, "teacherRunId")) + p3CkbPart(p3CkbString(object, "evidenceHash")) +
+        p3CkbPart(p3CkbString(object, "evidence")) + p3CkbPart(p3CkbString(object, "candidatePath")) +
+        p3CkbPart(object.get("revision").getOrThrow().toString()) + p3CkbPart(object.get("attempt").getOrThrow().toString()) +
+        p3CkbPart(p3CkbString(object, "failureTaxonomy")) + p3CkbPart(object.get("knowledgeGapConfirmations").getOrThrow().toString())
+    "sha256:${teacherStableHash(canonical)}"
+}
 
 private func testCase(id!: String = "CJ-HUMANEVAL-000", version!: String = "dataset-v1"): TeacherCaseManifest {
     TeacherCaseManifest(id, version, "prompt-hash", "starter-hash", "func demo(x: Int64): Int64", "verifier-hash",
@@ -807,7 +838,7 @@ public class TeacherP0P3Test {
             File.writeTo(Path("${root}/gap.jsonl"), gap.toArray())
             let options = TeacherCliOptions(); options.command="candidate-build"; options.root=root; options.manifest="${root}/manifest.jsonl"
             options.checksum=teacherStableHash(teacherJoin(caseLines(), "\n"));options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.outputRoot="${root}/exports/r1";options.model="gpt-5.6-sol"
-            let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 String Rune iteration\",\"explanation\":\"Use String Rune iteration for Unicode character boundaries.\",\"example\":\"Declare a String and iterate over text.runes() for Chinese and emoji.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let text: String = \\\"ok\\\" }\",\"negativeSource\":\"main() { let text: String = unknownName }\",\"boundarySource\":\"main() { let text: String = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\"}"
+            let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 String Rune iteration\",\"explanation\":\"Use String Rune iteration for Unicode character boundaries.\",\"example\":\"Declare a String and iterate over text.runes(); comparisons may contain &&, <, and > for 中文😀 boundaries.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let text: String = \\\"ok\\\" }\",\"negativeSource\":\"main() { let text: String = unknownName }\",\"boundarySource\":\"main() { let text: String = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\"}"
             let irrelevantJson=extractorJson.replace("Use String Rune iteration for Unicode character boundaries.","Use Rune iteration for Unicode boundaries.").replace("Declare a String and iterate over text.runes() for Chinese and emoji.","Iterate over runes.").replace("let text: String", "let value: Int64")
             let badExtractorJson=extractorJson.replace("\"negativeDiagnostic\":\"undefined\"","\"negativeDiagnostic\":\"wrong diagnostic 中文😀\"")
             let extractor=RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true),TeacherProcessResult(7,"provider unavailable"),TeacherProcessResult(0,irrelevantJson),TeacherProcessResult(0,badExtractorJson),TeacherProcessResult(0,extractorJson)])
@@ -835,6 +866,13 @@ public class TeacherP0P3Test {
             @Expect(ckb.contains("\"schemaVersion\":\"ckb-benchmark-gap-v1\""), true)
             @Expect(ckb.contains("\"knowledgeAtomCandidate\":true"), true)
             @Expect(ckb.contains("\"candidateHash\":\"sha256:"), true)
+            let ckbObject = JsonValue.fromStr(ckb.trimAscii()).asObject()
+            let canonicalBundle = ckbObject.get("knowledgeAtomTestBundle").getOrThrow().toString()
+            @Expect(canonicalBundle.contains("\\u0026\\u0026"), true)
+            @Expect(canonicalBundle.contains("<"), true)
+            @Expect(canonicalBundle.contains(">"), true)
+            @Expect(ckb.contains("\"knowledgeAtomTestBundle\":${canonicalBundle}"), true)
+            @Expect(p3CkbString(ckbObject, "candidateHash"), p3CkbCandidateHash(ckb))
             @Expect(teacherReadUtf8File("${root}/exports/r1/candidate-knowledge.tsv").toAsciiLower().contains("cj-humaneval-"), false)
             // Multiple cases share one private exports parent. Publishing a
             // second candidate must not try to recreate that existing parent.
@@ -863,6 +901,23 @@ public class TeacherP0P3Test {
             options.model="gpt-5.6-sol";_=teacherAtomicWrite("${root}/runs/teacher-r1/evidence/CJ-HUMANEVAL-000/solution.binding","wrong\twrong\twrong\n");options.outputRoot="${root}/exports/binding"
             @Expect(buildTeacherCandidates(options,extractorExecutor:extractor).diagnostic,"solution_evidence_binding_invalid")
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    @TestCase public func candidateCkbBundleCanonicalizationIsUtf8BoundedAndLeakSafe():Unit{
+        let special="{\"atomId\":\"GENERAL\",\"example\":\"left && value < upper > lower 中文😀 quote \\\"ok\\\" slash C:\\\\tmp\"}"
+        let canonical=canonicalizeTeacherCkbKnowledgeAtomBundle(special.toArray())
+        @Expect(canonical[1],"ok");@Expect(canonical[0].contains("\\u0026\\u0026"),true)
+        @Expect(canonical[0].contains("<"),true);@Expect(canonical[0].contains(">"),true)
+        @Expect(canonical[0].contains("中文😀"),true);@Expect(canonical[0].contains("\\\"ok\\\""),true)
+        let stable="{\"atomId\":\"GENERAL\",\"example\":\"plain ascii\"}"
+        let stableCanonical=canonicalizeTeacherCkbKnowledgeAtomBundle(stable.toArray())
+        @Expect(stableCanonical[0],stable);@Expect(stableCanonical[1],"ok")
+        @Expect(canonicalizeTeacherCkbKnowledgeAtomBundle("{".toArray())[1],"malformed_atom_test_bundle")
+        @Expect(canonicalizeTeacherCkbKnowledgeAtomBundle([UInt8(0xff),UInt8(0xfe)])[1],"invalid_response_encoding")
+        @Expect(canonicalizeTeacherCkbKnowledgeAtomBundle(Array<UInt8>(262145,repeat:UInt8(65)))[1],"atom_test_bundle_too_large")
+        let leaked="{\"atomId\":\"GENERAL\",\"example\":\"/Users/private/token=secret 中文😀\"}"
+        let blocked=canonicalizeTeacherCkbKnowledgeAtomBundle(leaked.toArray())
+        @Expect(blocked[1],"atom_content_contamination");@Expect(blocked[0],"")
     }
 
     @TestCase public func candidateAtomRunsInRealLocalCangjieWorkspaces():Unit {

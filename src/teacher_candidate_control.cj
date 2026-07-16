@@ -690,11 +690,31 @@ private func recordTeacherAtomTestExecution(raw:String,evidence:String):String {
 }
 
 private func renderTeacherCkbGap(row: TeacherGapRow, runId: String, bundle: String,transcriptHash:String): String {
-    let candidatePath="candidate-knowledge/ckb-benchmark-gap.jsonl";let evidence="${row.evidence}|teacherAtomHash=sha256:${teacherStableHash(bundle)}|extractorTranscriptHash=${transcriptHash}";let evidenceHash="sha256:${teacherStableHash(evidence)}"
+    let canonicalized=canonicalizeTeacherCkbKnowledgeAtomBundle(bundle.toArray())
+    if(canonicalized[1]!="ok"){throw IllegalArgumentException(canonicalized[1])}
+    let canonicalBundle=canonicalized[0]
+    let candidatePath="candidate-knowledge/ckb-benchmark-gap.jsonl";let evidence="${row.evidence}|teacherAtomHash=sha256:${teacherStableHash(canonicalBundle)}|extractorTranscriptHash=${transcriptHash}";let evidenceHash="sha256:${teacherStableHash(evidence)}"
     let identity="${row.benchmark.trimAscii().toAsciiLower()}:${row.datasetVersion.toAsciiLower()}:${row.caseId.toAsciiLower()}:${row.missingKnowledge.toAsciiUpper()}:${row.targetVersion.toAsciiLower()}"
-    let canonical=candidatePart(identity)+candidatePart(row.taskText)+candidatePart(row.visibleTestExcerpt)+candidatePart(row.compilerOutput)+candidatePart(row.missingKnowledge.toAsciiUpper())+candidatePart(row.interfaceId)+candidatePart(row.contentFamily)+candidatePart(row.updateMechanism)+candidatePart(row.targetVersion)+candidatePart(row.citation)+candidatePart(bundle)+candidatePart("true")+candidatePart(runId)+candidatePart(evidenceHash)+candidatePart(evidence)+candidatePart(candidatePath)+candidatePart("1")+candidatePart("1")+candidatePart("knowledge_gap")+candidatePart("2")
+    let canonical=candidatePart(identity)+candidatePart(row.taskText)+candidatePart(row.visibleTestExcerpt)+candidatePart(row.compilerOutput)+candidatePart(row.missingKnowledge.toAsciiUpper())+candidatePart(row.interfaceId)+candidatePart(row.contentFamily)+candidatePart(row.updateMechanism)+candidatePart(row.targetVersion)+candidatePart(row.citation)+candidatePart(canonicalBundle)+candidatePart("true")+candidatePart(runId)+candidatePart(evidenceHash)+candidatePart(evidence)+candidatePart(candidatePath)+candidatePart("1")+candidatePart("1")+candidatePart("knowledge_gap")+candidatePart("2")
     let hash="sha256:${teacherStableHash(canonical)}"
-    "{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"${candidateEscape(row.datasetVersion)}\",\"teacherRunId\":\"${candidateEscape(runId)}\",\"evidenceHash\":\"${evidenceHash}\",\"evidence\":\"${candidateEscape(evidence)}\",\"candidateHash\":\"${hash}\",\"candidatePath\":\"${candidatePath}\",\"revision\":1,\"attempt\":1,\"failureTaxonomy\":\"knowledge_gap\",\"knowledgeGapConfirmations\":2,\"caseId\":\"${candidateEscape(row.caseId)}\",\"benchmark\":\"${candidateEscape(row.benchmark)}\",\"taskText\":\"${candidateEscape(row.taskText)}\",\"visibleTestExcerpt\":\"${candidateEscape(row.visibleTestExcerpt)}\",\"compilerOutput\":\"${candidateEscape(row.compilerOutput)}\",\"missingKnowledge\":\"${candidateEscape(row.missingKnowledge)}\",\"interfaceId\":\"${candidateEscape(row.interfaceId)}\",\"contentFamily\":\"${candidateEscape(row.contentFamily)}\",\"updateMechanism\":\"${candidateEscape(row.updateMechanism)}\",\"targetVersion\":\"${candidateEscape(row.targetVersion)}\",\"officialCitation\":\"${candidateEscape(row.citation)}\",\"knowledgeAtomTestBundle\":${bundle},\"knowledgeAtomCandidate\":true}"
+    "{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"${candidateEscape(row.datasetVersion)}\",\"teacherRunId\":\"${candidateEscape(runId)}\",\"evidenceHash\":\"${evidenceHash}\",\"evidence\":\"${candidateEscape(evidence)}\",\"candidateHash\":\"${hash}\",\"candidatePath\":\"${candidatePath}\",\"revision\":1,\"attempt\":1,\"failureTaxonomy\":\"knowledge_gap\",\"knowledgeGapConfirmations\":2,\"caseId\":\"${candidateEscape(row.caseId)}\",\"benchmark\":\"${candidateEscape(row.benchmark)}\",\"taskText\":\"${candidateEscape(row.taskText)}\",\"visibleTestExcerpt\":\"${candidateEscape(row.visibleTestExcerpt)}\",\"compilerOutput\":\"${candidateEscape(row.compilerOutput)}\",\"missingKnowledge\":\"${candidateEscape(row.missingKnowledge)}\",\"interfaceId\":\"${candidateEscape(row.interfaceId)}\",\"contentFamily\":\"${candidateEscape(row.contentFamily)}\",\"updateMechanism\":\"${candidateEscape(row.updateMechanism)}\",\"targetVersion\":\"${candidateEscape(row.targetVersion)}\",\"officialCitation\":\"${candidateEscape(row.citation)}\",\"knowledgeAtomTestBundle\":${canonicalBundle},\"knowledgeAtomCandidate\":true}"
+}
+
+public func canonicalizeTeacherCkbKnowledgeAtomBundle(raw:Array<UInt8>):(String,String){
+    if(raw.size>262144){return("","atom_test_bundle_too_large")}
+    let text=try{String.fromUtf8(raw)}catch(_:Exception){return("","invalid_response_encoding")}
+    try{
+        let canonical=JsonValue.fromStr(text.trimAscii()).asObject().toString()
+        if(canonical.toRuneArray().size>262144){return("","atom_test_bundle_too_large")}
+        if(teacherCkbBundleForbidden(canonical)){return("","atom_content_contamination")}
+        (canonical,"ok")
+    }catch(_:Exception){("","malformed_atom_test_bundle")}
+}
+
+private func teacherCkbBundleForbidden(raw:String):Bool{
+    let value=raw.toAsciiLower()
+    candidateForbidden(raw)||value.contains("/users/")||value.contains("/private/")||value.contains("authorization:")||
+        value.contains("bearer ")||value.contains("api_key")||value.contains("token=")||value.contains("password")
 }
 
 private func teacherPrivateArtifacts(root:String):Array<String>{try{[teacherReadUtf8File("${root}/src/solution.cj")]}catch(_:Exception){[]}}
