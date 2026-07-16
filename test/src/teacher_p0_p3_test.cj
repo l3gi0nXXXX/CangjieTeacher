@@ -493,7 +493,21 @@ public class TeacherP0P3Test {
         @Expect(unicodeWithoutImport.feedback.toAsciiLower().contains("positive and boundary sources must each import std.unicode.*"),true)
         @Expect(unicodeWithoutImport.feedback.contains("isLowerCase() and isUpperCase()"),true)
         @Expect(unicodeWithoutImport.feedback.toAsciiLower().contains("negative source must omit that import"),true)
+        @Expect(unicodeWithoutImport.feedback.toAsciiLower().contains("negative source must omit that import and call both"),true)
         @Expect(unicodeWithoutImport.feedback.contains("CJ-HUMANEVAL"),false)
+        let unicodeNegativeOnlyOne=validateTeacherAuthorityRelevance(unicodeCompiler,"G-RUNE-UNICODE-IMPORT",
+            "Import std.unicode.* for Rune.isLowerCase and Rune.isUpperCase.","import std.unicode.* before both methods.",
+            "import std.unicode.*\nmain(){ println(r'a'.isLowerCase()); println(r'A'.isUpperCase()) }",
+            "main(){ println(r'a'.isLowerCase()) }",
+            "import std.unicode.*\nmain(){ println(r'中'.isLowerCase()); println(r'中'.isUpperCase()) }")
+        @Expect(unicodeNegativeOnlyOne.ok,false)
+        @Expect(unicodeNegativeOnlyOne.feedback.toAsciiLower().contains("negative source must omit that import and call both"),true)
+        let unicodePositiveOnlyOne=validateTeacherAuthorityRelevance(unicodeCompiler,"G-RUNE-UNICODE-IMPORT",
+            "Import std.unicode.* for Rune.isLowerCase and Rune.isUpperCase.","import std.unicode.* before both methods.",
+            "import std.unicode.*\nmain(){ println(r'a'.isLowerCase()) }",
+            "main(){ println(r'a'.isLowerCase()); println(r'A'.isUpperCase()) }",
+            "import std.unicode.*\nmain(){ println(r'中'.isLowerCase()); println(r'中'.isUpperCase()) }")
+        @Expect(unicodePositiveOnlyOne.ok,false)
         let unicodeRelevant=validateTeacherAuthorityRelevance(unicodeCompiler,"G-RUNE-UNICODE-IMPORT",
             "Import std.unicode.* for Rune.isLowerCase and Rune.isUpperCase.","import std.unicode.* before both methods.",
             "import std.unicode.*\nmain(){ println(r'a'.isLowerCase()); println(r'A'.isUpperCase()) }",
