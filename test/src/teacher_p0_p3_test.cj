@@ -134,6 +134,33 @@ public class TeacherRuntimeTest {
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
+    @TestCase public func verifierRejectsExitZeroCangjieEvalFailureWithoutBroadFalsePositives(): Unit {
+        let root = tempRoot("verify-business-failure")
+        try {
+            Directory.create(Path("${root}/tests/CJ-HUMANEVAL-000/tests"), recursive: true)
+            Directory.create(Path("${root}/solution/src"), recursive: true)
+            File.writeTo(Path("${root}/solution/cjpm.toml"), "original package".toArray())
+            File.writeTo(Path("${root}/tests/CJ-HUMANEVAL-000/tests/cjpm.executable.toml"), "package".toArray())
+            File.writeTo(Path("${root}/tests/CJ-HUMANEVAL-000/tests/TestMain.cj"), "test".toArray())
+            let long=String(Array<Rune>(2000,repeat:r'界'))
+            let business="cjpm run finished\nAn exception has occurred:\nException: CangjieEval failure: 中文😀 expected false, actual true /Users/private/token Authorization ${long}"
+            let failedRecorder=RecordingExecutor(results:[TeacherProcessResult(0,"clean"),TeacherProcessResult(0,"build"),TeacherProcessResult(0,"test"),TeacherProcessResult(0,business)])
+            let failed=CjpmTeacherVerifier("${root}/tests",executor:failedRecorder).verify(testCase(),"${root}/solution")
+            @Expect(failed.exitCode,5);@Expect(failedRecorder.specs.size,4)
+            @Expect(failed.output.contains("verifier_business_assertion_failed"),true)
+            @Expect(failed.output.contains("中文😀 expected false, actual true"),true)
+            @Expect(failed.output.contains("/Users"),false);@Expect(failed.output.toAsciiLower().contains("token"),false)
+            @Expect(failed.output.contains("Authorization"),false);@Expect(failed.output.toRuneArray().size<512,true)
+            let ordinary="CJ-HUMANEVAL-000 ok\nA guide may mention Exception handling and expected/actual values without a benchmark marker."
+            let successRecorder=RecordingExecutor(results:[TeacherProcessResult(0,"clean"),TeacherProcessResult(0,"build"),TeacherProcessResult(0,"test"),TeacherProcessResult(0,ordinary)])
+            let success=CjpmTeacherVerifier("${root}/tests",executor:successRecorder).verify(testCase(),"${root}/solution")
+            @Expect(success.exitCode,0);@Expect(success.output.contains(ordinary),true)
+            let encodingRecorder=RecordingExecutor(results:[TeacherProcessResult(0,"clean"),TeacherProcessResult(0,"build"),TeacherProcessResult(0,"test"),TeacherProcessResult(0,"invalid_response_encoding")])
+            let encoding=CjpmTeacherVerifier("${root}/tests",executor:encodingRecorder).verify(testCase(),"${root}/solution")
+            @Expect(encoding.exitCode,65);@Expect(encoding.output.contains("verifier_invalid_response_encoding"),true)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     // P2-E2E-01
     @TestCase public func workspaceEvidenceAtomicPersistenceAndResume(): Unit {
         let root = tempRoot("storage")
