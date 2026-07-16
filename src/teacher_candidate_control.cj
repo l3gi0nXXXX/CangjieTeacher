@@ -26,13 +26,17 @@ private class TeacherAtomSpec {
     let family: String; let concept: String; let explanation: String; let example: String
     let citation: String; let sourceClass: String
     let positiveSource: String; let negativeSource: String; let boundarySource: String; let negativeDiagnostic: String
+    let positiveDependencyProfile: String; let negativeDependencyProfile: String; let boundaryDependencyProfile: String
     let transcriptHash: String; let provider: String; let model: String
     init(family: String, concept: String, explanation: String, example: String, citation: String, sourceClass: String,
         positiveSource: String, negativeSource: String, boundarySource: String, negativeDiagnostic: String,
+        positiveDependencyProfile: String, negativeDependencyProfile: String, boundaryDependencyProfile: String,
         transcriptHash: String, provider: String, model: String) {
         this.family = family; this.concept = concept; this.explanation = explanation; this.example = example
         this.citation=citation;this.sourceClass=sourceClass;this.positiveSource=positiveSource;this.negativeSource=negativeSource
         this.boundarySource=boundarySource;this.negativeDiagnostic=negativeDiagnostic;this.transcriptHash=transcriptHash
+        this.positiveDependencyProfile=positiveDependencyProfile;this.negativeDependencyProfile=negativeDependencyProfile
+        this.boundaryDependencyProfile=boundaryDependencyProfile
         this.provider=provider;this.model=model
     }
 }
@@ -189,7 +193,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         for(anchor in extracted){strong.add(anchor)}
     }
     if(gap.contains("string-rune-contains")&&strong.isEmpty()){
-        for(anchor in ["uint8","rune","contains","stringbuilder.append","torunearray"]){teacherAuthorityAddAnchor(strong,anchor)}
+        for(anchor in ["uint8","rune","contains","torunearray"]){teacherAuthorityAddAnchor(strong,anchor)}
+        if(gap.contains("stringbuilder-append")){teacherAuthorityAddAnchor(strong,"stringbuilder.append")}
         primary.add("contains")
     }else if(gap.contains("rune-byte-compare")&&strong.isEmpty()){
         for(anchor in ["uint8","rune","torunearray"]){teacherAuthorityAddAnchor(strong,anchor)}
@@ -318,7 +323,7 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
     let solutionHash=teacherDirectoryHash(solutionRoot)
     let allowedEvidence=teacherSanitizeEvidence(row.evidence+"\n"+row.compilerOutput)
     let repair=if(atomFeedback==""){""}else{"\nA previous authority relevance or atom test failed. Correct the proposed knowledge explanation, example, test sources, or expected diagnostic using this sanitized compiler evidence, then return a complete replacement object:\n${atomFeedback}"}
-    let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}${repair}"
+    let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic, positiveDependencyProfile, negativeDependencyProfile, boundaryDependencyProfile. Dependency profile values must be none or stdx-magic. Use stdx-magic only when a source imports stdx and its cjpm project must declare the bundled stdx binary dependency; for a missing-dependency negative test use none. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}${repair}"
     let extractorRoot="${options.root}/runs/${options.runId}/extractor-workspaces/${row.caseId}"
     try { if(!exists(Path(extractorRoot))){Directory.create(Path(extractorRoot),recursive:true)} } catch(_:Exception){return(emptyTeacherAtomSpec(),"extractor_workspace_failed")}
     let schemaPath="${extractorRoot}/response.schema.json";let responsePath="${extractorRoot}/response.json"
@@ -335,7 +340,7 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
     try {
         let o=JsonValue.fromStr(raw.trimAscii()).asObject();let provider=candidateString(o,"provider");let model=candidateString(o,"model")
         if(provider!="codex"||model!=options.model){return(emptyTeacherAtomSpec(),"extractor_identity_mismatch")}
-        let spec=TeacherAtomSpec(candidateString(o,"knowledgeFamily"),candidateString(o,"concept"),candidateString(o,"explanation"),candidateString(o,"example"),candidateString(o,"citation"),candidateString(o,"sourceClass"),candidateString(o,"positiveSource"),candidateString(o,"negativeSource"),candidateString(o,"boundarySource"),candidateString(o,"negativeDiagnostic"),"sha256:${teacherStableHash(raw)}",provider,model)
+        let spec=TeacherAtomSpec(candidateString(o,"knowledgeFamily"),candidateString(o,"concept"),candidateString(o,"explanation"),candidateString(o,"example"),candidateString(o,"citation"),candidateString(o,"sourceClass"),candidateString(o,"positiveSource"),candidateString(o,"negativeSource"),candidateString(o,"boundarySource"),candidateString(o,"negativeDiagnostic"),candidateString(o,"positiveDependencyProfile"),candidateString(o,"negativeDependencyProfile"),candidateString(o,"boundaryDependencyProfile"),"sha256:${teacherStableHash(raw)}",provider,model)
         if(!teacherK4Family(spec.family)||spec.concept==""||spec.explanation==""||spec.example==""||spec.positiveSource==""||spec.negativeSource==""||spec.boundarySource==""||spec.negativeDiagnostic==""){return(emptyTeacherAtomSpec(),"extractor_contract_invalid")}
         if(spec.sourceClass!="official"||spec.citation!=row.citation||!spec.citation.startsWith("https://docs.cangjie-lang.cn/")){return(emptyTeacherAtomSpec(),"extractor_source_invalid")}
         if(candidateForbidden(spec.concept+spec.explanation+spec.example+spec.positiveSource+spec.negativeSource+spec.boundarySource)){return(emptyTeacherAtomSpec(),"extractor_contamination")}
@@ -344,14 +349,14 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
 }
 
 private func teacherExtractorOutputSchema():String{
-    "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"provider\",\"model\",\"knowledgeFamily\",\"concept\",\"explanation\",\"example\",\"citation\",\"sourceClass\",\"positiveSource\",\"negativeSource\",\"boundarySource\",\"negativeDiagnostic\"],\"properties\":{\"provider\":{\"type\":\"string\",\"enum\":[\"codex\"]},\"model\":{\"type\":\"string\",\"enum\":[\"gpt-5.6-sol\"]},\"knowledgeFamily\":{\"type\":\"string\",\"enum\":[\"syntax\",\"standard_library\",\"stdx\",\"toolchain\",\"compiler_diagnostic\",\"version_migration\",\"engineering_practice\"]},\"concept\":{\"type\":\"string\"},\"explanation\":{\"type\":\"string\"},\"example\":{\"type\":\"string\"},\"citation\":{\"type\":\"string\"},\"sourceClass\":{\"type\":\"string\",\"enum\":[\"official\"]},\"positiveSource\":{\"type\":\"string\"},\"negativeSource\":{\"type\":\"string\"},\"boundarySource\":{\"type\":\"string\"},\"negativeDiagnostic\":{\"type\":\"string\"}}}"
+    "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"provider\",\"model\",\"knowledgeFamily\",\"concept\",\"explanation\",\"example\",\"citation\",\"sourceClass\",\"positiveSource\",\"negativeSource\",\"boundarySource\",\"negativeDiagnostic\",\"positiveDependencyProfile\",\"negativeDependencyProfile\",\"boundaryDependencyProfile\"],\"properties\":{\"provider\":{\"type\":\"string\",\"enum\":[\"codex\"]},\"model\":{\"type\":\"string\",\"enum\":[\"gpt-5.6-sol\"]},\"knowledgeFamily\":{\"type\":\"string\",\"enum\":[\"syntax\",\"standard_library\",\"stdx\",\"toolchain\",\"compiler_diagnostic\",\"version_migration\",\"engineering_practice\"]},\"concept\":{\"type\":\"string\"},\"explanation\":{\"type\":\"string\"},\"example\":{\"type\":\"string\"},\"citation\":{\"type\":\"string\"},\"sourceClass\":{\"type\":\"string\",\"enum\":[\"official\"]},\"positiveSource\":{\"type\":\"string\"},\"negativeSource\":{\"type\":\"string\"},\"boundarySource\":{\"type\":\"string\"},\"negativeDiagnostic\":{\"type\":\"string\"},\"positiveDependencyProfile\":{\"type\":\"string\",\"enum\":[\"none\",\"stdx-magic\"]},\"negativeDependencyProfile\":{\"type\":\"string\",\"enum\":[\"none\",\"stdx-magic\"]},\"boundaryDependencyProfile\":{\"type\":\"string\",\"enum\":[\"none\",\"stdx-magic\"]}}}"
 }
 
-private func emptyTeacherAtomSpec():TeacherAtomSpec{TeacherAtomSpec("","","","","","","","","","","","","")}
+private func emptyTeacherAtomSpec():TeacherAtomSpec{TeacherAtomSpec("","","","","","","","","","","","","","","","")}
 private func teacherK4Family(v:String):Bool{["syntax","standard_library","stdx","toolchain","compiler_diagnostic","version_migration","engineering_practice"].contains(v)}
 
 private func teacherExecutableAtomBundle(identity: String, row: TeacherGapRow, spec: TeacherAtomSpec): String {
-    let tests = "[{\"category\":\"positive\",\"operation\":\"contains\",\"input\":\"atom\",\"needle\":\"atom\",\"expected\":\"true\",\"source\":\"${candidateEscape(spec.positiveSource)}\",\"expectedMode\":\"pass\"},{\"category\":\"negative\",\"operation\":\"contains\",\"input\":\"safe\",\"needle\":\"forbidden\",\"expected\":\"false\",\"source\":\"${candidateEscape(spec.negativeSource)}\",\"expectedMode\":\"compile_reject\",\"expectedDiagnostic\":\"${candidateEscape(spec.negativeDiagnostic)}\"},{\"category\":\"boundary\",\"operation\":\"rune_count\",\"input\":\"😀\",\"expected\":\"1\",\"source\":\"${candidateEscape(spec.boundarySource)}\",\"expectedMode\":\"pass\"}]"
+    let tests = "[{\"category\":\"positive\",\"operation\":\"contains\",\"input\":\"atom\",\"needle\":\"atom\",\"expected\":\"true\",\"source\":\"${candidateEscape(spec.positiveSource)}\",\"dependencyProfile\":\"${candidateEscape(spec.positiveDependencyProfile)}\",\"expectedMode\":\"pass\"},{\"category\":\"negative\",\"operation\":\"contains\",\"input\":\"safe\",\"needle\":\"forbidden\",\"expected\":\"false\",\"source\":\"${candidateEscape(spec.negativeSource)}\",\"dependencyProfile\":\"${candidateEscape(spec.negativeDependencyProfile)}\",\"expectedMode\":\"compile_reject\",\"expectedDiagnostic\":\"${candidateEscape(spec.negativeDiagnostic)}\"},{\"category\":\"boundary\",\"operation\":\"rune_count\",\"input\":\"😀\",\"expected\":\"1\",\"source\":\"${candidateEscape(spec.boundarySource)}\",\"dependencyProfile\":\"${candidateEscape(spec.boundaryDependencyProfile)}\",\"expectedMode\":\"pass\"}]"
     let canonical = candidatePart(identity)+candidatePart(spec.sourceClass)+candidatePart(spec.citation.toAsciiLower())+candidatePart(row.targetVersion)+candidatePart(spec.explanation)+candidatePart("true")+candidatePart(tests)
     let hash = "sha256:${teacherStableHash(canonical)}"
     "{\"atomId\":\"${candidateEscape(identity)}\",\"knowledgeFamily\":\"${candidateEscape(spec.family)}\",\"sourceClass\":\"${candidateEscape(spec.sourceClass)}\",\"citation\":\"${candidateEscape(spec.citation)}\",\"targetVersion\":\"${candidateEscape(row.targetVersion)}\",\"candidateHash\":\"${hash}\",\"knowledgeText\":\"${candidateEscape(spec.explanation)}\",\"example\":\"${candidateEscape(spec.example)}\",\"extractor\":{\"provider\":\"${spec.provider}\",\"model\":\"${spec.model}\",\"exitCode\":0,\"transcriptHash\":\"${spec.transcriptHash}\"},\"purificationPassed\":true,\"tests\":${tests}}"
@@ -363,7 +368,8 @@ public func executeTeacherAtomTestBundle(raw:String,workspaceRoot:String,
     try {
         let tests=JsonValue.fromStr(raw).asObject().get("tests").getOrThrow().asArray().getItems();let categories=HashSet<String>();var evidence="";var passed:Int64=0
         for(v in tests){let t=v.asObject();let category=candidateString(t,"category");categories.add(category);let root="${workspaceRoot}/${category}";if(exists(Path(root))){remove(Path(root),recursive:true)};Directory.create(Path("${root}/src"),recursive:true)
-            _=teacherAtomicWrite("${root}/cjpm.toml","[package]\n  cjc-version = \"1.0.0\"\n  name = \"teacher_atom_${category}\"\n  version = \"1.0.0\"\n  output-type = \"executable\"\n")
+            let project=teacherAtomProjectToml(category,candidateString(t,"dependencyProfile"));if(project[1]!=""){out.diagnostic=project[1];return out}
+            _=teacherAtomicWrite("${root}/cjpm.toml",project[0])
             let source=candidateString(t,"source");if(source.trimAscii().startsWith("package ")){out.diagnostic="atom_source_package_forbidden";return out}
             _=teacherAtomicWrite("${root}/src/main.cj","package teacher_atom_${category}\n\n${source}\n");var categoryOk=true;var categoryEvidence=""
             for(args in [["clean"],["build","-i"],["test","-j","1"]]){let r=executor.execute(TeacherCommandSpec("cjpm",args,root,timeoutMillis:timeoutMillis));categoryEvidence+="${args[0]}:${r.exitCode}:sha256:${teacherStableHash(r.output)}|";if(r.timedOut){out.diagnostic="atom_test_timeout";return out};if(category=="negative"&&args[0]=="build"){categoryOk=r.exitCode!=0&&r.output.contains(candidateString(t,"expectedDiagnostic"));if(!categoryOk){out.feedback=teacherSanitizeEvidence("category=negative expectedDiagnostic=${candidateString(t,"expectedDiagnostic")} actualCompilerOutput=${r.output.replace(root,"[atom-workspace]")}")};break};if(r.exitCode!=0){categoryOk=false;out.feedback=teacherSanitizeEvidence("category=${category} command=${args[0]} expected=success actualCompilerOutput=${r.output.replace(root,"[atom-workspace]")}");break}}
@@ -371,6 +377,15 @@ public func executeTeacherAtomTestBundle(raw:String,workspaceRoot:String,
         }
         if(categories.contains("positive")&&categories.contains("negative")&&categories.contains("boundary")&&passed==3){out.ok=true;out.diagnostic="ok";out.evidenceJson="{\"total\":3,\"passed\":3,\"failed\":0,\"status\":\"passed\",\"commandEvidence\":\"${candidateEscape(evidence)}\",\"commandEvidenceHash\":\"sha256:${teacherStableHash(evidence)}\"}"}else{out.diagnostic="atom_test_failed";if(out.feedback==""){out.feedback="atom categories incomplete or failed"}}
     }catch(_:Exception){out.diagnostic="malformed_atom_test_bundle"};out
+}
+
+private func teacherAtomProjectToml(category:String,profile:String):(String,String){
+    let base="[package]\n  cjc-version = \"1.0.0\"\n  name = \"teacher_atom_${category}\"\n  version = \"1.0.0\"\n  output-type = \"executable\"\n"
+    if(profile==""||profile=="none"){return(base,"")}
+    if(profile!="stdx-magic"){return("","atom_dependency_profile_forbidden")}
+    let magic="$"+"{MAGIC_PATH}"
+    let targets="\n[target.x86_64-unknown-linux-gnu.bin-dependencies]\n  path-option = [\"${magic}/libs/cangjie-stdx-linux-x64-1.0.0.1/linux_x86_64_llvm/dynamic/stdx\"]\n\n[target.x86_64-unknown-windows-gnu.bin-dependencies]\n  path-option = [\"${magic}/libs/cangjie-stdx-windows-x64-1.0.0.1/windows_x86_64_llvm/dynamic/stdx\"]\n\n[target.x86_64-w64-mingw32.bin-dependencies]\n  path-option = [\"${magic}/libs/cangjie-stdx-windows-x64-1.0.0.1/windows_x86_64_llvm/dynamic/stdx\"]\n\n[target.aarch64-unknown-linux-gnu.bin-dependencies]\n  path-option = [\"${magic}/libs/cangjie-stdx-linux-aarch64-1.0.0.1/linux_aarch64_llvm/dynamic/stdx\"]\n\n[target.aarch64-apple-darwin.bin-dependencies]\n  path-option = [\"${magic}/libs/cangjie-stdx-mac-aarch64-1.0.0.1/darwin_aarch64_llvm/dynamic/stdx\"]\n"
+    (base+targets,"")
 }
 
 private func recordTeacherAtomTestExecution(raw:String,evidence:String):String {

@@ -507,6 +507,13 @@ public class TeacherP0P3Test {
             "Use contains, StringBuilder.append, UInt8, Rune, and toRuneArray together.",stringSource,
             "main(){ let byte: UInt8 = UInt8(65); println(\"A\".contains(byte)) }",stringSource)
         @Expect(stringRelevant.ok,true)
+        let containsSource="main(){ let byte: UInt8=UInt8(65); let runes:Array<Rune>=\"A\".toRuneArray(); println(\"A\".contains(String(runes))); println(byte) }"
+        let containsOnly=validateTeacherAuthorityRelevance(stringCompiler,"G-STRING-RUNE-CONTAINS",
+            "String iteration yields UInt8; use toRuneArray for Rune values and pass a String to contains.",
+            "Use UInt8, Rune, contains, and toRuneArray together.",containsSource,
+            "main(){ let byte:UInt8=UInt8(65); println(\"A\".contains(byte)) }",containsSource)
+        @Expect(containsOnly.ok,true);@Expect(containsOnly.anchors.contains("stringbuilder.append"),false)
+        @Expect(stringRelevant.anchors.contains("stringbuilder.append"),true)
 
         let byteRelevant=validateTeacherAuthorityRelevance("invalid binary operator '<' on type 'UInt8' and 'Rune'","G-RUNE-BYTE-COMPARE",
             "A UInt8 byte cannot compare with Rune; use toRuneArray for character comparison.","Use UInt8 and Rune values with toRuneArray.",
@@ -625,6 +632,30 @@ public class TeacherP0P3Test {
     @TestCase public func candidateAtomRunsInRealLocalCangjieWorkspaces():Unit {
         let root="/tmp/teacher-real-atom-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         let bundle="{\"tests\":[{\"category\":\"positive\",\"source\":\"main() { let value: Int64 = 1 }\"},{\"category\":\"negative\",\"source\":\"main() { let value: MissingType = 1 }\",\"expectedDiagnostic\":\"undeclared type name\"},{\"category\":\"boundary\",\"source\":\"main() { let text = \\\"中文😀\\\"; let count = text.toRuneArray().size }\"}]}"
+        try{@Expect(executeTeacherAtomTestBundle(bundle,root).ok,true)}finally{try{remove(Path(root),recursive:true)}catch(_:Exception){}}
+    }
+
+    @TestCase public func candidateAtomDependencyProfileIsFixedAndRejectsPathInjection():Unit {
+        let root="/tmp/teacher-project-atom-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        let bundle="{\"tests\":[{\"category\":\"positive\",\"dependencyProfile\":\"stdx-magic\",\"source\":\"main() {}\"},{\"category\":\"negative\",\"dependencyProfile\":\"none\",\"source\":\"main() { bad }\",\"expectedDiagnostic\":\"undefined\"},{\"category\":\"boundary\",\"dependencyProfile\":\"stdx-magic\",\"source\":\"main() {}\"}]}"
+        let passing=RecordingExecutor(results:[TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(1,"undefined"),TeacherProcessResult(0,""),TeacherProcessResult(0,""),TeacherProcessResult(0,"")])
+        try {
+            @Expect(executeTeacherAtomTestBundle(bundle,root,executor:passing).ok,true)
+            let positive=teacherReadUtf8File("${root}/positive/cjpm.toml")
+            let negative=teacherReadUtf8File("${root}/negative/cjpm.toml")
+            @Expect(positive.contains("[target.aarch64-apple-darwin.bin-dependencies]"),true)
+            @Expect(positive.contains("$"+"{MAGIC_PATH}"),true)
+            @Expect(positive.contains("/Users/"),false)
+            @Expect(negative.contains("bin-dependencies"),false)
+            let injected=bundle.replace("stdx-magic","/Users/private/秘密😀")
+            @Expect(executeTeacherAtomTestBundle(injected,"${root}-injected",executor:passing).diagnostic,"atom_dependency_profile_forbidden")
+        } finally { try{remove(Path(root),recursive:true)}catch(_:Exception){};try{remove(Path("${root}-injected"),recursive:true)}catch(_:Exception){} }
+    }
+
+    @TestCase public func candidateAtomValidatesStdxImportWithProjectDependency():Unit {
+        let root="/tmp/teacher-stdx-atom-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        let source="import stdx.crypto.digest.SHA256\\n\\nmain() { let digest = SHA256(); digest.write(Array<UInt8>()); println(digest.finish().size) }"
+        let bundle="{\"tests\":[{\"category\":\"positive\",\"dependencyProfile\":\"stdx-magic\",\"source\":\"${source}\"},{\"category\":\"negative\",\"dependencyProfile\":\"none\",\"source\":\"${source}\",\"expectedDiagnostic\":\"imports package 'stdx.crypto.digest'\"},{\"category\":\"boundary\",\"dependencyProfile\":\"stdx-magic\",\"source\":\"${source}\"}]}"
         try{@Expect(executeTeacherAtomTestBundle(bundle,root).ok,true)}finally{try{remove(Path(root),recursive:true)}catch(_:Exception){}}
     }
 
