@@ -413,6 +413,48 @@ public class TeacherP0P3Test {
         @Expect(teacherRunCompleteForCandidate(repaired, "other-run"), false)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRejectsGenericFloatFactAndAcceptsParseImport():Unit{
+        let compiler="error: undeclared identifier 'parse' | Error: failed to compile package `sample`, return code is 1 | '/Users/private/token'"
+        let irrelevant=validateTeacherAuthorityRelevance(compiler,"G-FLOAT64",
+            "A Float64 variable accepts floating-point literals and rejects Bool.","let value: Float64 = 1.0",
+            "main() { let value: Float64 = 1.0 }","main() { let value: Float64 = true }","main() { let value: Float64 = -0.0 }")
+        @Expect(irrelevant.ok,false);@Expect(irrelevant.diagnostic,"authority_relevance_failed");@Expect(irrelevant.feedback.contains("parse"),true)
+        @Expect(irrelevant.feedback.contains("/Users"),false);@Expect(irrelevant.feedback.toAsciiLower().contains("token"),false)
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-FLOAT64",
+            "Import std.convert.* before calling Float64.parse on numeric text.","import std.convert.*\nlet value = Float64.parse(\"1.5\")",
+            "import std.convert.*\nmain() { println(Float64.parse(\"1.5\")) }",
+            "main() { println(Float64.parse(\"1.5\")) }",
+            "import std.convert.*\nmain() { println(Float64.parse(\"-0.0\")) }")
+        @Expect(relevant.ok,true);@Expect(relevant.anchors.contains("parse"),true)
+        let negativeOnly=validateTeacherAuthorityRelevance(compiler,"G-FLOAT64",
+            "Call parse after importing the conversion package.","Float64.parse converts numeric text.",
+            "main() { let value: Float64 = 1.0 }","main() { println(Float64.parse(\"bad\")) }","main() { let value: Float64 = -0.0 }")
+        @Expect(negativeOnly.ok,false)
+        let parseWithoutImport=validateTeacherAuthorityRelevance(compiler,"G-FLOAT64",
+            "Float64.parse converts numeric text.","Call Float64.parse on a numeric String.",
+            "main() { println(Float64.parse(\"1.5\")) }","main() { println(Float64.parse(\"bad\")) }","main() { println(Float64.parse(\"-0.0\")) }")
+        @Expect(parseWithoutImport.ok,false);@Expect(parseWithoutImport.feedback.contains("std.convert"),true)
+        let commentOnly=validateTeacherAuthorityRelevance(compiler,"G-FLOAT64",
+            "Import std.convert.* and call Float64.parse.","Use Float64.parse after the import.",
+            "// import std.convert.*\nmain() { println(\"Float64.parse(\") }","main() { println(Float64.parse(\"bad\")) }",
+            "// import std.convert.*\nmain() { println(\"Float64.parse(\") }")
+        @Expect(commentOnly.ok,false)
+    }
+
+    @TestCase public func candidateAuthorityRelevanceKeepsKnownGapFamiliesAndFeedbackSafe():Unit{
+        let fixtures=[
+            ("error: undeclared identifier 'toUpper'; undeclared identifier 'toLower'","G-RUNE-UNICODE-CASE","Use Rune.toUpperCase and Rune.toLowerCase.","r.toUpperCase(); r.toLowerCase()"),
+            ("imports package 'std.text' but it is not declared","G-CJPM-DEPENDENCY","Declare std.text as an explicit dependency.","import std.text.*"),
+            ("expected 001, actual 484849","G-STRING-INDEX-BYTES","String indexing can yield UTF-8 bytes; use Rune indexing for characters.","String byte UInt8 index"),
+            ("expected '{' after 'if', found '||'","G-LOGICAL-OR","Use || inside a complete if condition.","if (a || b)"),
+            ("invalid binary operator '==' on type 'UInt8' and 'Rune'","G-RUNE-BYTE-COMPARE","Do not compare UInt8 == Rune without conversion.","UInt8 == Rune")]
+        for(f in fixtures){let r=validateTeacherAuthorityRelevance(f[0],f[1],f[2],f[3],f[3],f[3],f[3]);@Expect(r.ok,true)}
+        let long="中文😀"+String(Array<Rune>(2000,repeat:r'界'))+" '/Users/private/token' 'parse' Authorization secret"
+        let unsafeResult=validateTeacherAuthorityRelevance(long,"G-FLOAT64","generic Float64 fact","Float64 literal","Float64","Float64","Float64")
+        @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.toRuneArray().size<=803,true)
+        @Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false);@Expect(unsafeResult.feedback.contains("Authorization"),false)
+    }
+
     @TestCase public func candidateControlFakeEndToEndAndBoundaries(): Unit {
         let root = "/tmp/teacher-candidate-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         try {
@@ -430,25 +472,27 @@ public class TeacherP0P3Test {
             File.writeTo(Path("${root}/gap.jsonl"), gap.toArray())
             let options = TeacherCliOptions(); options.command="candidate-build"; options.root=root; options.manifest="${root}/manifest.jsonl"
             options.checksum=teacherStableHash(teacherJoin(caseLines(), "\n"));options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.outputRoot="${root}/exports/r1";options.model="gpt-5.6-sol"
-            let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 Rune iteration\",\"explanation\":\"Use Rune iteration for Unicode character boundaries.\",\"example\":\"Iterate over text.runes() for Chinese and emoji.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let x = 1 }\",\"negativeSource\":\"main() { unknownName }\",\"boundarySource\":\"main() { let text = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\"}"
+            let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 String Rune iteration\",\"explanation\":\"Use String Rune iteration for Unicode character boundaries.\",\"example\":\"Declare a String and iterate over text.runes() for Chinese and emoji.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let text: String = \\\"ok\\\" }\",\"negativeSource\":\"main() { let text: String = unknownName }\",\"boundarySource\":\"main() { let text: String = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\"}"
+            let irrelevantJson=extractorJson.replace("Use String Rune iteration for Unicode character boundaries.","Use Rune iteration for Unicode boundaries.").replace("Declare a String and iterate over text.runes() for Chinese and emoji.","Iterate over runes.").replace("let text: String", "let value: Int64")
             let badExtractorJson=extractorJson.replace("\"negativeDiagnostic\":\"undefined\"","\"negativeDiagnostic\":\"wrong diagnostic 中文😀\"")
-            let extractor=RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true),TeacherProcessResult(7,"provider unavailable"),TeacherProcessResult(0,badExtractorJson),TeacherProcessResult(0,extractorJson)])
+            let extractor=RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true),TeacherProcessResult(7,"provider unavailable"),TeacherProcessResult(0,irrelevantJson),TeacherProcessResult(0,badExtractorJson),TeacherProcessResult(0,extractorJson)])
             let atom=AtomRepairExecutor()
             let result = buildTeacherCandidates(options,extractorExecutor:extractor,atomExecutor:atom)
             @Expect(result.ok, true); @Expect(result.accepted, 1)
-            @Expect(extractor.specs.size,4)
-            @Expect(extractor.specs[3].args.contains("gpt-5.6-sol"), true)
-            @Expect(extractor.specs[3].args.contains("read-only"), true)
-            @Expect(extractor.specs[3].args.contains("--ephemeral"), true)
-            @Expect(extractor.specs[3].args.contains("-C"), true)
-            @Expect(extractor.specs[3].args.contains("--output-schema"), true)
-            @Expect(extractor.specs[3].args.contains("--output-last-message"), true)
-            @Expect(extractor.specs[3].args.contains("--cwd"), false)
-            @Expect(extractor.specs[3].args.contains("--full-auto"), false)
-            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].contains("Set citation to exactly 'https://docs.cangjie-lang.cn/docs/1.0.0/'"),true)
-            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].contains("negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler"),true)
-            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].contains("wrong diagnostic 中文😀"),true)
-            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].contains("undefined name 中文😀"),true)
+            @Expect(extractor.specs.size,5)
+            @Expect(extractor.specs[4].args.contains("gpt-5.6-sol"), true)
+            @Expect(extractor.specs[4].args.contains("read-only"), true)
+            @Expect(extractor.specs[4].args.contains("--ephemeral"), true)
+            @Expect(extractor.specs[4].args.contains("-C"), true)
+            @Expect(extractor.specs[4].args.contains("--output-schema"), true)
+            @Expect(extractor.specs[4].args.contains("--output-last-message"), true)
+            @Expect(extractor.specs[4].args.contains("--cwd"), false)
+            @Expect(extractor.specs[4].args.contains("--full-auto"), false)
+            @Expect(extractor.specs[4].args[extractor.specs[4].args.size-1].contains("Set citation to exactly 'https://docs.cangjie-lang.cn/docs/1.0.0/'"),true)
+            @Expect(extractor.specs[4].args[extractor.specs[4].args.size-1].contains("negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler"),true)
+            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].contains("Required public failure anchors and prerequisites: string"),true)
+            @Expect(extractor.specs[4].args[extractor.specs[4].args.size-1].contains("wrong diagnostic 中文😀"),true)
+            @Expect(extractor.specs[4].args[extractor.specs[4].args.size-1].contains("undefined name 中文😀"),true)
             @Expect(exists(Path("${root}/exports/r1/observations.tsv")), true)
             @Expect(exists(Path("${root}/exports/r1/atom-tests.jsonl")), true)
             @Expect(exists(Path("${root}/exports/r1/candidate-knowledge.tsv")), true)

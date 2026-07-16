@@ -41,6 +41,12 @@ public class TeacherAtomExecutionResult {
     public var ok=false;public var diagnostic="atom_test_failed";public var evidenceJson="";public var feedback="";public init(){}
 }
 
+public class TeacherAuthorityRelevanceResult {
+    public var ok=false;public var diagnostic="authority_relevance_failed";public var feedback=""
+    public let anchors=ArrayList<String>()
+    public init(){}
+}
+
 public func teacherRunCompleteForCandidate(run: TeacherRunManifest, expectedRunId: String): Bool {
     run.runId == expectedRunId && run.status == "complete" && run.attempt >= 1 && run.exitCode == 0
 }
@@ -96,6 +102,9 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
                 failureStage = "candidate_extractor_failed"
                 let extraction=extractTeacherAtom(options,row,run,solutionRoot,atomFeedback,extractorExecutor)
                 if(extraction[1]!="ok"){result.diagnostic=extraction[1];return result};let currentSpec=extraction[0]
+                let relevance=validateTeacherAuthorityRelevance(row.compilerOutput,row.missingKnowledge,currentSpec.explanation,currentSpec.example,
+                    currentSpec.positiveSource,currentSpec.negativeSource,currentSpec.boundarySource)
+                if(!relevance.ok){atomFeedback=relevance.feedback;continue}
                 let observation=deriveKnowledgeObservation(caseValue,currentSpec.family,currentSpec.concept,row.targetVersion,currentSpec.explanation,currentSpec.citation,currentSpec.sourceClass,row.evidence+currentSpec.transcriptHash)
                 if(!validateObservationNoSolutionLeak(observation)){result.diagnostic="observation_leakage";return result}
                 let normalized=normalizeObservation(observation);let currentIdentity=canonicalKnowledgeIdentity(normalized)
@@ -161,6 +170,91 @@ private func candidateStableDiagnostic(value: String): Bool {
         "manifest_checksum_mismatch", "solution_hash_missing", "unsupported_manifest_schema"].contains(value)
 }
 
+public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowledge:String,explanation:String,example:String,
+    positiveSource:String,negativeSource:String,boundarySource:String):TeacherAuthorityRelevanceResult {
+    let out=TeacherAuthorityRelevanceResult()
+    // Extract only allow-listed quoted tokens before line sanitization: a pipe-flattened
+    // compiler line may also contain "return code", which causes the whole line to be redacted.
+    let quoted=teacherAuthorityQuotedAnchors(compilerOutput)
+    let strong=ArrayList<String>()
+    for(anchor in quoted){if(teacherAuthorityStrongAnchor(anchor)&&!strong.contains(anchor.toAsciiLower())){strong.add(anchor.toAsciiLower())}}
+    let primary=ArrayList<String>();for(anchor in strong){primary.add(anchor)}
+    // In Cangjie 1.0, the numeric parse interface is provided by std.convert;
+    // mentioning the method without its required import is not actionable knowledge.
+    if(strong.contains("parse")&&!strong.contains("std.convert")){strong.add("std.convert")}
+    let required=if(strong.isEmpty()){teacherAuthorityGapAnchors(missingKnowledge)}else{strong}
+    for(anchor in required){out.anchors.add(anchor)}
+    if(required.isEmpty()){out.diagnostic="authority_anchor_missing";out.feedback="Authority relevance failed: no safe public failure anchor was available; return knowledge that directly explains the canonical gap.";return out}
+    let narrative=(explanation+"\n"+example).toAsciiLower()
+    let positive=positiveSource.toAsciiLower();let negative=negativeSource.toAsciiLower();let boundary=boundarySource.toAsciiLower()
+    let sources=(positive+"\n"+negative+"\n"+boundary)
+    let minimum=if(required.size>1){2}else{1}
+    var narrativeHits:Int64=0;var sourceHits:Int64=0
+    for(anchor in required){if(teacherAuthorityAnchorPresent(narrative,anchor)){narrativeHits+=1};if(teacherAuthorityAnchorPresent(sources,anchor)){sourceHits+=1}}
+    let eachSource=teacherAuthorityAnyAnchor(positive,required)&&teacherAuthorityAnyAnchor(negative,required)&&teacherAuthorityAnyAnchor(boundary,required)
+    let strongCoverage=strong.isEmpty()||teacherAuthorityAllAnchors(narrative,strong)&&teacherAuthorityAllSourceAnchors(positiveSource,strong)&&
+        teacherAuthorityAllSourceAnchors(boundarySource,strong)&&teacherAuthorityAllSourceAnchors(negativeSource,primary)
+    if(narrativeHits>=minimum&&sourceHits>=minimum&&eachSource&&strongCoverage){out.ok=true;out.diagnostic="ok";return out}
+    var names="";for(i in 0..required.size){if(i>0){names+=","};names+=required[i]}
+    out.feedback=teacherAuthorityBoundedFeedback("Authority relevance failed. Required public failure anchors and prerequisites: ${names}. The explanation and example, plus positive and boundary sources, must demonstrate every listed item. The negative source must demonstrate the primary public failure anchor but may intentionally omit a prerequisite to prove the failure. Do not satisfy this check with comments, substitute a generic type fact, or include private paths, secrets, solutions, hidden tests, or references.")
+    out
+}
+
+private func teacherAuthorityQuotedAnchors(value:String):ArrayList<String>{
+    let out=ArrayList<String>();let runes=value.toRuneArray();var open:Int64=-1
+    for(i in 0..runes.size){if(runes[i]==r'\''){if(open<0){open=i+1}else{let raw=String(runes[open..i]).trimAscii();if(teacherAuthorityAnchorAllowed(raw)&&!out.contains(raw)){out.add(raw)};open=-1}}}
+    out
+}
+
+private func teacherAuthorityAnchorAllowed(value:String):Bool{
+    let runes=value.toRuneArray();if(runes.isEmpty()||runes.size>64||value.contains("/")||value.contains("\\")||value.toAsciiLower().contains("cangjie_humaneval")){return false}
+    var meaningful=false
+    for(c in runes){let ok=(c>=r'a'&&c<=r'z')||(c>=r'A'&&c<=r'Z')||(c>=r'0'&&c<=r'9')||c==r'_'||c==r'.'||c==r'|'||c==r'&'||c==r'='||c==r'!'||c==r'<'||c==r'>'||c==r'+'||c==r'-'||c==r'*'||c==r'%';if(!ok){return false};if((c>=r'a'&&c<=r'z')||(c>=r'A'&&c<=r'Z')||c==r'|'||c==r'&'||c==r'='){meaningful=true}}
+    meaningful
+}
+
+private func teacherAuthorityStrongAnchor(value:String):Bool{
+    let lower=value.toAsciiLower()
+    if(["float16","float32","float64","int8","int16","int32","int64","uint8","uint16","uint32","uint64","rune","string","arraylist","hashmap","bool","true","false","if","type","expected","found"].contains(lower)){return false}
+    true
+}
+
+private func teacherAuthorityGapAnchors(gap:String):ArrayList<String>{
+    let out=ArrayList<String>()
+    for(part in gap.toAsciiLower().split("-")){let value=part.trimAscii();if(value!=""&&value!="g"&&!out.contains(value)){out.add(value)};if(out.size==3){break}}
+    out
+}
+
+private func teacherAuthorityAnchorPresent(text:String,anchor:String):Bool{
+    if(anchor=="bytes"){return text.contains("bytes")||text.contains("byte")||text.contains("uint8")}
+    if(anchor=="index"){return text.contains("index")||text.contains("[")}
+    text.contains(anchor)
+}
+
+private func teacherAuthorityAnyAnchor(text:String,anchors:ArrayList<String>):Bool{for(anchor in anchors){if(teacherAuthorityAnchorPresent(text,anchor)){return true}};false}
+private func teacherAuthorityAllAnchors(text:String,anchors:ArrayList<String>):Bool{for(anchor in anchors){if(!teacherAuthorityAnchorPresent(text,anchor)){return false}};true}
+private func teacherAuthorityAllSourceAnchors(source:String,anchors:ArrayList<String>):Bool{
+    let code=teacherAuthorityCodeOnly(source).toAsciiLower()
+    for(anchor in anchors){
+        if(anchor=="std.convert"){var imported=false;for(line in code.split("\n")){if(line.trimAscii().startsWith("import std.convert")){imported=true;break}};if(!imported){return false}}
+        else if(anchor=="parse"){if(!code.contains(".parse(")){return false}}
+        else if(!teacherAuthorityAnchorPresent(code,anchor)){return false}
+    };true
+}
+private func teacherAuthorityCodeOnly(source:String):String{
+    let out=ArrayList<Rune>();let runes=source.toRuneArray();var quoted=false;var escaped=false;var i:Int64=0
+    while(i<runes.size){let c=runes[i]
+        if(quoted){if(escaped){escaped=false}else if(c==r'\\'){escaped=true}else if(c==r'"'){quoted=false};i+=1;continue}
+        if(c==r'"'){quoted=true;i+=1;continue}
+        if(c==r'/'&&i+1<runes.size&&runes[i+1]==r'/'){while(i<runes.size&&runes[i]!=r'\n'){i+=1};continue}
+        out.add(c);i+=1
+    };String(out.toArray())
+}
+
+private func teacherAuthorityBoundedFeedback(value:String):String{
+    let sanitized=teacherSanitizeEvidence(value);let runes=sanitized.toRuneArray();if(runes.size<=800){sanitized}else{String(runes[..800])+"..."}
+}
+
 private func parseTeacherAuthorityGapJsonl(text: String): (Array<TeacherGapRow>, String) {
     let rows = ArrayList<TeacherGapRow>(); let ids = HashSet<String>()
     for (line in text.split("\n")) {
@@ -189,7 +283,7 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
     if(options.model!="gpt-5.6-sol"){return (emptyTeacherAtomSpec(),"extractor_model_identity_invalid")}
     let solutionHash=teacherDirectoryHash(solutionRoot)
     let allowedEvidence=teacherSanitizeEvidence(row.evidence+"\n"+row.compilerOutput)
-    let repair=if(atomFeedback==""){""}else{"\nA previous atom test failed. Correct the proposed knowledge test sources or expected diagnostic using this sanitized compiler evidence, then return a complete replacement object:\n${atomFeedback}"}
+    let repair=if(atomFeedback==""){""}else{"\nA previous authority relevance or atom test failed. Correct the proposed knowledge explanation, example, test sources, or expected diagnostic using this sanitized compiler evidence, then return a complete replacement object:\n${atomFeedback}"}
     let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}${repair}"
     let extractorRoot="${options.root}/runs/${options.runId}/extractor-workspaces/${row.caseId}"
     try { if(!exists(Path(extractorRoot))){Directory.create(Path(extractorRoot),recursive:true)} } catch(_:Exception){return(emptyTeacherAtomSpec(),"extractor_workspace_failed")}
