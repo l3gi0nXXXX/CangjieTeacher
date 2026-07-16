@@ -56,6 +56,7 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
     extractorExecutor!:TeacherCommandExecutor=NativeTeacherCommandExecutor(),
     atomExecutor!:TeacherCommandExecutor=NativeTeacherCommandExecutor()): TeacherCandidateBuildResult {
     let result = TeacherCandidateBuildResult()
+    var failureStage = "candidate_input_validation_failed"
     try {
         if (options.root == "" || options.manifest == "" || options.checksum == "" || options.authorityGap == "" || options.runId == "" || options.outputRoot == "") {
             result.diagnostic = "missing_required_cli_option"; return result
@@ -64,15 +65,18 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
         if (!validateTeacherPathBoundary(options.root, options.outputRoot) || options.outputRoot.contains("..")) {
             result.diagnostic = "output_path_forbidden"; return result
         }
+        failureStage = "candidate_manifest_load_failed"
         let manifest = loadTeacherDatasetManifestFile(options.manifest, options.checksum)
         let cases = HashMap<String, TeacherCaseManifest>()
         for (item in manifest.cases) { cases.add(item.caseId, item) }
+        failureStage = "candidate_completed_run_load_failed"
         let completed = loadCompletedTeacherRuns("${options.root}/runs/${options.runId}/completed.manifest")
         let runs = HashMap<String, TeacherRunManifest>()
         for (run in completed) {
             if (runs.contains(run.caseId)) { result.diagnostic = "duplicate_complete_run"; return result }
             if (teacherRunCompleteForCandidate(run, options.runId)) { runs.add(run.caseId, run) }
         }
+        failureStage = "candidate_authority_gap_load_failed"
         let parsed = parseTeacherAuthorityGapJsonl(teacherReadUtf8File(options.authorityGap))
         if (parsed[1] != "ok") { result.diagnostic = parsed[1]; return result }
         let rows = parsed[0]
@@ -89,6 +93,7 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
             let protected = teacherPrivateArtifacts(solutionRoot)
             var atomFeedback="";var acceptedSpec:?TeacherAtomSpec=None;var acceptedObservation:?TeacherObservation=None;var identity="";var bundle=""
             while(true){
+                failureStage = "candidate_extractor_failed"
                 let extraction=extractTeacherAtom(options,row,run,solutionRoot,atomFeedback,extractorExecutor)
                 if(extraction[1]!="ok"){result.diagnostic=extraction[1];return result};let currentSpec=extraction[0]
                 let observation=deriveKnowledgeObservation(caseValue,currentSpec.family,currentSpec.concept,row.targetVersion,currentSpec.explanation,currentSpec.citation,currentSpec.sourceClass,row.evidence+currentSpec.transcriptHash)
@@ -96,31 +101,42 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
                 let normalized=normalizeObservation(observation);let currentIdentity=canonicalKnowledgeIdentity(normalized)
                 match(identities.get(currentIdentity)){case Some(existing)=>if(mergeKnowledgeObservations([existing,normalized]).reviewRequired){result.diagnostic="review_required";return result};case None=>()}
                 let currentBundle=teacherExecutableAtomBundle(currentIdentity,row,currentSpec)
+                failureStage = "candidate_atom_execution_failed"
                 let execution=executeTeacherAtomTestBundle(currentBundle,"${options.root}/runs/${options.runId}/atom-test-workspaces/${currentIdentity}",executor:atomExecutor,timeoutMillis:options.timeoutMillis)
                 if(!execution.ok){if(execution.diagnostic=="atom_test_timeout"){result.diagnostic=execution.diagnostic;return result};atomFeedback=execution.feedback;continue}
                 acceptedSpec=Some(currentSpec);acceptedObservation=Some(normalized);identity=currentIdentity;bundle=recordTeacherAtomTestExecution(currentBundle,execution.evidenceJson);break
             }
             let spec=match(acceptedSpec){case Some(v)=>v;case None=>throw IllegalStateException("accepted_atom_missing")}
             let normalized=match(acceptedObservation){case Some(v)=>v;case None=>throw IllegalStateException("accepted_observation_missing")}
+            failureStage = "candidate_identity_record_failed"
             identities.add(identity,normalized)
             let simpleTests = buildKnowledgeAtomTestBundle(spec.positiveSource, spec.negativeSource, spec.boundarySource)
+            failureStage = "candidate_render_failed"
             let candidate = renderCandidateKnowledgeExport(normalized, spec.example, simpleTests)
+            failureStage = "candidate_leakage_audit_failed"
             if (!auditCandidateAgainstSolutions(candidate, protected).passed || !auditCaseSpecificity(candidate, [caseValue.signature]).passed) {
                 result.diagnostic = "candidate_leakage"; return result
             }
+            failureStage = "candidate_export_render_failed"
             let candidateText = renderTeacherCandidateExport(candidate)
             if (candidateForbidden(candidateText + bundle)) { result.diagnostic = "candidate_contamination"; return result }
+            failureStage = "candidate_ckb_render_failed"
             let ckbLine = renderTeacherCkbGap(row, options.runId, bundle, spec.transcriptHash)
             if (observations != "") { observations += "\n"; atoms += "\n"; tests += "\n"; candidates += "\n"; ckb += "\n" }
             observations += renderTeacherObservation(normalized); atoms += "${identity}\t${teacherEscapeField(spec.explanation)}"
             tests += bundle; candidates += candidateText; ckb += ckbLine; result.accepted += 1
         }
+        failureStage = "candidate_publish_prepare_failed"
         let base = options.outputRoot.trimEnd('/')
         if (exists(Path(base))) { result.diagnostic = "output_already_exists"; return result }
-        Directory.create(Path(base).parent, recursive: true)
+        // A shared private Teacher root legitimately contains exports from
+        // other cases. Creating an already existing parent raises in the
+        // Cangjie filesystem API, so only create the directory when absent.
+        if (!exists(Path(base).parent)) { Directory.create(Path(base).parent, recursive: true) }
         let canonicalRoot=canonicalize(Path(options.root)).toString();let canonicalParent=canonicalize(Path(base).parent).toString()
         if (!canonicalParent.startsWith(canonicalRoot+"/")) { result.diagnostic="output_path_forbidden";return result }
         let stage=base+".tmp-"+teacherStableHash(ckb)
+        failureStage = "candidate_atomic_publish_failed"
         try {
             _ = teacherAtomicWrite("${stage}/observations.tsv", observations + "\n")
             _ = teacherAtomicWrite("${stage}/atoms.tsv", atoms + "\n")
@@ -130,8 +146,19 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
             rename(Path(stage),to:Path(base),overwrite:false)
         } catch (e:Exception) { try{remove(Path(stage),recursive:true)}catch(_:Exception){};throw e }
         result.ckbJsonl = ckb + "\n"; result.ok = true; result.diagnostic = "ok"
-    } catch (e: IllegalArgumentException) { result.diagnostic = e.message } catch (_: Exception) { result.diagnostic = "candidate_build_failed" }
+    } catch (e: IllegalArgumentException) {
+        // Only pre-existing stable contract codes are safe to expose. Runtime
+        // exception messages may contain private paths or candidate payloads.
+        result.diagnostic = if (candidateStableDiagnostic(e.message)) { e.message } else { failureStage }
+    } catch (_: Exception) { result.diagnostic = failureStage }
     result
+}
+
+private func candidateStableDiagnostic(value: String): Bool {
+    ["candidate_not_exportable", "empty_manifest", "file_not_found", "invalid_manifest",
+        "invalid_response_encoding", "invalid_teacher_candidate_export", "malformed_teacher_candidate_export",
+        "malformed_teacher_manifest_json", "malformed_teacher_observation", "malformed_teacher_run_manifest",
+        "manifest_checksum_mismatch", "solution_hash_missing", "unsupported_manifest_schema"].contains(value)
 }
 
 private func parseTeacherAuthorityGapJsonl(text: String): (Array<TeacherGapRow>, String) {

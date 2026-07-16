@@ -33,6 +33,11 @@ private class AtomRepairExecutor <: TeacherCommandExecutor {
         TeacherProcessResult(0,"")
     }
 }
+private class ThrowingCandidateExecutor <: TeacherCommandExecutor {
+    public func execute(_: TeacherCommandSpec): TeacherProcessResult {
+        throw IllegalStateException("/private/教师😀 token=secret very-long-private-payload-must-not-escape-000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+    }
+}
 
 @Test
 public class TeacherRuntimeTest {
@@ -452,6 +457,19 @@ public class TeacherP0P3Test {
             @Expect(ckb.contains("\"knowledgeAtomCandidate\":true"), true)
             @Expect(ckb.contains("\"candidateHash\":\"sha256:"), true)
             @Expect(teacherReadUtf8File("${root}/exports/r1/candidate-knowledge.tsv").toAsciiLower().contains("cj-humaneval-"), false)
+            // Multiple cases share one private exports parent. Publishing a
+            // second candidate must not try to recreate that existing parent.
+            options.outputRoot="${root}/exports/r2"
+            let second = buildTeacherCandidates(options,
+                extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(0,extractorJson)]),
+                atomExecutor:AtomRepairExecutor())
+            @Expect(second.ok,true);@Expect(second.accepted,1)
+            @Expect(teacherReadUtf8File("${root}/exports/r2/candidate-knowledge/ckb-benchmark-gap.jsonl").contains("中文😀"),true)
+            options.outputRoot="${root}/exports/throwing"
+            let throwing=buildTeacherCandidates(options,extractorExecutor:ThrowingCandidateExecutor())
+            @Expect(throwing.diagnostic,"candidate_extractor_failed")
+            @Expect(throwing.diagnostic.contains("private"),false)
+            @Expect(throwing.diagnostic.contains("token"),false)
             options.outputRoot="${root}/ckb-data/production"
             @Expect(buildTeacherCandidates(options).diagnostic, "output_path_forbidden")
             options.outputRoot="${root}/exports/../escape"
