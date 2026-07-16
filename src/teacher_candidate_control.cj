@@ -211,6 +211,10 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
     }else if(gap.contains("rune-numeric-conversion")){
         strong.clear();primary.clear()
         strong.add("rune");strong.add("uint32");primary.add("rune")
+    }else if(gap=="g-rune-unicode-case"){
+        strong.clear();primary.clear()
+        for(anchor in ["std.unicode","rune","touppercase","tolowercase"]){strong.add(anchor)}
+        primary.add("toupper");primary.add("tolower")
     }else if(combinedStringByteRune){
         strong.clear();primary.clear()
         strong.add("uint8");strong.add("rune");strong.add("torunearray")
@@ -286,6 +290,15 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
             out.feedback=teacherAuthorityRuneNumericFeedback()
             return out
         }
+        if(gap=="g-rune-unicode-case"&&
+            (!teacherAuthorityRuneUnicodeCaseNarrative(narrative)||
+             !teacherAuthorityRuneUnicodeCasePositive(positiveSource)||
+             !teacherAuthorityRuneUnicodeCaseBoundary(boundarySource)||
+             !teacherAuthorityRuneUnicodeCaseNegative(negativeSource)||
+             positiveDependencyProfile=="stdx-magic"||negativeDependencyProfile=="stdx-magic"||boundaryDependencyProfile=="stdx-magic")){
+            out.feedback=teacherAuthorityRuneUnicodeCaseFeedback()
+            return out
+        }
         if(combinedStringByteRune&&
             (!teacherAuthorityCombinedStringByteRunePositive(narrative,positiveSource)||
              !teacherAuthorityCombinedStringByteRunePositive(narrative,boundarySource)||
@@ -300,6 +313,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         out.feedback=teacherAuthorityCombinedStringByteRuneFeedback()
     }else if(gap=="g-rune-numeric-conversion"){
         out.feedback=teacherAuthorityRuneNumericFeedback()
+    }else if(gap=="g-rune-unicode-case"){
+        out.feedback=teacherAuthorityRuneUnicodeCaseFeedback()
     }else if(gap=="g-string-rune-contains"){
         out.feedback=teacherAuthorityStringRuneContainsFeedback()
     }else if(gap.contains("float64-abs")){
@@ -463,6 +478,60 @@ private func teacherAuthorityRuneNumericTargets():Array<String>{
 
 private func teacherAuthorityRuneNumericFeedback():String{
     teacherAuthorityBoundedFeedback("Rune numeric conversion is two-step: first obtain the Unicode scalar with UInt32(rune), then apply the target numeric conversion, for example Float64(UInt32(rune)) or Int64(UInt32(rune)). Positive and boundary sources must declare rune: Rune and execute that nested conversion for ASCII, zero, Chinese, or emoji values. The negative source must declare rune: Rune and use a direct target conversion such as Float64(rune) or Int64(rune) to reproduce the numeric-conversion diagnostic. Comments and string labels do not count as evidence.")
+}
+
+private func teacherAuthorityRuneUnicodeCaseNarrative(narrative:String):Bool{
+    narrative.contains("rune")&&narrative.contains("std.unicode")&&
+        narrative.contains("rune.touppercase()")&&narrative.contains("rune.tolowercase()")&&
+        narrative.contains("rune.toupper()")&&narrative.contains("rune.tolower()")&&
+        (narrative.contains("not declared")||narrative.contains("undeclared"))
+}
+
+private func teacherAuthorityRuneUnicodeCasePositive(source:String):Bool{
+    let raw=teacherAuthorityRuneUnicodeCaseCodeOnly(source).toAsciiLower();let code=raw.replace(" ","").replace("\t","").replace("\n","").replace("\r","")
+    if(!teacherAuthorityHasImport(raw,"std.unicode")){return false}
+    var upper=false;var lower=false
+    for(rune in teacherAuthorityNamesBeforeType(raw,"rune")){
+        if(code.contains("${rune}.touppercase()")){upper=true}
+        if(code.contains("${rune}.tolowercase()")){lower=true}
+    }
+    upper&&lower&&!code.contains(".toupper()")&&!code.contains(".tolower()")
+}
+
+private func teacherAuthorityRuneUnicodeCaseNegative(source:String):Bool{
+    let raw=teacherAuthorityRuneUnicodeCaseCodeOnly(source).toAsciiLower();let code=raw.replace(" ","").replace("\t","").replace("\n","").replace("\r","")
+    if(!teacherAuthorityHasImport(raw,"std.unicode")){return false}
+    var upper=false;var lower=false
+    for(rune in teacherAuthorityNamesBeforeType(raw,"rune")){
+        if(code.contains("${rune}.toupper()")){upper=true}
+        if(code.contains("${rune}.tolower()")){lower=true}
+    }
+    upper&&lower&&!code.contains(".touppercase()")&&!code.contains(".tolowercase()")
+}
+
+private func teacherAuthorityRuneUnicodeCaseBoundary(source:String):Bool{
+    if(!teacherAuthorityRuneUnicodeCasePositive(source)){return false}
+    let runes=teacherAuthorityRuneUnicodeCaseCodeOnly(source).toRuneArray()
+    if(runes.size<4){return false}
+    for(i in 0..runes.size-3){
+        if(runes[i]==r'r'&&runes[i+1]==r'\''&&runes[i+2]>r'\u{007f}'&&runes[i+3]==r'\''){return true}
+    }
+    false
+}
+
+private func teacherAuthorityRuneUnicodeCaseCodeOnly(source:String):String{
+    let code=teacherAuthorityCodeOnly(source);let runes=code.toRuneArray();let out=ArrayList<Rune>()
+    var block=false;var i:Int64=0
+    while(i<runes.size){
+        if(!block&&runes[i]==r'/'&&i+1<runes.size&&runes[i+1]==r'*'){block=true;i+=2;continue}
+        if(block&&runes[i]==r'*'&&i+1<runes.size&&runes[i+1]==r'/'){block=false;i+=2;continue}
+        if(!block){out.add(runes[i])};i+=1
+    }
+    String(out.toArray())
+}
+
+private func teacherAuthorityRuneUnicodeCaseFeedback():String{
+    teacherAuthorityBoundedFeedback("Rune Unicode case conversion is provided by the Cangjie 1.0 std.unicode Rune extensions. The explanation/example must say to import std.unicode.*, call Rune.toUpperCase() and Rune.toLowerCase(), and state that Rune.toUpper() and Rune.toLower() are undeclared. Positive and boundary sources must import std.unicode.*, explicitly declare Rune receivers, and call both correct methods; use Chinese or emoji in the boundary source. The negative source must keep the import, explicitly declare Rune receivers, and call both incorrect methods to reproduce the two undeclared-identifier diagnostics. This standard-library API needs no stdx-magic dependency. Comments and string labels do not count as evidence.")
 }
 
 private func teacherAuthorityCombinedStringByteRunePositive(narrative:String,source:String):Bool{
