@@ -144,6 +144,7 @@ public class TeacherClaudeClassifierTest {
             @Expect(prompt.contains("import std.unicode.* and Rune.toLowerCase()"),true)
             @Expect(prompt.contains("Rune.toLowerCase() returns a Rune"),true)
             @Expect(prompt.contains("knowledgeText must contain the exact clause: Unicode casing requires import std.unicode.*"),true)
+            @Expect(prompt.contains("knowledgeText must contain the exact invalid API clause: String.toLower() is unavailable and toLowerAscii is not a Cangjie API."),true)
             remove(Path("${r}/workspace/response.json"))
 
             for(text in [

@@ -141,6 +141,7 @@ public class TeacherP5CodexClassifierTest {
         @Expect(prompt.contains("import std.unicode.* and Rune.toLowerCase()"),true)
         @Expect(prompt.contains("Rune.toLowerCase() returns a Rune"),true)
         @Expect(prompt.contains("knowledgeText must contain the exact clause: Unicode casing requires import std.unicode.*"),true)
+        @Expect(prompt.contains("knowledgeText must contain the exact invalid API clause: String.toLower() is unavailable and toLowerAscii is not a Cangjie API."),true)
 
         for(mode in ["string_case_returns_rune","string_case_produces_rune","string_case_result_is_rune","string_case_v3_importing",
             "string_case_v4_inline_import"]){
