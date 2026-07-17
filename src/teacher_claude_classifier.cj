@@ -210,19 +210,20 @@ private func claudeClassifierStringCaseFailure(source:String,compiler:String):Bo
 }
 
 private func claudeClassifierStringCaseFactsValid(knowledge:String):Bool{
-    if(!claudeClassifierToLowerAsciiClaimValid(knowledge)){return false}
-    let iterationUInt8=(knowledge.contains("string iteration yields uint8")||
-        knowledge.contains("iterating a string yields uint8")||knowledge.contains("string iteration produces uint8"))
-    let iterationRune=knowledge.contains("string iteration yields rune")||
-        knowledge.contains("iterating a string yields rune")||knowledge.contains("string iteration produces rune")
-    let stringAscii=knowledge.contains("string.toasciilower()")&&knowledge.contains("ascii-only")&&
-        (knowledge.contains("returns a string")||knowledge.contains(": string"))
-    let runeAscii=knowledge.contains("rune.toasciilowercase()")&&knowledge.contains("ascii-only")&&
-        (knowledge.contains("returns a rune")||knowledge.contains(": rune"))
-    let unicode=knowledge.contains("unicode")&&claudeClassifierUnicodeImportRequired(knowledge)&&
-        claudeClassifierRuneLowerResultValid(knowledge)
-    let genericUnavailable=knowledge.contains("string.tolower()")&&
-        (knowledge.contains("unavailable")||knowledge.contains("does not provide")||knowledge.contains("not a member")||knowledge.contains("does not exist"))
+    let value=knowledge.replace("`", "")
+    if(!claudeClassifierToLowerAsciiClaimValid(value)){return false}
+    let iterationUInt8=(value.contains("string iteration yields uint8")||
+        value.contains("iterating a string yields uint8")||value.contains("string iteration produces uint8"))
+    let iterationRune=value.contains("string iteration yields rune")||
+        value.contains("iterating a string yields rune")||value.contains("string iteration produces rune")
+    let stringAscii=value.contains("string.toasciilower()")&&value.contains("ascii-only")&&
+        (value.contains("returns a string")||value.contains(": string"))
+    let runeAscii=value.contains("rune.toasciilowercase()")&&value.contains("ascii-only")&&
+        (value.contains("returns a rune")||value.contains(": rune"))
+    let unicode=value.contains("unicode")&&claudeClassifierUnicodeImportRequired(value)&&
+        claudeClassifierRuneLowerResultValid(value)
+    let genericUnavailable=value.contains("string.tolower()")&&
+        (value.contains("unavailable")||value.contains("does not provide")||value.contains("not a member")||value.contains("does not exist"))
     iterationUInt8&&!iterationRune&&stringAscii&&runeAscii&&unicode&&genericUnavailable
 }
 
