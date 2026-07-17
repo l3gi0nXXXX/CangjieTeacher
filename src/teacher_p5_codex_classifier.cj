@@ -83,9 +83,8 @@ public func executeTeacherP5CodexClassifierAdapter(args: Array<String>, executor
                 tooLargeDiagnostic: "classifier_output_too_large")
             let response = p5CodexSealResponse(raw)
             if (response[0] != "ok") { return failP5CodexClassifier(result, options, response[0]) }
-            if (!p5CodexResponseFactsValid(requestText, response[1])) {
-                return failP5CodexClassifier(result, options, "classifier_response_source_fact_unsupported")
-            }
+            let factDiagnostic=p5CodexResponseFactsDiagnostic(requestText,response[1])
+            if(factDiagnostic!="ok"){return failP5CodexClassifier(result,options,factDiagnostic)}
             try { _ = teacherAtomicWrite(options.output, response[1] + "\n") }
             catch (_: Exception) { return failP5CodexClassifier(result, options, "response_write_failed") }
             if (!removeP5CodexClassifierDiagnostic(options)) {
@@ -126,7 +125,9 @@ private func p5CodexClassifierDiagnosticAllowed(value: String): Bool {
         "classifier_process_failed", "classifier_output_too_large", "missing_or_duplicate_terminal_result",
         "response_contract_invalid", "response_contains_forbidden_data", "malformed_structured_output",
         "classifier_response_source_fact_unsupported", "response_write_failed", "diagnostic_reset_failed",
-        "classifier_failure_unknown"].contains(value)
+        "classifier_reserved_match_plain_missing", "classifier_reserved_match_raw_missing",
+        "classifier_reserved_match_rename_missing", "classifier_reserved_match_contradictory",
+        "classifier_reserved_match_comment_disguised", "classifier_failure_unknown"].contains(value)
 }
 
 private func p5CodexClassifierSharedDiagnostic(value: String): String {
@@ -250,38 +251,47 @@ private func p5CodexGroundingPrompt(request:String):String{
     }catch(_:Exception){""}
 }
 
-private func p5CodexResponseFactsValid(requestText:String,responseText:String):Bool{
+private func p5CodexResponseFactsDiagnostic(requestText:String,responseText:String):String{
     try{
         let request=JsonValue.fromStr(requestText).asObject();let response=JsonValue.fromStr(responseText).asObject()
-        if(p5CodexString(response,"category").toAsciiLower()!="knowledge_gap"){return true}
+        if(p5CodexString(response,"category").toAsciiLower()!="knowledge_gap"){return "ok"}
         let source=p5CodexString(request,"studentSourceExcerpt").toAsciiLower()
         let compiler=p5CodexString(request,"compilerTestSummary").toAsciiLower()
         let knowledge=p5CodexString(response,"knowledgeText").toAsciiLower()
-        if(p5CodexStringCaseFailure(source,compiler)){return p5CodexStringCaseFactsValid(knowledge)}
-        if(p5CodexReservedMatchFailure(source,compiler)){return p5CodexReservedMatchFactsValid(knowledge)}
-        true
-    }catch(_:Exception){false}
+        if(p5CodexStringCaseFailure(source,compiler)){
+            return if(p5CodexStringCaseFactsValid(knowledge)){"ok"}else{"classifier_response_source_fact_unsupported"}
+        }
+        if(p5CodexReservedMatchFailure(source,compiler)){return p5CodexReservedMatchFactsDiagnostic(knowledge)}
+        "ok"
+    }catch(_:Exception){"classifier_response_source_fact_unsupported"}
 }
 
 private func p5CodexReservedMatchFailure(source:String,compiler:String):Bool{
     source.contains("var match")&&compiler.contains("expected identifier")&&compiler.contains("found keyword 'match'")
 }
 
-private func p5CodexReservedMatchFactsValid(knowledge:String):Bool{
-    if(knowledge.contains("//")||knowledge.contains("/*")||knowledge.contains("*/")||
-        knowledge.contains("cannot be used as a local variable identifier")||
+private func p5CodexReservedMatchFactsDiagnostic(knowledge:String):String{
+    if(knowledge.contains("//")||knowledge.contains("/*")||knowledge.contains("*/")){
+        return "classifier_reserved_match_comment_disguised"
+    }
+    if(knowledge.contains("cannot be used as a local variable identifier")||
         knowledge.contains("cannot be used as a variable name or identifier")||
-        knowledge.contains("cannot be used as an identifier")){return false}
+        knowledge.contains("cannot be used as an identifier")){
+        return "classifier_reserved_match_contradictory"
+    }
     let plainScope=knowledge.contains("plain identifier")||knowledge.contains("ordinary identifier")||knowledge.contains("regular identifier")
     let plainInvalid=knowledge.contains("`match`")&&knowledge.contains("keyword")&&plainScope&&
         (knowledge.contains("invalid")||knowledge.contains("not valid")||knowledge.contains("cannot be used"))
+    if(!plainInvalid){return "classifier_reserved_match_plain_missing"}
     let rawLegal=(knowledge.contains("backtick form `match`")&&knowledge.contains("legal raw identifier"))||
         (knowledge.contains("raw identifier `match`")&&(knowledge.contains("is legal")||knowledge.contains("is valid")))||
         knowledge.contains("`match` is a legal raw identifier")||knowledge.contains("`match` is a valid raw identifier")||
         (knowledge.contains("as a raw identifier")&&knowledge.contains("`match` is valid"))
+    if(!rawLegal){return "classifier_reserved_match_raw_missing"}
     let rename=knowledge.contains("rename")||knowledge.contains("renaming")||knowledge.contains("different variable name")||
         knowledge.contains("non-keyword name")
-    plainInvalid&&rawLegal&&rename
+    if(!rename){return "classifier_reserved_match_rename_missing"}
+    "ok"
 }
 
 private func p5CodexStringCaseFailure(source:String,compiler:String):Bool{

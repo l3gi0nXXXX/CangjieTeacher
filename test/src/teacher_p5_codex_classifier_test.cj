@@ -45,6 +45,7 @@ private class P5CodexFakeExecutor <: TeacherCommandExecutor {
             case "reserved_match_v1_b" => "In Cangjie, `match` is a reserved keyword and cannot be used as a variable name or identifier; choose another name."
             case "reserved_match_no_raw" => "The reserved keyword `match` is invalid as a plain identifier; rename the variable to a non-keyword name."
             case "reserved_match_no_rename" => "The reserved keyword `match` is invalid as a plain identifier, while the backtick form `match` is a legal raw identifier."
+            case "reserved_match_no_plain" => "The backtick form `match` is a legal raw identifier; alternatively, rename the variable to a non-keyword name."
             case "reserved_match_comment_disguise" => "The reserved keyword `match` is invalid as a plain identifier. // The backtick form `match` is a legal raw identifier; rename the variable."
             case "reserved_match_word_pile" => "match keyword plain identifier raw identifier legal rename"
             case _ => "Use Rune boundaries for 中文🙂 text."
@@ -167,12 +168,20 @@ public class TeacherP5CodexClassifierTest {
         let equivalent=p5CodexFixture("reserved-match-valid-equivalent",requestBody:p5ReservedMatchRequest())
         @Expect(executeTeacherP5CodexClassifierAdapter(equivalent.args,executor:P5CodexFakeExecutor(mode:"reserved_match_valid_equivalent"),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
 
-        for(mode in ["reserved_match_v1_a","reserved_match_v1_b","reserved_match_no_raw","reserved_match_no_rename",
-            "reserved_match_comment_disguise","reserved_match_word_pile"]){
+        for((mode,diagnostic) in [("reserved_match_v1_a","classifier_reserved_match_contradictory"),
+            ("reserved_match_v1_b","classifier_reserved_match_contradictory"),
+            ("reserved_match_no_plain","classifier_reserved_match_plain_missing"),
+            ("reserved_match_no_raw","classifier_reserved_match_raw_missing"),
+            ("reserved_match_no_rename","classifier_reserved_match_rename_missing"),
+            ("reserved_match_comment_disguise","classifier_reserved_match_comment_disguised"),
+            ("reserved_match_word_pile","classifier_reserved_match_plain_missing")]){
             let fixture=p5CodexFixture("reject-${mode}",requestBody:p5ReservedMatchRequest())
             let rejected=executeTeacherP5CodexClassifierAdapter(fixture.args,executor:P5CodexFakeExecutor(mode:mode),codexExecutable:"/fake/codex",timeoutMillis:1000)
-            @Expect(rejected.diagnostic,"classifier_response_source_fact_unsupported")
+            @Expect(rejected.diagnostic,diagnostic)
             @Expect(exists(Path(fixture.output)),false)
+            let sidecar=teacherReadUtf8File("${fixture.workspace}/classifier-diagnostic.json")
+            @Expect(sidecar,"{\"schemaVersion\":\"cangjie-teacher-classifier-diagnostic-v1\",\"diagnostic\":\"${diagnostic}\"}\n")
+            @Expect(sidecar.contains("match"),true);@Expect(sidecar.contains("/Users"),false);@Expect(sidecar.toAsciiLower().contains("token"),false)
         }
 
         let unrelated=p5CodexFixture("reserved-match-unrelated")

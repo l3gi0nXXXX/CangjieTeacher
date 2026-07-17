@@ -195,17 +195,21 @@ public class TeacherClaudeClassifierTest {
             @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(equivalent)))).diagnostic,"ok")
             remove(Path("${r}/workspace/response.json"))
 
-            for(text in [
-                "Cangjie reserves `match` for match expressions, so it cannot be used as a local variable identifier.",
-                "In Cangjie, `match` is a reserved keyword and cannot be used as a variable name or identifier; choose another name.",
-                "The reserved keyword `match` is invalid as a plain identifier; rename the variable to a non-keyword name.",
-                "The reserved keyword `match` is invalid as a plain identifier, while the backtick form `match` is a legal raw identifier.",
-                "The reserved keyword `match` is invalid as a plain identifier. // The backtick form `match` is a legal raw identifier; rename it.",
-                "match keyword plain identifier raw identifier legal rename"
+            for((text,diagnostic) in [
+                ("Cangjie reserves `match` for match expressions, so it cannot be used as a local variable identifier.","classifier_reserved_match_contradictory"),
+                ("In Cangjie, `match` is a reserved keyword and cannot be used as a variable name or identifier; choose another name.","classifier_reserved_match_contradictory"),
+                ("The backtick form `match` is a legal raw identifier; alternatively, rename it to a non-keyword name.","classifier_reserved_match_plain_missing"),
+                ("The reserved keyword `match` is invalid as a plain identifier; rename the variable to a non-keyword name.","classifier_reserved_match_raw_missing"),
+                ("The reserved keyword `match` is invalid as a plain identifier, while the backtick form `match` is a legal raw identifier.","classifier_reserved_match_rename_missing"),
+                ("The reserved keyword `match` is invalid as a plain identifier. // The backtick form `match` is a legal raw identifier; rename it.","classifier_reserved_match_comment_disguised"),
+                ("match keyword plain identifier raw identifier legal rename","classifier_reserved_match_plain_missing")
             ]){
                 let rejected=runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(text))))
-                @Expect(rejected.diagnostic,"classifier_response_source_fact_unsupported")
+                @Expect(rejected.diagnostic,diagnostic)
                 @Expect(exists(Path("${r}/workspace/response.json")),false)
+                let sidecar=teacherReadUtf8File("${r}/workspace/classifier-diagnostic.json")
+                @Expect(sidecar,"{\"schemaVersion\":\"cangjie-teacher-classifier-diagnostic-v1\",\"diagnostic\":\"${diagnostic}\"}\n")
+                @Expect(sidecar.contains("match"),true);@Expect(sidecar.contains("/Users"),false);@Expect(sidecar.toAsciiLower().contains("token"),false)
             }
 
             File.writeTo(Path("${r}/workspace/request.json"),request().toArray())

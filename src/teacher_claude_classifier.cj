@@ -79,7 +79,8 @@ public func runClaudeClassifierAdapter(args: Array<String>,
     if (cli.output.toArray().size > CLAUDE_CLASSIFIER_MAX_BYTES) { return failClaudeClassifier(result, options, "classifier_output_too_large") }
     let decoded = decodeClaudeClassifierStream(cli.output)
     if (decoded[1] != "ok") { return failClaudeClassifier(result, options, decoded[1]) }
-    if (!claudeClassifierResponseFactsValid(request, decoded[0])) { return failClaudeClassifier(result, options, "classifier_response_source_fact_unsupported") }
+    let factDiagnostic=claudeClassifierResponseFactsDiagnostic(request,decoded[0])
+    if(factDiagnostic!="ok"){return failClaudeClassifier(result,options,factDiagnostic)}
     try {
         _ = teacherAtomicWrite(options.output, decoded[0] + "\n")
         if (readClaudeClassifierUtf8(options.output) != decoded[0] + "\n") { return failClaudeClassifier(result, options, "response_write_failed") }
@@ -102,7 +103,10 @@ private func claudeClassifierDiagnosticAllowed(value:String):Bool{
     ["invalid_response_encoding","request_too_large","request_contract_invalid","classifier_timeout","classifier_process_failed",
         "classifier_output_too_large","malformed_stream_json","duplicate_init","classifier_unsuccessful_result","missing_init",
         "observed_model_mismatch","missing_or_duplicate_terminal_result","response_contract_invalid","response_contains_forbidden_data",
-        "malformed_structured_output","classifier_response_source_fact_unsupported","response_write_failed","diagnostic_reset_failed"].contains(value)
+        "malformed_structured_output","classifier_response_source_fact_unsupported","response_write_failed","diagnostic_reset_failed",
+        "classifier_reserved_match_plain_missing","classifier_reserved_match_raw_missing",
+        "classifier_reserved_match_rename_missing","classifier_reserved_match_contradictory",
+        "classifier_reserved_match_comment_disguised","classifier_failure_unknown"].contains(value)
 }
 
 private func parseClaudeClassifierOptions(args: Array<String>): (ClaudeClassifierOptions, String) {
@@ -157,52 +161,59 @@ private func claudeClassifierGroundingPrompt(request:String):String{
     }catch(_:Exception){""}
 }
 
-private func claudeClassifierResponseFactsValid(requestText:String,responseText:String):Bool{
+private func claudeClassifierResponseFactsDiagnostic(requestText:String,responseText:String):String{
     try{
         let request=JsonValue.fromStr(requestText).asObject();let response=JsonValue.fromStr(responseText).asObject()
-        if(classifierString(response,"category").toAsciiLower()!="knowledge_gap"){return true}
+        if(classifierString(response,"category").toAsciiLower()!="knowledge_gap"){return "ok"}
         let knowledge=classifierString(response,"knowledgeText").toAsciiLower()
         let source=classifierString(request,"studentSourceExcerpt").toAsciiLower()
         let compiler=classifierString(request,"compilerTestSummary").toAsciiLower()
         if(claudeClassifierStringCaseFailure(source,compiler)){
-            return claudeClassifierStringCaseFactsValid(knowledge)
+            return if(claudeClassifierStringCaseFactsValid(knowledge)){"ok"}else{"classifier_response_source_fact_unsupported"}
         }
         if(claudeClassifierReservedMatchFailure(source,compiler)){
-            return claudeClassifierReservedMatchFactsValid(knowledge)
+            return claudeClassifierReservedMatchFactsDiagnostic(knowledge)
         }
         if(source.contains(".abs(")&&compiler.contains("undeclared identifier 'abs'")){
             let receiverUnavailable=knowledge.contains("receiver")&&knowledge.contains(".abs(")&&
                 (knowledge.contains("unavailable")||knowledge.contains("does not provide")||knowledge.contains("no member"))
             let globalForm=knowledge.contains("global")&&knowledge.contains("abs(value)")
-            if(!receiverUnavailable||!globalForm||!claudeClassifierPackageTokens(knowledge).isEmpty()||claudeClassifierAssertsPrerequisite(knowledge)){return false}
+            if(!receiverUnavailable||!globalForm||!claudeClassifierPackageTokens(knowledge).isEmpty()||claudeClassifierAssertsPrerequisite(knowledge)){return "classifier_response_source_fact_unsupported"}
         }
-        if(!claudeClassifierAssertsPrerequisite(knowledge)){return true}
+        if(!claudeClassifierAssertsPrerequisite(knowledge)){return "ok"}
         let evidence=(classifierString(request,"failureObservation")+" "+compiler).toAsciiLower()
-        if(!claudeClassifierMissingPrerequisiteEvidence(evidence)){return false}
-        for(packageName in claudeClassifierPackageTokens(knowledge)){if(!evidence.contains(packageName)){return false}}
-        true
-    }catch(_:Exception){false}
+        if(!claudeClassifierMissingPrerequisiteEvidence(evidence)){return "classifier_response_source_fact_unsupported"}
+        for(packageName in claudeClassifierPackageTokens(knowledge)){if(!evidence.contains(packageName)){return "classifier_response_source_fact_unsupported"}}
+        "ok"
+    }catch(_:Exception){"classifier_response_source_fact_unsupported"}
 }
 
 private func claudeClassifierReservedMatchFailure(source:String,compiler:String):Bool{
     source.contains("var match")&&compiler.contains("expected identifier")&&compiler.contains("found keyword 'match'")
 }
 
-private func claudeClassifierReservedMatchFactsValid(knowledge:String):Bool{
-    if(knowledge.contains("//")||knowledge.contains("/*")||knowledge.contains("*/")||
-        knowledge.contains("cannot be used as a local variable identifier")||
+private func claudeClassifierReservedMatchFactsDiagnostic(knowledge:String):String{
+    if(knowledge.contains("//")||knowledge.contains("/*")||knowledge.contains("*/")){
+        return "classifier_reserved_match_comment_disguised"
+    }
+    if(knowledge.contains("cannot be used as a local variable identifier")||
         knowledge.contains("cannot be used as a variable name or identifier")||
-        knowledge.contains("cannot be used as an identifier")){return false}
+        knowledge.contains("cannot be used as an identifier")){
+        return "classifier_reserved_match_contradictory"
+    }
     let plainScope=knowledge.contains("plain identifier")||knowledge.contains("ordinary identifier")||knowledge.contains("regular identifier")
     let plainInvalid=knowledge.contains("`match`")&&knowledge.contains("keyword")&&plainScope&&
         (knowledge.contains("invalid")||knowledge.contains("not valid")||knowledge.contains("cannot be used"))
+    if(!plainInvalid){return "classifier_reserved_match_plain_missing"}
     let rawLegal=(knowledge.contains("backtick form `match`")&&knowledge.contains("legal raw identifier"))||
         (knowledge.contains("raw identifier `match`")&&(knowledge.contains("is legal")||knowledge.contains("is valid")))||
         knowledge.contains("`match` is a legal raw identifier")||knowledge.contains("`match` is a valid raw identifier")||
         (knowledge.contains("as a raw identifier")&&knowledge.contains("`match` is valid"))
+    if(!rawLegal){return "classifier_reserved_match_raw_missing"}
     let rename=knowledge.contains("rename")||knowledge.contains("renaming")||knowledge.contains("different variable name")||
         knowledge.contains("non-keyword name")
-    plainInvalid&&rawLegal&&rename
+    if(!rename){return "classifier_reserved_match_rename_missing"}
+    "ok"
 }
 
 private func claudeClassifierStringCaseFailure(source:String,compiler:String):Bool{
