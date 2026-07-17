@@ -140,6 +140,7 @@ public class TeacherP5CodexClassifierTest {
         @Expect(prompt.contains("String.toAsciiLower()"),true);@Expect(prompt.contains("Rune.toAsciiLowerCase()"),true)
         @Expect(prompt.contains("import std.unicode.* and Rune.toLowerCase()"),true)
         @Expect(prompt.contains("Rune.toLowerCase() returns a Rune"),true)
+        @Expect(prompt.contains("knowledgeText must contain the exact clause: Unicode casing requires import std.unicode.*"),true)
 
         for(mode in ["string_case_returns_rune","string_case_produces_rune","string_case_result_is_rune","string_case_v3_importing",
             "string_case_v4_inline_import"]){
