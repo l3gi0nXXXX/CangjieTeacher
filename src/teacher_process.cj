@@ -58,7 +58,9 @@ public class CodexTeacherProcess <: TeacherProcess {
         if (!exists(Path(workspace))) { Directory.create(Path(workspace), recursive: true) }
         if (!exists(Path(session))) { Directory.create(Path(session), recursive: true) }
         if (!exists(Path(runtimeHome))) { Directory.create(Path(runtimeHome), recursive: true) }
-        let repair = if (verifierFeedback.isEmpty()) { "" } else {
+        let repair = if (verifierFeedback.isEmpty()) { "" } else if (verifierFeedback.startsWith("Teacher repair attempt ")) {
+            "\n\n${verifierFeedback}"
+        } else {
             "\n\nThe public verifier failed. Repair the implementation in the same workspace and rerun local checks. " +
             "Do not look for hidden tests or reference solutions. Sanitized verifier output:\n${verifierFeedback}"
         }

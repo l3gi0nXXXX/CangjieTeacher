@@ -87,7 +87,7 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
     let process = CodexTeacherProcess(options.codex, options.model, timeoutMillis: options.timeoutMillis)
     let verifier = CjpmTeacherVerifier(options.testsRoot, timeoutMillis: options.timeoutMillis)
     let runOptions = TeacherRunOptions(options.runId, options.root, options.model, process, verifier, SystemTeacherClock(),
-        repairUntilVerified: true)
+        repairUntilVerified: true, persistAttemptProgress: true)
     let out = ArrayList<TeacherRunManifest>()
     for (caseValue in manifest.cases) {
         if (!options.caseId.isEmpty() && caseValue.caseId != options.caseId) { continue }
@@ -98,7 +98,9 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
         match (reusable) {
             case Some(old) => out.add(old)
             case None =>
-                _ = createTeacherCaseWorkspace(options.root, options.runId, caseValue, options.starterRoot)
+                if (!hasTeacherAttemptEvidence(options.root, options.runId, caseValue.caseId)) {
+                    _ = createTeacherCaseWorkspace(options.root, options.runId, caseValue, options.starterRoot)
+                }
                 let execution = executeTeacherCase(caseValue, runOptions)
                 let run = finalizeTeacherRun(execution.run, true)
                 out.add(run)

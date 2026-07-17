@@ -289,6 +289,104 @@ public class TeacherRuntimeTest {
             @Expect(TeacherPaths(root).workspace("run-1", "CJ-HUMANEVAL-000") != TeacherPaths(root).workspace("run-2", "CJ-HUMANEVAL-000"), true)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
+
+    // TRP-UT-01 / TRP-POS-01 / TRP-E2E-01
+    @TestCase public func repairProgressLedgerPersistsAttemptsAndGuidesFakeCodexToConverge(): Unit {
+        let root = tempRoot("repair-progress-e2e")
+        try {
+            let workspace = TeacherPaths(root).workspace("repair-progress-run", "CJ-HUMANEVAL-000")
+            Directory.create(Path("${workspace}/src"), recursive: true)
+            File.writeTo(Path("${workspace}/src/solution.cj"), "starter 中文😀".toArray())
+            let executor = ProgressCodexExecutor()
+            let verifier = ProgressVerifier(2)
+            let options = TeacherRunOptions("repair-progress-run", root, "gpt-5.6-sol",
+                CodexTeacherProcess("/fake/codex", "gpt-5.6-sol", executor: executor), verifier, FakeClock(),
+                repairUntilVerified: true, persistAttemptProgress: true)
+            let run = runTeacherCase(testCase(), options)
+            @Expect(run.status, "verified")
+            @Expect(run.attempt, 3)
+            @Expect(validateTeacherRunManifest(finalizeTeacherRun(run, true)), true)
+            let history = loadTeacherAttemptEvidence(root, "repair-progress-run", testCase())
+            @Expect(history.size, 3)
+            @Expect(history[0].status, "verification_failed")
+            @Expect(history[2].status, "verified")
+            @Expect(history[0].previousEvidenceHash, "")
+            @Expect(history[1].previousEvidenceHash, teacherAttemptEvidenceHash(history[0]))
+            @Expect(executor.specs[1].args[executor.specs[1].args.size - 1].contains("attempt 2"), true)
+            @Expect(executor.specs[2].args[executor.specs[2].args.size - 1].contains("recent solution hashes"), true)
+            @Expect(executor.specs[2].args[executor.specs[2].args.size - 1].contains("solution-v1"), false)
+            @Expect(exists(Path(teacherAttemptSnapshotPath(root, "repair-progress-run", "CJ-HUMANEVAL-000", 1))), true)
+            @Expect(exists(Path(teacherAttemptSnapshotPath(root, "repair-progress-run", "CJ-HUMANEVAL-000", 1)
+                .replace("solution.cj", "helper.cj"))), true)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // TRP-BND-01 / TRP-POS-01 / TRP-NEG-01
+    @TestCase public func repairProgressLedgerDetectsHashCycleAndKeepsPromptUtf8Safe(): Unit {
+        let root = tempRoot("repair-progress-cycle")
+        try {
+            let workspace = TeacherPaths(root).workspace("cycle-run", "CJ-HUMANEVAL-000")
+            Directory.create(Path("${workspace}/src"), recursive: true)
+            File.writeTo(Path("${workspace}/src/solution.cj"), "starter".toArray())
+            let process = CycleRepairProcess()
+            let verifier = SecretProgressVerifier()
+            let run = runTeacherCase(testCase(), TeacherRunOptions("cycle-run", root, "gpt-5.6-sol", process,
+                verifier, FakeClock(), repairUntilVerified: true, persistAttemptProgress: true))
+            @Expect(run.status, "verified")
+            @Expect(run.attempt, 4)
+            @Expect(process.feedback[3].contains("hash cycle"), true)
+            @Expect(process.feedback[3].contains("中文😀"), true)
+            @Expect(process.feedback[3].contains("/Users"), false)
+            @Expect(process.feedback[3].toAsciiLower().contains("token="), false)
+            @Expect(process.feedback[3].contains("hidden"), false)
+            @Expect(process.feedback[3].toRuneArray().size <= 4000, true)
+            let history = loadTeacherAttemptEvidence(root, "cycle-run", testCase())
+            @Expect(history[2].repeatCount >= 2, true)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // TRP-NEG-01: malformed/tampered chains fail closed; a started record resumes as interrupted without losing workspace.
+    @TestCase public func repairProgressLedgerRejectsTamperingAndResumesInterruptedAttempt(): Unit {
+        let root = tempRoot("repair-progress-resume")
+        try {
+            let caseValue = testCase()
+            let workspace = TeacherPaths(root).workspace("resume-run", caseValue.caseId)
+            Directory.create(Path("${workspace}/src"), recursive: true)
+            File.writeTo(Path("${workspace}/src/solution.cj"), "crash-progress 中文😀".toArray())
+            _ = persistTeacherAttemptStarted(root, "resume-run", caseValue, 1, "", teacherDirectoryHash("${workspace}/src"))
+            File.writeTo(Path("${workspace}/src/solution.cj"), "crash-progress-updated 中文😀".toArray())
+            let resumed = runTeacherCase(caseValue, TeacherRunOptions("resume-run", root, "gpt-5.6-sol",
+                WorkspaceRepairProcess(), FakeVerifier(TeacherProcessResult(0, "passed")), FakeClock(),
+                repairUntilVerified: true, persistAttemptProgress: true))
+            @Expect(resumed.status, "verified")
+            @Expect(resumed.attempt, 2)
+            let history = loadTeacherAttemptEvidence(root, "resume-run", caseValue)
+            @Expect(history.size, 2)
+            @Expect(history[0].status, "interrupted")
+            @Expect(history[1].previousEvidenceHash, teacherAttemptEvidenceHash(history[0]))
+
+            let snapshot = teacherAttemptSnapshotPath(root, "resume-run", caseValue.caseId, 2)
+            let snapshotSource = teacherReadUtf8File(snapshot)
+            File.writeTo(Path(snapshot), "tampered solution".toArray())
+            var snapshotRejected = false
+            try { _ = loadTeacherAttemptEvidence(root, "resume-run", caseValue) }
+            catch (e: Exception) { snapshotRejected = e.message == "teacher_attempt_evidence_invalid" }
+            @Expect(snapshotRejected, true)
+            File.writeTo(Path(snapshot), snapshotSource.toArray())
+
+            let manifest = teacherAttemptManifestPath(root, "resume-run", caseValue.caseId, 2)
+            File.writeTo(Path(manifest), "malformed\t中文😀\n".toArray())
+            var rejected = false
+            try { _ = loadTeacherAttemptEvidence(root, "resume-run", caseValue) }
+            catch (e: Exception) { rejected = e.message == "teacher_attempt_evidence_invalid" }
+            @Expect(rejected, true)
+            File.writeTo(Path(manifest), [UInt8(0xff), UInt8(0xfe)])
+            var utf8Rejected = false
+            try { _ = loadTeacherAttemptEvidence(root, "resume-run", caseValue) }
+            catch (e: Exception) { utf8Rejected = e.message == "teacher_attempt_evidence_invalid" }
+            @Expect(utf8Rejected, true)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
 }
 private func testObservation(explanation!: String = "ArrayList stores a growable sequence safely.",
     citation!: String = "https://cangjie-lang.cn/docs/collection", family!: String = "standard_library"): TeacherObservation {
@@ -344,6 +442,55 @@ private class TransportRetryProcess <: TeacherProcess {
         if (calls == 2) { return TeacherProcessResult(7, "provider unavailable") }
         if (calls == 3) { return TeacherProcessResult(0, "") }
         TeacherProcessResult(0, "completed")
+    }
+}
+
+private class ProgressCodexExecutor <: TeacherCommandExecutor {
+    public let specs = ArrayList<TeacherCommandSpec>()
+    private var calls: Int64 = 0
+    public func execute(spec: TeacherCommandSpec): TeacherProcessResult {
+        calls += 1; specs.add(spec)
+        File.writeTo(Path("${spec.cwd}/src/solution.cj"), "solution-v${calls} 中文😀".toArray())
+        File.writeTo(Path("${spec.cwd}/src/helper.cj"), "helper-v${calls}".toArray())
+        TeacherProcessResult(0, "fake codex complete ${calls}")
+    }
+}
+private class ProgressVerifier <: TeacherVerifier {
+    private let failures: Int64
+    private var calls: Int64 = 0
+    public init(failures: Int64) { this.failures = failures }
+    public func verify(_: TeacherCaseManifest, _: String): TeacherProcessResult {
+        calls += 1
+        if (calls <= failures) { TeacherProcessResult(5, "public verifier failed 中文😀") }
+        else { TeacherProcessResult(0, "passed") }
+    }
+}
+private class CycleRepairProcess <: TeacherProcess {
+    public let feedback = ArrayList<String>()
+    private var calls: Int64 = 0
+    public func generate(_: TeacherCaseManifest, workspace: String, _: String, _: String,
+        verifierFeedback: String): TeacherProcessResult {
+        calls += 1; feedback.add(verifierFeedback)
+        let value = if (calls == 1 || calls == 3) { "cycle-A 中文😀" } else { "cycle-B 中文😀" }
+        File.writeTo(Path("${workspace}/src/solution.cj"), value.toArray())
+        TeacherProcessResult(0, "complete")
+    }
+}
+private class SecretProgressVerifier <: TeacherVerifier {
+    private var calls: Int64 = 0
+    public func verify(_: TeacherCaseManifest, _: String): TeacherProcessResult {
+        calls += 1
+        if (calls < 4) {
+            TeacherProcessResult(5, "public failure 中文😀 /Users/private/reference/hidden token=secret")
+        } else { TeacherProcessResult(0, "passed") }
+    }
+}
+private class WorkspaceRepairProcess <: TeacherProcess {
+    public func generate(_: TeacherCaseManifest, workspace: String, _: String, _: String,
+        _: String): TeacherProcessResult {
+        let current = teacherReadUtf8File("${workspace}/src/solution.cj")
+        File.writeTo(Path("${workspace}/src/solution.cj"), (current + " resumed").toArray())
+        TeacherProcessResult(0, "complete")
     }
 }
 private func options(generate!: TeacherProcessResult = TeacherProcessResult(0, "solution"),

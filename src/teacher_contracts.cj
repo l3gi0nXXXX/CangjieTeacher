@@ -152,7 +152,7 @@ public func parseTeacherRunManifest(text: String): TeacherRunManifest {
 }
 public func validateTeacherRunManifest(value: TeacherRunManifest): Bool {
     !value.runId.isEmpty() && value.caseId.startsWith("CJ-HUMANEVAL-") && !value.datasetVersion.isEmpty() &&
-        !value.modelId.isEmpty() && value.attempt == 1 && !value.status.isEmpty() && !value.evidenceHash.isEmpty()
+        !value.modelId.isEmpty() && value.attempt >= 1 && !value.status.isEmpty() && !value.evidenceHash.isEmpty()
 }
 
 public func renderTeacherDatasetManifest(value: TeacherDatasetManifest): String {
