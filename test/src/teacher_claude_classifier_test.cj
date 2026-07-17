@@ -20,6 +20,7 @@ public class TeacherClaudeClassifierTest {
     private func root(name:String):String{"/tmp/teacher-claude-classifier-${name}-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"}
     private func request():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-007\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"缺少 Rune 知识😀\"}"}
     private func absRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CASE-GENERIC-ABS\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"compile_error 中文😀\",\"studentSourceExcerpt\":\"main(): Unit { let value: Float64 = -3.5; println(value.abs()) }\",\"compilerTestSummary\":\"error: undeclared identifier 'abs' 中文😀\"}"}
+    private func stringCaseRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-016\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"compile_error 中文😀\",\"studentSourceExcerpt\":\"for (c in text.toLower()) { println(c) }\",\"compilerTestSummary\":\"error: 'toLower' is not a member of struct 'String' 中文😀\"}"}
     private func prerequisiteRequest(summary:String):String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CASE-GENERIC-IMPORT\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"compile_error 中文😀\",\"studentSourceExcerpt\":\"main(): Unit { println(1) }\",\"compilerTestSummary\":\"${summary}\"}"}
     private func structured(category!:String="reasoning_failure",model!:String="GLM-5.2"):String{
         let body="{\"category\":\"${category}\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}"
@@ -125,6 +126,36 @@ public class TeacherClaudeClassifierTest {
             @Expect(runClaudeClassifierAdapter(setup[1],executor:supported).diagnostic,"classifier_response_source_fact_unsupported")
             File.writeTo(Path("${r}/workspace/request.json"),prerequisiteRequest("cannot find package std.unicode 中文😀").toArray())
             @Expect(runClaudeClassifierAdapter(setup[1],executor:supported).diagnostic,"ok")
+        }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
+    }
+
+    // P5-C-UT/POS/NEG/BND-06: case-016 grounding accepts only the documented String/Rune casing relationships.
+    @TestCase public func stringCaseRuneFactsAreRequestAwareAndFailClosed():Unit{
+        let setup=prepare("string-case-facts");let r=setup[0]
+        try{
+            File.writeTo(Path("${r}/workspace/request.json"),stringCaseRequest().toArray())
+            let validText="Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String performs ASCII-only conversion. Rune.toAsciiLowerCase(): Rune is ASCII-only. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. The failing String.toLower() receiver is unavailable. 中文😀"
+            let correct=ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(validText)))
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:correct).diagnostic,"ok")
+            let prompt=correct.specs[0].args[1]
+            @Expect(prompt.contains("direct String iteration yields UInt8"),true)
+            @Expect(prompt.contains("String.toAsciiLower()"),true);@Expect(prompt.contains("Rune.toAsciiLowerCase()"),true)
+            @Expect(prompt.contains("import std.unicode.* and Rune.toLowerCase()"),true)
+            remove(Path("${r}/workspace/response.json"))
+
+            for(text in [
+                "Direct String iteration yields Rune values. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable.",
+                "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toLowerAscii(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable.",
+                "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion uses Rune.toLowerCase(): Rune. String.toLower() is unavailable.",
+                "UInt8 String iteration String.toAsciiLower Rune.toAsciiLowerCase std.unicode Rune.toLowerCase unavailable"
+            ]){
+                let rejected=runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(text))))
+                @Expect(rejected.diagnostic,"classifier_response_source_fact_unsupported")
+                @Expect(exists(Path("${r}/workspace/response.json")),false)
+            }
+
+            File.writeTo(Path("${r}/workspace/request.json"),request().toArray())
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("Use Rune boundaries for 中文😀 text.")))).diagnostic,"ok")
         }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
     }
 

@@ -147,7 +147,9 @@ private func claudeClassifierGroundingPrompt(request:String):String{
     try{
         let o=JsonValue.fromStr(request).asObject();let source=classifierString(o,"studentSourceExcerpt").toAsciiLower()
         let compiler=classifierString(o,"compilerTestSummary").toAsciiLower()
-        if(source.contains(".abs(")&&compiler.contains("undeclared identifier 'abs'")){
+        if(claudeClassifierStringCaseFailure(source,compiler)){
+            "For this visible String casing failure, use these exact Cangjie 1.0 facts: direct String iteration yields UInt8 bytes; String.toAsciiLower() returns a String and is ASCII-only; Rune.toAsciiLowerCase() returns a Rune and is ASCII-only; Unicode casing requires import std.unicode.* and Rune.toLowerCase(). String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Do not replace these relationships with generic casing advice. "
+        }else if(source.contains(".abs(")&&compiler.contains("undeclared identifier 'abs'")){
             "For this visible receiver-style absolute-value failure, do not infer any package or import; if classifying a knowledge gap, state that receiver .abs() is unavailable and use the global documented abs(value) form. "
         }else{""}
     }catch(_:Exception){""}
@@ -160,6 +162,9 @@ private func claudeClassifierResponseFactsValid(requestText:String,responseText:
         let knowledge=classifierString(response,"knowledgeText").toAsciiLower()
         let source=classifierString(request,"studentSourceExcerpt").toAsciiLower()
         let compiler=classifierString(request,"compilerTestSummary").toAsciiLower()
+        if(claudeClassifierStringCaseFailure(source,compiler)){
+            return claudeClassifierStringCaseFactsValid(knowledge)
+        }
         if(source.contains(".abs(")&&compiler.contains("undeclared identifier 'abs'")){
             let receiverUnavailable=knowledge.contains("receiver")&&knowledge.contains(".abs(")&&
                 (knowledge.contains("unavailable")||knowledge.contains("does not provide")||knowledge.contains("no member"))
@@ -172,6 +177,27 @@ private func claudeClassifierResponseFactsValid(requestText:String,responseText:
         for(packageName in claudeClassifierPackageTokens(knowledge)){if(!evidence.contains(packageName)){return false}}
         true
     }catch(_:Exception){false}
+}
+
+private func claudeClassifierStringCaseFailure(source:String,compiler:String):Bool{
+    source.contains(".tolower(")&&compiler.contains("'tolower' is not a member")&&compiler.contains("'string'")
+}
+
+private func claudeClassifierStringCaseFactsValid(knowledge:String):Bool{
+    if(knowledge.contains("tolowerascii")){return false}
+    let iterationUInt8=(knowledge.contains("string iteration yields uint8")||
+        knowledge.contains("iterating a string yields uint8")||knowledge.contains("string iteration produces uint8"))
+    let iterationRune=knowledge.contains("string iteration yields rune")||
+        knowledge.contains("iterating a string yields rune")||knowledge.contains("string iteration produces rune")
+    let stringAscii=knowledge.contains("string.toasciilower()")&&knowledge.contains("ascii-only")&&
+        (knowledge.contains("returns a string")||knowledge.contains(": string"))
+    let runeAscii=knowledge.contains("rune.toasciilowercase()")&&knowledge.contains("ascii-only")&&
+        (knowledge.contains("returns a rune")||knowledge.contains(": rune"))
+    let unicode=knowledge.contains("unicode")&&knowledge.contains("requires import std.unicode")&&
+        knowledge.contains("rune.tolowercase()")&&(knowledge.contains("returns a rune")||knowledge.contains(": rune"))
+    let genericUnavailable=knowledge.contains("string.tolower()")&&
+        (knowledge.contains("unavailable")||knowledge.contains("does not provide")||knowledge.contains("not a member")||knowledge.contains("does not exist"))
+    iterationUInt8&&!iterationRune&&stringAscii&&runeAscii&&unicode&&genericUnavailable
 }
 
 private func claudeClassifierMissingPrerequisiteEvidence(evidence:String):Bool{

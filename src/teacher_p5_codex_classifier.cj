@@ -83,6 +83,9 @@ public func executeTeacherP5CodexClassifierAdapter(args: Array<String>, executor
                 tooLargeDiagnostic: "classifier_output_too_large")
             let response = p5CodexSealResponse(raw)
             if (response[0] != "ok") { return failP5CodexClassifier(result, options, response[0]) }
+            if (!p5CodexResponseFactsValid(requestText, response[1])) {
+                return failP5CodexClassifier(result, options, "classifier_response_source_fact_unsupported")
+            }
             try { _ = teacherAtomicWrite(options.output, response[1] + "\n") }
             catch (_: Exception) { return failP5CodexClassifier(result, options, "response_write_failed") }
             if (!removeP5CodexClassifierDiagnostic(options)) {
@@ -122,7 +125,8 @@ private func p5CodexClassifierDiagnosticAllowed(value: String): Bool {
     ["invalid_response_encoding", "request_too_large", "request_contract_invalid", "classifier_timeout",
         "classifier_process_failed", "classifier_output_too_large", "missing_or_duplicate_terminal_result",
         "response_contract_invalid", "response_contains_forbidden_data", "malformed_structured_output",
-        "response_write_failed", "diagnostic_reset_failed", "classifier_failure_unknown"].contains(value)
+        "classifier_response_source_fact_unsupported", "response_write_failed", "diagnostic_reset_failed",
+        "classifier_failure_unknown"].contains(value)
 }
 
 private func p5CodexClassifierSharedDiagnostic(value: String): String {
@@ -229,7 +233,51 @@ private func p5CodexPrompt(request: String): String {
     "Choose compile_error or unit_failure only when the evidence does not establish an allowed reusable knowledge gap and the cause is case-specific. " +
     "All ten fields are required. For knowledge_gap, knowledgeFamily must be exactly one of syntax, standard_library, stdx, toolchain, compiler_diagnostic, version_migration, engineering_practice; sourceClass must be exactly official; citation must be an HTTPS URL under https://docs.cangjie-lang.cn/ (use https://docs.cangjie-lang.cn/docs/1.0.0/ when the request has no more specific official URL); targetVersion must be 1.0.0 for this dataset; evidenceId must bind the supplied resultEvidenceHash; canonicalKnowledgeId must identify general knowledge and must not contain the case id. " +
     "Provide only reusable general knowledge, never the case answer or solution. " +
+    p5CodexGroundingPrompt(request) +
     "For every other category, set every knowledge string to an empty string and both reusable and purificationPassed to false. Request:\n${request}"
+}
+
+private func p5CodexGroundingPrompt(request:String):String{
+    try{
+        let o=JsonValue.fromStr(request).asObject()
+        let source=p5CodexString(o,"studentSourceExcerpt").toAsciiLower()
+        let compiler=p5CodexString(o,"compilerTestSummary").toAsciiLower()
+        if(p5CodexStringCaseFailure(source,compiler)){
+            "For this visible String casing failure, use these exact Cangjie 1.0 facts: direct String iteration yields UInt8 bytes; String.toAsciiLower() returns a String and is ASCII-only; Rune.toAsciiLowerCase() returns a Rune and is ASCII-only; Unicode casing requires import std.unicode.* and Rune.toLowerCase(). String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Do not replace these relationships with generic casing advice. "
+        }else{""}
+    }catch(_:Exception){""}
+}
+
+private func p5CodexResponseFactsValid(requestText:String,responseText:String):Bool{
+    try{
+        let request=JsonValue.fromStr(requestText).asObject();let response=JsonValue.fromStr(responseText).asObject()
+        if(p5CodexString(response,"category").toAsciiLower()!="knowledge_gap"){return true}
+        let source=p5CodexString(request,"studentSourceExcerpt").toAsciiLower()
+        let compiler=p5CodexString(request,"compilerTestSummary").toAsciiLower()
+        if(!p5CodexStringCaseFailure(source,compiler)){return true}
+        p5CodexStringCaseFactsValid(p5CodexString(response,"knowledgeText").toAsciiLower())
+    }catch(_:Exception){false}
+}
+
+private func p5CodexStringCaseFailure(source:String,compiler:String):Bool{
+    source.contains(".tolower(")&&compiler.contains("'tolower' is not a member")&&compiler.contains("'string'")
+}
+
+private func p5CodexStringCaseFactsValid(knowledge:String):Bool{
+    if(knowledge.contains("tolowerascii")){return false}
+    let iterationUInt8=knowledge.contains("string iteration yields uint8")||
+        knowledge.contains("iterating a string yields uint8")||knowledge.contains("string iteration produces uint8")
+    let iterationRune=knowledge.contains("string iteration yields rune")||
+        knowledge.contains("iterating a string yields rune")||knowledge.contains("string iteration produces rune")
+    let stringAscii=knowledge.contains("string.toasciilower()")&&knowledge.contains("ascii-only")&&
+        (knowledge.contains("returns a string")||knowledge.contains(": string"))
+    let runeAscii=knowledge.contains("rune.toasciilowercase()")&&knowledge.contains("ascii-only")&&
+        (knowledge.contains("returns a rune")||knowledge.contains(": rune"))
+    let unicode=knowledge.contains("unicode")&&knowledge.contains("requires import std.unicode")&&
+        knowledge.contains("rune.tolowercase()")&&(knowledge.contains("returns a rune")||knowledge.contains(": rune"))
+    let genericUnavailable=knowledge.contains("string.tolower()")&&
+        (knowledge.contains("unavailable")||knowledge.contains("does not provide")||knowledge.contains("not a member")||knowledge.contains("does not exist"))
+    iterationUInt8&&!iterationRune&&stringAscii&&runeAscii&&unicode&&genericUnavailable
 }
 
 private func p5CodexOutputSchema(): String {

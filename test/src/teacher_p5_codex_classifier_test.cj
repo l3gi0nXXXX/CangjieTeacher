@@ -21,8 +21,16 @@ private class P5CodexFakeExecutor <: TeacherCommandExecutor {
         for (i in 0..spec.args.size - 1) { if (spec.args[i] == "--output-last-message") { output = spec.args[i + 1] } }
         if (mode == "invalid_utf8") { File.writeTo(Path(output), [UInt8(0xff), UInt8(0xfe)]); return TeacherProcessResult(0, "") }
         if (mode == "oversized") { File.writeTo(Path(output), Array<UInt8>(262145, repeat: UInt8(65))); return TeacherProcessResult(0, "") }
+        let knowledge = match(mode){
+            case "string_case_valid" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String performs ASCII-only conversion. Rune.toAsciiLowerCase(): Rune is ASCII-only. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. The failing String.toLower() receiver is unavailable. 中文🙂"
+            case "string_case_iteration_rune" => "Direct String iteration yields Rune values. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable."
+            case "string_case_wrong_api" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toLowerAscii(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable."
+            case "string_case_no_import" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion uses Rune.toLowerCase(): Rune. String.toLower() is unavailable."
+            case "string_case_word_pile" => "UInt8 String iteration String.toAsciiLower Rune.toAsciiLowerCase std.unicode Rune.toLowerCase unavailable"
+            case _ => "Use Rune boundaries for 中文🙂 text."
+        }
         let body = if (mode == "malformed") { "{" } else if (mode == "forbidden") { "/Users/private/秘密🙂 token=secret" } else if (mode == "retrieval") { "{\"category\":\"retrieval_failure\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}" } else {
-            "{\"category\":\"knowledge_gap\",\"knowledgeFamily\":\"standard_library\",\"reusable\":true,\"sourceClass\":\"official\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"purificationPassed\":true,\"canonicalKnowledgeId\":\"GENERAL-RUNE\",\"targetVersion\":\"1.0.0\",\"evidenceId\":\"official-rune\",\"knowledgeText\":\"Use Rune boundaries for 中文🙂 text.\"}"
+            "{\"category\":\"knowledge_gap\",\"knowledgeFamily\":\"standard_library\",\"reusable\":true,\"sourceClass\":\"official\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"purificationPassed\":true,\"canonicalKnowledgeId\":\"GENERAL-RUNE\",\"targetVersion\":\"1.0.0\",\"evidenceId\":\"official-rune\",\"knowledgeText\":\"${knowledge}\"}"
         }
         File.writeTo(Path(output), body.toArray()); TeacherProcessResult(0, "ignored stdout")
     }
@@ -97,6 +105,28 @@ public class TeacherP5CodexClassifierTest {
         @Expect(executeTeacherP5CodexClassifierAdapter(malformed.args,executor:P5CodexFakeExecutor(),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"request_contract_invalid")
     }
 
+    // P5-C-UT/POS/NEG/BND-07: Codex receives and enforces the same exact case-016 source facts as Claude.
+    @TestCase public func p5CStringCaseRuneFactsAreRequestAwareAndFailClosed(): Unit {
+        let accepted=p5CodexFixture("string-case-valid",requestBody:p5StringCaseRequest())
+        let validFake=P5CodexFakeExecutor(mode:"string_case_valid")
+        @Expect(executeTeacherP5CodexClassifierAdapter(accepted.args,executor:validFake,codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
+        let prompt=validFake.specs[0].args[validFake.specs[0].args.size-1]
+        @Expect(prompt.contains("direct String iteration yields UInt8"),true)
+        @Expect(prompt.contains("String.toAsciiLower()"),true);@Expect(prompt.contains("Rune.toAsciiLowerCase()"),true)
+        @Expect(prompt.contains("import std.unicode.* and Rune.toLowerCase()"),true)
+
+        for(mode in ["string_case_iteration_rune","string_case_wrong_api","string_case_no_import","string_case_word_pile"]){
+            let fixture=p5CodexFixture("reject-${mode}",requestBody:p5StringCaseRequest())
+            let rejected=executeTeacherP5CodexClassifierAdapter(fixture.args,executor:P5CodexFakeExecutor(mode:mode),codexExecutable:"/fake/codex",timeoutMillis:1000)
+            @Expect(rejected.diagnostic,"classifier_response_source_fact_unsupported")
+            @Expect(exists(Path(fixture.output)),false)
+            @Expect(teacherReadUtf8File("${fixture.workspace}/classifier-diagnostic.json").contains("classifier_response_source_fact_unsupported"),true)
+        }
+
+        let unrelated=p5CodexFixture("string-case-unrelated")
+        @Expect(executeTeacherP5CodexClassifierAdapter(unrelated.args,executor:P5CodexFakeExecutor(),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
+    }
+
     // P5-C-UT-05/POS-05/NEG-05/BND-05: failures expose only a workspace-local safe enum sidecar.
     @TestCase public func p5CSafeDiagnosticSidecarIsAtomicBoundedAndStaleSafe(): Unit {
         let sidecarName = "classifier-diagnostic.json"
@@ -131,10 +161,12 @@ private class P5CodexFixture {
     public init(root:String,workspace:String,runtimeHome:String,request:String,output:String,args:Array<String>){this.root=root;this.workspace=workspace;this.runtimeHome=runtimeHome;this.request=request;this.output=output;this.args=args}
 }
 
-private func p5CodexFixture(label:String,model!:String="GPT-5.6-Sol"):P5CodexFixture{
+private func p5StringCaseRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-016\",\"runId\":\"run-中文🙂\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"failureObservation\":\"compile_error 中文🙂\",\"studentSourceExcerpt\":\"for (c in text.toLower()) { println(c) }\",\"compilerTestSummary\":\"error: 'toLower' is not a member of struct 'String' 中文🙂\",\"resultEvidenceHash\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"}
+
+private func p5CodexFixture(label:String,model!:String="GPT-5.6-Sol",requestBody!:String=""):P5CodexFixture{
     let root="/tmp/teacher-p5-codex-${label}-${DateTime.now().toUnixTimeStamp().toNanoseconds()}";let workspace="${root}/workspace";let runtime="${root}/runtime-home"
     Directory.create(Path(workspace),recursive:true);let request="${workspace}/request.json";let output="${workspace}/response.json"
-    let body="{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-016\",\"runId\":\"run-中文🙂\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"failureObservation\":\"缺少可复用 Rune 知识🙂\",\"resultEvidenceHash\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"
+    let body=if(requestBody==""){"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-016\",\"runId\":\"run-中文🙂\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"failureObservation\":\"缺少可复用 Rune 知识🙂\",\"resultEvidenceHash\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"}else{requestBody}
     File.writeTo(Path(request),body.toArray())
     let args=["--request",request,"--output",output,"--workspace",workspace,"--runtime-home",runtime,"--session-id","session-${label}","--expected-provider","codex","--expected-model",model]
     P5CodexFixture(root,workspace,runtime,request,output,args)
