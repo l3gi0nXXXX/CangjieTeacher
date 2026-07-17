@@ -1,6 +1,7 @@
 package cangjie_teacher
 
 import std.fs.*
+import std.posix.*
 import std.time.*
 import std.collection.*
 import std.convert.Parsable
@@ -78,9 +79,8 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
         throw IllegalArgumentException("missing_required_cli_option")
     }
     if (options.model != "gpt-5.6-sol") { throw IllegalArgumentException("teacher_model_identity_invalid") }
-    if (!validateTeacherExecutionPrivacy(options.repositoryRoot, options.root, options.localOnly)) {
-        throw IllegalArgumentException("teacher_remote_not_private")
-    }
+    let privacyDiagnostic = prepareTeacherArtifactRoot(options.repositoryRoot, options.root, options.localOnly)
+    if (!privacyDiagnostic.isEmpty()) { throw IllegalArgumentException(privacyDiagnostic) }
     let manifest = loadTeacherDatasetManifestFile(options.manifest, options.checksum)
     let completedPath = "${options.root}/runs/${options.runId}/completed.manifest"
     let completed = loadCompletedTeacherRuns(completedPath)
@@ -117,9 +117,68 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
 
 public func validateTeacherExecutionPrivacy(repositoryRoot: String, artifactRoot: String, localOnly: Bool): Bool {
     if (!localOnly || repositoryRoot.trimEnd('/').isEmpty() || artifactRoot.trimEnd('/').isEmpty()) { return false }
-    let repo = try { canonicalize(Path(repositoryRoot)).toString().trimEnd('/') } catch (_: Exception) { return false }
-    let artifacts = try { canonicalize(Path(artifactRoot)).toString().trimEnd('/') } catch (_: Exception) { return false }
-    return artifacts != repo && !artifacts.startsWith(repo + "/")
+    let repositoryPath = Path(repositoryRoot.trimEnd('/'))
+    let artifactPath = Path(artifactRoot.trimEnd('/'))
+    if (!repositoryPath.isAbsolute() || !artifactPath.isAbsolute() || !exists(repositoryPath) || !exists(artifactPath)) { return false }
+    if (teacherPathIsSymbolicLink(repositoryPath) || teacherPathIsSymbolicLink(artifactPath)) { return false }
+    if (!FileInfo(repositoryPath).isDirectory() || !FileInfo(artifactPath).isDirectory()) { return false }
+    let repo = try { canonicalize(repositoryPath).toString().trimEnd('/') } catch (_: Exception) { return false }
+    let artifacts = try { canonicalize(artifactPath).toString().trimEnd('/') } catch (_: Exception) { return false }
+    artifacts != repo && !artifacts.startsWith(repo + "/")
+}
+
+// Creates only the final artifact-root component after its existing parent is
+// canonicalized outside the repository, then rechecks the created directory.
+public func prepareTeacherArtifactRoot(repositoryRoot: String, artifactRoot: String, localOnly: Bool): String {
+    if (!localOnly) { return "teacher_local_only_required" }
+    let repositoryValue = repositoryRoot.trimEnd('/')
+    let artifactValue = artifactRoot.trimEnd('/')
+    if (repositoryValue.isEmpty()) { return "teacher_repository_root_invalid" }
+    if (artifactValue.isEmpty()) { return "teacher_artifact_root_invalid" }
+    let repositoryPath = Path(repositoryValue)
+    let artifactPath = Path(artifactValue)
+    if (!repositoryPath.isAbsolute() || !exists(repositoryPath) || teacherPathIsSymbolicLink(repositoryPath)) {
+        return "teacher_repository_root_invalid"
+    }
+    try {
+        if (!FileInfo(repositoryPath).isDirectory()) { return "teacher_repository_root_invalid" }
+    } catch (_: Exception) { return "teacher_repository_root_invalid" }
+    if (!artifactPath.isAbsolute()) { return "teacher_artifact_root_invalid" }
+
+    let repo = try { canonicalize(repositoryPath).toString().trimEnd('/') } catch (_: Exception) {
+        return "teacher_repository_root_invalid"
+    }
+    if (exists(artifactPath)) {
+        if (teacherPathIsSymbolicLink(artifactPath)) { return "teacher_artifact_root_symlink_forbidden" }
+        try {
+            if (!FileInfo(artifactPath).isDirectory()) { return "teacher_artifact_root_not_directory" }
+        } catch (_: Exception) { return "teacher_artifact_root_not_directory" }
+    } else {
+        let parent = artifactPath.parent
+        if (!exists(parent)) { return "teacher_artifact_parent_missing" }
+        try {
+            if (!FileInfo(parent).isDirectory()) { return "teacher_artifact_parent_invalid" }
+        } catch (_: Exception) { return "teacher_artifact_parent_invalid" }
+        let canonicalParent = try { canonicalize(parent) } catch (_: Exception) {
+            return "teacher_artifact_parent_invalid"
+        }
+        let candidate = canonicalParent.join(artifactPath.fileName).toString().trimEnd('/')
+        if (candidate == repo || candidate.startsWith(repo + "/")) { return "teacher_artifact_root_not_private" }
+        try { Directory.create(artifactPath, recursive: false) } catch (_: Exception) {
+            return "teacher_artifact_root_create_failed"
+        }
+    }
+
+    if (!validateTeacherExecutionPrivacy(repositoryValue, artifactValue, true)) {
+        if (teacherPathIsSymbolicLink(artifactPath)) { return "teacher_artifact_root_symlink_forbidden" }
+        return "teacher_artifact_root_not_private"
+    }
+    if (chmod(artifactValue, UInt32(0o700)) != 0) { return "teacher_artifact_root_permissions_failed" }
+    ""
+}
+
+private func teacherPathIsSymbolicLink(path: Path): Bool {
+    try { FileInfo(path).isSymbolicLink() } catch (_: Exception) { false }
 }
 
 public func cangjieTeacherCliMain(args: Array<String>): Int64 {

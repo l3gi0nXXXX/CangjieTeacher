@@ -163,6 +163,39 @@ public class TeacherRuntimeTest {
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
+    @TestCase public func artifactRootPrivacyCreatesMissingUtf8RootAndReportsExactFailures(): Unit {
+        let root = tempRoot("artifact-root-privacy")
+        try {
+            let repo = "${root}/repo"
+            let privateParent = "${root}/private"
+            let missing = "${privateParent}/教师🙂-runs"
+            Directory.create(Path(repo), recursive: true)
+            Directory.create(Path(privateParent), recursive: true)
+            Directory.create(Path("${repo}/.git"), recursive: true)
+            File.writeTo(Path("${repo}/.git/config"), "url = https://example.invalid/public.git".toArray())
+
+            @Expect(prepareTeacherArtifactRoot(repo, missing, true), "")
+            @Expect(exists(Path(missing)), true)
+            @Expect(validateTeacherExecutionPrivacy(repo, missing, true), true)
+
+            let insideRepo = "${repo}/teacher-runs"
+            @Expect(prepareTeacherArtifactRoot(repo, insideRepo, true), "teacher_artifact_root_not_private")
+            @Expect(exists(Path(insideRepo)), false)
+
+            let fileTarget = "${privateParent}/not-a-directory"
+            File.writeTo(Path(fileTarget), "not a directory".toArray())
+            @Expect(prepareTeacherArtifactRoot(repo, fileTarget, true), "teacher_artifact_root_not_directory")
+            let symlinkTarget = "${privateParent}/real-directory"
+            let symlinkRoot = "${privateParent}/linked-directory"
+            Directory.create(Path(symlinkTarget), recursive: true)
+            SymbolicLink.create(Path(symlinkRoot), to: Path(symlinkTarget))
+            @Expect(prepareTeacherArtifactRoot(repo, symlinkRoot, true), "teacher_artifact_root_symlink_forbidden")
+            @Expect(prepareTeacherArtifactRoot(repo, "relative-runs", true), "teacher_artifact_root_invalid")
+            @Expect(prepareTeacherArtifactRoot(repo, "${root}/missing-parent/runs", true), "teacher_artifact_parent_missing")
+            @Expect(prepareTeacherArtifactRoot(repo, "${privateParent}/disabled", false), "teacher_local_only_required")
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     // P2-UT-01 / P2-BND-01
     @TestCase public func codexUsesExactArgvCwdEnvironmentAndTimeout(): Unit {
         let recorder = RecordingExecutor(results: [TeacherProcessResult(124, "timeout", timedOut: true)])
