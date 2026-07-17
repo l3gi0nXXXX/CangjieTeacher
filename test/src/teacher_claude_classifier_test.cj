@@ -201,7 +201,9 @@ public class TeacherClaudeClassifierTest {
             @Expect(prompt.contains("plain identifier"),true);@Expect(prompt.contains("raw identifier"),true)
             @Expect(prompt.contains("`match`"),true);@Expect(prompt.contains("rename"),true)
             @Expect(prompt.contains("The knowledgeText must contain the exact clause: The backtick form `match` is a legal raw identifier."),true)
-            @Expect(prompt.contains("It must also state that plain `match` is invalid and that renaming to a non-keyword name is valid."),true)
+            @Expect(prompt.contains("The knowledgeText must also contain the exact clause: `match` is invalid as a plain identifier."),true)
+            @Expect(prompt.contains("It must also state that renaming to a non-keyword name is valid."),true)
+            @Expect(prompt.contains("plain `match` is invalid"),false)
             remove(Path("${r}/workspace/response.json"))
             let equivalent="Because `match` is a keyword, it is not valid as an ordinary identifier. As a raw identifier, `match` is valid, and using a different variable name is another option."
             @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(equivalent)))).diagnostic,"ok")

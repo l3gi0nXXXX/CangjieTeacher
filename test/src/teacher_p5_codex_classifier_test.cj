@@ -187,7 +187,9 @@ public class TeacherP5CodexClassifierTest {
         @Expect(prompt.contains("plain identifier"),true);@Expect(prompt.contains("raw identifier"),true)
         @Expect(prompt.contains("`match`"),true);@Expect(prompt.contains("rename"),true)
         @Expect(prompt.contains("The knowledgeText must contain the exact clause: The backtick form `match` is a legal raw identifier."),true)
-        @Expect(prompt.contains("It must also state that plain `match` is invalid and that renaming to a non-keyword name is valid."),true)
+        @Expect(prompt.contains("The knowledgeText must also contain the exact clause: `match` is invalid as a plain identifier."),true)
+        @Expect(prompt.contains("It must also state that renaming to a non-keyword name is valid."),true)
+        @Expect(prompt.contains("plain `match` is invalid"),false)
         let equivalent=p5CodexFixture("reserved-match-valid-equivalent",requestBody:p5ReservedMatchRequest())
         @Expect(executeTeacherP5CodexClassifierAdapter(equivalent.args,executor:P5CodexFakeExecutor(mode:"reserved_match_valid_equivalent"),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
 
