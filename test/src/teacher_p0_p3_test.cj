@@ -835,6 +835,20 @@ public class TeacherP0P3Test {
         let negative=helper+"main(){ let byte:UInt8=UInt8(65); let rune:Rune=r'A'; println(byte==rune); acceptRune(byte) }"
         let relevant=validateTeacherAuthorityRelevance(compiler,"G-STRING",narrative,narrative,positive,negative,boundary)
         @Expect(relevant.ok,true)
+        // STRING-BYTE-RUNE-PRED-POS/E2E: the extractor may state the same
+        // public type fact without the contiguous English phrase "Rune
+        // parameter".  This exact relationship must remain actionable.
+        let equivalentNarrative="String element access produces UInt8 while toRuneArray produces Rune values. Equality requires the same type. A parameter declared as Rune requires a Rune argument."
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING",equivalentNarrative,equivalentNarrative,positive,negative,boundary).ok,true)
+        // STRING-BYTE-RUNE-PRED-NEG: scattered generic words do not assert
+        // the parameter/argument type relationship.
+        let scatteredNarrative="String UInt8 toRuneArray Rune values use the same type. Parameter validation is important and a Rune is a scalar."
+        let scatteredResult=validateTeacherAuthorityRelevance(compiler,"G-STRING",scatteredNarrative,scatteredNarrative,positive,negative,boundary)
+        @Expect(scatteredResult.ok,false)
+        @Expect(scatteredResult.feedback.contains("a Rune parameter requires a Rune"),true)
+        @Expect(scatteredResult.feedback.contains("a parameter declared as Rune requires a Rune argument"),true)
+        let commentMasquerade="// a parameter declared as Rune requires a Rune argument\n"+positive
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING",scatteredNarrative,scatteredNarrative,commentMasquerade,negative,boundary).ok,false)
         let atomHelper="func acceptRune(value: Rune){ println(value) }\\n"
         let atomPositive=atomHelper+"main(){ let text:String=String([r'A']); let byte:UInt8=UInt8(65); let otherByte:UInt8=UInt8(65); let runes:Array<Rune>=text.toRuneArray(); let rune:Rune=runes[0]; let otherRune:Rune=r'A'; println(byte==otherByte); println(rune==otherRune); acceptRune(rune) }"
         let atomBoundary=atomHelper+"main(){ let empty:String=String(Array<Rune>()); let byte:UInt8=UInt8(0); let otherByte:UInt8=UInt8(0); let runes:Array<Rune>=String([r'😀']).toRuneArray(); let rune:Rune=runes[0]; let otherRune:Rune=r'😀'; println(byte==otherByte); println(rune==otherRune); println(empty.size); acceptRune(rune) }"

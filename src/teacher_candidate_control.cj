@@ -737,7 +737,7 @@ private func teacherAuthorityRuneUnicodeCaseFeedback():String{
 private func teacherAuthorityCombinedStringByteRunePositive(narrative:String,source:String):Bool{
     if(!narrative.contains("string")||!narrative.contains("uint8")||!narrative.contains("torunearray")||
         !narrative.contains("rune")||!(narrative.contains("same type")||narrative.contains("same-type"))||
-        !narrative.contains("rune parameter")){return false}
+        !teacherAuthorityRuneParameterFact(narrative)){return false}
     let raw=teacherAuthorityCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
     let bytes=teacherAuthorityNamesBeforeType(raw,"uint8");let runes=teacherAuthorityNamesBeforeType(raw,"rune")
     if(!code.contains(":string")||!code.contains(":array<rune>")||!code.contains(".torunearray(")||
@@ -745,6 +745,11 @@ private func teacherAuthorityCombinedStringByteRunePositive(narrative:String,sou
     if(!teacherAuthorityHasSameTypeEquality(code,bytes)||!teacherAuthorityHasSameTypeEquality(code,runes)){return false}
     for(rune in runes){if(code.contains("acceptrune(${rune})")){return true}}
     false
+}
+
+private func teacherAuthorityRuneParameterFact(narrative:String):Bool{
+    narrative.contains("rune parameter")||
+        (narrative.contains("parameter declared as rune")&&narrative.contains("rune argument"))
 }
 
 private func teacherAuthorityCombinedStringByteRuneNegative(source:String):Bool{
@@ -766,7 +771,7 @@ private func teacherAuthorityHasSameTypeEquality(code:String,names:ArrayList<Str
 }
 
 private func teacherAuthorityCombinedStringByteRuneFeedback():String{
-    teacherAuthorityBoundedFeedback("String element access produces UInt8, while toRuneArray produces Rune values. Positive and boundary sources must explicitly declare text: String, byte/otherByte: UInt8, runes: Array<Rune>, and rune/otherRune: Rune; compare UInt8 == UInt8 and Rune == Rune, define acceptRune(value: Rune), and call acceptRune(rune). The same negative source must reproduce both authority failures by comparing byte == rune and calling acceptRune(byte). The explanation/example must state same-type comparison and that a Rune parameter requires a Rune. Comments and string labels do not count as evidence.")
+    teacherAuthorityBoundedFeedback("String element access produces UInt8, while toRuneArray produces Rune values. Positive and boundary sources must explicitly declare text: String, byte/otherByte: UInt8, runes: Array<Rune>, and rune/otherRune: Rune; compare UInt8 == UInt8 and Rune == Rune, define acceptRune(value: Rune), and call acceptRune(rune). The same negative source must reproduce both authority failures by comparing byte == rune and calling acceptRune(byte). The explanation/example must state the same-type comparison and use one of these precise facts: 'a Rune parameter requires a Rune' or 'a parameter declared as Rune requires a Rune argument'. Scattered parameter/Rune words, comments, and string labels do not count as evidence.")
 }
 
 private func teacherAuthorityQuotedAnchors(value:String):ArrayList<String>{
