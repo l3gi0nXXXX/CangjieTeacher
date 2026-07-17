@@ -290,6 +290,64 @@ public class TeacherRuntimeTest {
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
+    // TEPR-UT-01 / TEPR-BND-01 / TEPR-POS-01 / TEPR-NEG-01
+    @TestCase public func persistedEvidenceSanitizerIsRuneSafeAndFailsClosedAtSensitiveBoundaries(): Unit {
+        let publicEvidence = "公开诊断中文😀: compiler exited with code 1."
+        @Expect(teacherSanitizeEvidence(publicEvidence), publicEvidence)
+        for (boundary in ["/Users/教师/private.cj", "/home/user/work.cj", "/private/tmp/output", "~/work/repo",
+            "Authorization: Bearer credential", "TOKEN=value", "password=hunter2", "proxy=http://127.0.0.1",
+            "secret=private"]) {
+            let sanitized = teacherSanitizeEvidence("公开诊断中文😀, {\"detail\":\"${boundary}\",\"after\":\"must-not-survive\"}")
+            @Expect(sanitized.startsWith("公开诊断中文😀"), true)
+            @Expect(sanitized.contains("[redacted]"), true)
+            @Expect(sanitized.contains("must-not-survive"), false)
+            @Expect(sanitized.toAsciiLower().contains(boundary.toAsciiLower()), false)
+        }
+        // Reading the system behavioral skill is not CKB/reference/hidden access, but its host path is still private evidence.
+        let skill = teacherSanitizeEvidence("karpathy skill loaded: /Users/l3gi0n/.codex/skills/karpathy-guidelines/SKILL.md")
+        @Expect(skill.startsWith("karpathy skill loaded:"), true)
+        @Expect(skill.contains("/Users/"), false)
+        let long = "公开😀" + String(Array<Rune>(5000, repeat: r'界'))
+        let bounded = teacherSanitizeEvidence(long)
+        @Expect(bounded.toRuneArray().size, 4003)
+        @Expect(bounded.endsWith("..."), true)
+    }
+
+    // TEPR-E2E-01
+    @TestCase public func persistedEvidenceUsesRelativeIndexAndRejectsInvalidUtf8Evidence(): Unit {
+        let root = tempRoot("evidence-redaction")
+        try {
+            let run = TeacherRunManifest("redaction-run", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-fake",
+                "prompt-hash", 1, "complete", 0, "evidence")
+            let base = "${root}/runs/redaction-run/evidence/CJ-HUMANEVAL-000"
+            Directory.create(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src"), recursive: true)
+            File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"), "public result 中文😀".toArray())
+            let entries = persistTeacherRunArtifacts(root, run,
+                "generation public 中文😀 /Users/local/project, token=must-not-survive",
+                "verification public 😀 Authorization: Bearer must-not-survive")
+            @Expect(entries.map({entry: TeacherEvidenceEntry => entry.locator}),
+                ["generation.txt", "verification.txt", "run.manifest"])
+            let generation = teacherReadUtf8File("${base}/generation.txt")
+            let verification = teacherReadUtf8File("${base}/verification.txt")
+            @Expect(generation.startsWith("generation public 中文😀"), true)
+            @Expect(verification.startsWith("verification public 😀"), true)
+            @Expect(generation.contains("/Users/"), false)
+            @Expect((generation + verification).toAsciiLower().contains("must-not-survive"), false)
+            let index = teacherReadUtf8File("${base}/index.tsv")
+            @Expect(index.contains(root), false)
+            @Expect(index.contains("generation.txt\t${teacherStableHash(generation)}"), true)
+            @Expect(index.contains("verification.txt\t${teacherStableHash(verification)}"), true)
+            _ = persistTeacherSolutionBinding(root, run)
+            @Expect(validateTeacherSolutionBinding(root, run), true)
+            File.writeTo(Path("${base}/index.tsv"),
+                "${index}\n${base}/generation.txt\t${teacherStableHash(generation)}".toArray())
+            @Expect(validateTeacherSolutionBinding(root, run), false)
+            File.writeTo(Path("${base}/index.tsv"), index.toArray())
+            File.writeTo(Path("${base}/generation.txt"), [UInt8(0xff), UInt8(0xfe)])
+            @Expect(validateTeacherSolutionBinding(root, run), false)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     // TRP-UT-01 / TRP-POS-01 / TRP-E2E-01
     @TestCase public func repairProgressLedgerPersistsAttemptsAndGuidesFakeCodexToConverge(): Unit {
         let root = tempRoot("repair-progress-e2e")

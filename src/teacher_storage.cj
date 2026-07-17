@@ -63,18 +63,42 @@ private func teacherCollectDirectoryFiles(current: Path, relativeRoot: String, f
 }
 
 public func teacherSanitizeEvidence(value: String): String {
-    let clean = value.replace("Authorization", "[redacted]").replace("token", "[redacted]")
     let safeLines = ArrayList<String>()
-    for (line in clean.split("\n")) {
+    for (line in value.split("\n")) {
         let trimmed = line.trimAscii()
         if (trimmed.startsWith("package ") || trimmed.startsWith("func ") || trimmed.startsWith("public func ") ||
             trimmed.contains("return ") || trimmed.contains("=>")) { safeLines.add("[solution_content_redacted]") }
         else { safeLines.add(line) }
     }
-    let sanitized = teacherJoin(safeLines.toArray(), "\n")
-    let runes = sanitized.toRuneArray()
+    var sanitized = teacherJoin(safeLines.toArray(), "\n")
+    var runes = sanitized.toRuneArray()
+    let boundary = teacherEvidenceSensitiveBoundary(sanitized)
+    if (boundary < runes.size) {
+        let publicPrefix = if (boundary == 0) { "" } else { String(runes[..boundary]).trimAscii() }
+        sanitized = if (publicPrefix.isEmpty()) { "[redacted]" } else { "${publicPrefix} [redacted]" }
+        runes = sanitized.toRuneArray()
+    }
     if (runes.size <= 4000) { return sanitized }
     String(runes[..4000]) + "..."
+}
+
+private func teacherEvidenceSensitiveBoundary(value: String): Int64 {
+    let valueRunes = value.toAsciiLower().toRuneArray()
+    var earliest = valueRunes.size
+    for (rawMarker in ["/users/", "/home/", "/private/", "~/", "authorization", "token", "password",
+        "proxy", "secret"]) {
+        let marker = rawMarker.toRuneArray()
+        if (marker.size > valueRunes.size) { continue }
+        let lastStart = valueRunes.size - marker.size
+        for (start in 0..=lastStart) {
+            var matches = true
+            for (offset in 0..marker.size) {
+                if (valueRunes[start + offset] != marker[offset]) { matches = false; break }
+            }
+            if (matches && start < earliest) { earliest = start; break }
+        }
+    }
+    earliest
 }
 
 public func persistTeacherRunArtifacts(root: String, run: TeacherRunManifest, processEvidence: String,
@@ -84,9 +108,9 @@ public func persistTeacherRunArtifacts(root: String, run: TeacherRunManifest, pr
     let verifierPath = "${base}/verification.txt"
     let manifestPath = "${base}/run.manifest"
     let entries = [
-        TeacherEvidenceEntry(processPath, teacherAtomicWrite(processPath, processEvidence)),
-        TeacherEvidenceEntry(verifierPath, teacherAtomicWrite(verifierPath, verifierEvidence)),
-        TeacherEvidenceEntry(manifestPath, teacherAtomicWrite(manifestPath, renderTeacherRunManifest(run)))
+        TeacherEvidenceEntry("generation.txt", teacherAtomicWrite(processPath, teacherSanitizeEvidence(processEvidence))),
+        TeacherEvidenceEntry("verification.txt", teacherAtomicWrite(verifierPath, teacherSanitizeEvidence(verifierEvidence))),
+        TeacherEvidenceEntry("run.manifest", teacherAtomicWrite(manifestPath, renderTeacherRunManifest(run)))
     ]
     let index = teacherJoin(entries.map({e: TeacherEvidenceEntry => "${e.locator}\t${e.hash}"}), "\n")
     _ = teacherAtomicWrite("${base}/index.tsv", index)
@@ -125,8 +149,10 @@ public func validateTeacherSolutionBinding(root:String,run:TeacherRunManifest):B
 
 private func validateTeacherPersistedEvidenceIndex(base:String):Bool {
     try {
-        let index=teacherReadUtf8File("${base}/index.tsv")
-        for(name in ["generation.txt","verification.txt","run.manifest"]){let path="${base}/${name}";let expected="${path}\t${teacherStableHash(teacherReadUtf8File(path))}";if(!index.split("\n").contains(expected)){return false}}
+        let lines=teacherReadUtf8File("${base}/index.tsv").split("\n")
+        let names=["generation.txt","verification.txt","run.manifest"]
+        if(lines.size!=names.size){return false}
+        for(i in 0..names.size){let name=names[i];let path="${base}/${name}";let expected="${name}\t${teacherStableHash(teacherReadUtf8File(path))}";if(lines[i]!=expected){return false}}
         true
     }catch(_:Exception){false}
 }
