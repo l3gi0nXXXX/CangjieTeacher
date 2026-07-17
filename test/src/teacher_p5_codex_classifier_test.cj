@@ -30,6 +30,10 @@ private class P5CodexFakeExecutor <: TeacherCommandExecutor {
             case "string_case_v4_inline_import" => "In Cangjie 1.0.0, direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and performs ASCII-only lowercasing. Rune.toAsciiLowerCase() returns a Rune and is also ASCII-only. Unicode casing requires `import std.unicode.*`; Rune.toLowerCase() returns a Rune. String.toLower() is unavailable, and toLowerAscii is not a Cangjie API."
             case "string_case_inline_mention" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing mentions `std.unicode.*`; Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
             case "string_case_inline_after_import" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. After `import std.unicode.*`, Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
+            case "string_case_no_string_ascii" => "Direct String iteration yields UInt8 bytes. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
+            case "string_case_no_rune_ascii" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
+            case "string_case_no_unicode_rune" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.*. String.toLower() is unavailable."
+            case "string_case_no_invalid_api_negative" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune."
             case "string_case_import_mention" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing mentions std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
             case "string_case_after_import" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. After import std.unicode.*, Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
             case "string_case_wrong_api_conflict" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable. toLowerAscii is not a Cangjie API, but use toLowerAscii for compatibility."
@@ -37,7 +41,7 @@ private class P5CodexFakeExecutor <: TeacherCommandExecutor {
             case "string_case_comment_disguise" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.*; // Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
             case "string_case_iteration_rune" => "Direct String iteration yields Rune values. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable."
             case "string_case_wrong_api" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toLowerAscii(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable."
-            case "string_case_no_import" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion uses Rune.toLowerCase(): Rune. String.toLower() is unavailable."
+            case "string_case_no_import" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode conversion uses Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
             case "string_case_word_pile" => "UInt8 String iteration String.toAsciiLower Rune.toAsciiLowerCase std.unicode Rune.toLowerCase unavailable"
             case "reserved_match_valid" => "The reserved keyword `match` is invalid as a plain identifier. The backtick form `match` is a legal raw identifier. Alternatively, rename the variable to a non-keyword name. 中文🙂"
             case "reserved_match_valid_equivalent" => "Because `match` is a keyword, it is not valid as an ordinary identifier. As a raw identifier, `match` is valid, and using a different variable name is another option."
@@ -143,14 +147,29 @@ public class TeacherP5CodexClassifierTest {
             @Expect(executeTeacherP5CodexClassifierAdapter(equivalent.args,executor:P5CodexFakeExecutor(mode:mode),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
         }
 
-        for(mode in ["string_case_iteration_rune","string_case_wrong_api","string_case_no_import","string_case_word_pile",
-            "string_case_v2_a_missing_type","string_case_comment_disguise","string_case_import_mention","string_case_after_import",
-            "string_case_wrong_api_conflict","string_case_inline_mention","string_case_inline_after_import"]){
+        for((mode,diagnostic) in [("string_case_iteration_rune","classifier_string_case_contradictory"),
+            ("string_case_wrong_api","classifier_string_case_contradictory"),
+            ("string_case_word_pile","classifier_string_case_iteration_uint8_missing"),
+            ("string_case_no_string_ascii","classifier_string_case_string_ascii_api_missing"),
+            ("string_case_no_rune_ascii","classifier_string_case_rune_ascii_api_missing"),
+            ("string_case_no_import","classifier_string_case_unicode_import_missing"),
+            ("string_case_import_mention","classifier_string_case_unicode_import_missing"),
+            ("string_case_after_import","classifier_string_case_unicode_import_missing"),
+            ("string_case_inline_mention","classifier_string_case_unicode_import_missing"),
+            ("string_case_inline_after_import","classifier_string_case_unicode_import_missing"),
+            ("string_case_no_unicode_rune","classifier_string_case_unicode_rune_api_missing"),
+            ("string_case_v2_a_missing_type","classifier_string_case_unicode_return_type_missing"),
+            ("string_case_no_invalid_api_negative","classifier_string_case_invalid_api_negative_missing"),
+            ("string_case_wrong_api_conflict","classifier_string_case_contradictory"),
+            ("string_case_comment_disguise","classifier_string_case_comment_disguised")]){
             let fixture=p5CodexFixture("reject-${mode}",requestBody:p5StringCaseRequest())
             let rejected=executeTeacherP5CodexClassifierAdapter(fixture.args,executor:P5CodexFakeExecutor(mode:mode),codexExecutable:"/fake/codex",timeoutMillis:1000)
-            @Expect(rejected.diagnostic,"classifier_response_source_fact_unsupported")
+            @Expect(rejected.diagnostic,diagnostic)
             @Expect(exists(Path(fixture.output)),false)
-            @Expect(teacherReadUtf8File("${fixture.workspace}/classifier-diagnostic.json").contains("classifier_response_source_fact_unsupported"),true)
+            let sidecar=teacherReadUtf8File("${fixture.workspace}/classifier-diagnostic.json")
+            @Expect(sidecar,"{\"schemaVersion\":\"cangjie-teacher-classifier-diagnostic-v1\",\"diagnostic\":\"${diagnostic}\"}\n")
+            @Expect(sidecar.contains("String.toAsciiLower"),false);@Expect(sidecar.contains("/Users/"),false)
+            @Expect(sidecar.contains("token="),false)
         }
 
         let unrelated=p5CodexFixture("string-case-unrelated")

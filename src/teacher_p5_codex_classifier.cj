@@ -127,7 +127,12 @@ private func p5CodexClassifierDiagnosticAllowed(value: String): Bool {
         "classifier_response_source_fact_unsupported", "response_write_failed", "diagnostic_reset_failed",
         "classifier_reserved_match_plain_missing", "classifier_reserved_match_raw_missing",
         "classifier_reserved_match_rename_missing", "classifier_reserved_match_contradictory",
-        "classifier_reserved_match_comment_disguised", "classifier_failure_unknown"].contains(value)
+        "classifier_reserved_match_comment_disguised", "classifier_string_case_iteration_uint8_missing",
+        "classifier_string_case_string_ascii_api_missing", "classifier_string_case_rune_ascii_api_missing",
+        "classifier_string_case_unicode_import_missing", "classifier_string_case_unicode_rune_api_missing",
+        "classifier_string_case_unicode_return_type_missing", "classifier_string_case_invalid_api_negative_missing",
+        "classifier_string_case_contradictory", "classifier_string_case_comment_disguised",
+        "classifier_failure_unknown"].contains(value)
 }
 
 private func p5CodexClassifierSharedDiagnostic(value: String): String {
@@ -259,7 +264,7 @@ private func p5CodexResponseFactsDiagnostic(requestText:String,responseText:Stri
         let compiler=p5CodexString(request,"compilerTestSummary").toAsciiLower()
         let knowledge=p5CodexString(response,"knowledgeText").toAsciiLower()
         if(p5CodexStringCaseFailure(source,compiler)){
-            return if(p5CodexStringCaseFactsValid(knowledge)){"ok"}else{"classifier_response_source_fact_unsupported"}
+            return p5CodexStringCaseFactsDiagnostic(knowledge)
         }
         if(p5CodexReservedMatchFailure(source,compiler)){return p5CodexReservedMatchFactsDiagnostic(knowledge)}
         "ok"
@@ -298,22 +303,40 @@ private func p5CodexStringCaseFailure(source:String,compiler:String):Bool{
     source.contains(".tolower(")&&compiler.contains("'tolower' is not a member")&&compiler.contains("'string'")
 }
 
-private func p5CodexStringCaseFactsValid(knowledge:String):Bool{
+private func p5CodexStringCaseFactsDiagnostic(knowledge:String):String{
+    if(knowledge.contains("//")||knowledge.contains("/*")||knowledge.contains("*/")){
+        return "classifier_string_case_comment_disguised"
+    }
     let value=knowledge.replace("`", "")
-    if(!p5CodexToLowerAsciiClaimValid(value)){return false}
     let iterationUInt8=value.contains("string iteration yields uint8")||
         value.contains("iterating a string yields uint8")||value.contains("string iteration produces uint8")
     let iterationRune=value.contains("string iteration yields rune")||
         value.contains("iterating a string yields rune")||value.contains("string iteration produces rune")
+    let contradictory=iterationRune||value.contains("rune.tolowerascii")||value.contains("string.tolowerascii")||
+        value.contains("string.toasciilowercase")||value.contains("rune.toasciilower(")||
+        value.contains("use tolowerascii")||value.contains("call tolowerascii")||value.contains("tolowerascii returns")||
+        value.contains("tolowerascii is available")||value.contains("use string.tolower")||value.contains("call string.tolower")||
+        value.contains("string.tolower() is available")||value.contains("string supports string.tolower")||
+        value.contains("string provides string.tolower")
+    if(contradictory){return "classifier_string_case_contradictory"}
+    if(!iterationUInt8){return "classifier_string_case_iteration_uint8_missing"}
     let stringAscii=value.contains("string.toasciilower()")&&value.contains("ascii-only")&&
         (value.contains("returns a string")||value.contains(": string"))
+    if(!stringAscii){return "classifier_string_case_string_ascii_api_missing"}
     let runeAscii=value.contains("rune.toasciilowercase()")&&value.contains("ascii-only")&&
         (value.contains("returns a rune")||value.contains(": rune"))
-    let unicode=value.contains("unicode")&&p5CodexUnicodeImportRequired(value)&&
-        p5CodexRuneLowerResultValid(value)
+    if(!runeAscii){return "classifier_string_case_rune_ascii_api_missing"}
+    if(!value.contains("unicode")||!p5CodexUnicodeImportRequired(value)){
+        return "classifier_string_case_unicode_import_missing"
+    }
+    if(!value.contains("rune.tolowercase()")){return "classifier_string_case_unicode_rune_api_missing"}
+    if(!p5CodexRuneLowerResultValid(value)){return "classifier_string_case_unicode_return_type_missing"}
     let genericUnavailable=value.contains("string.tolower()")&&
         (value.contains("unavailable")||value.contains("does not provide")||value.contains("not a member")||value.contains("does not exist"))
-    iterationUInt8&&!iterationRune&&stringAscii&&runeAscii&&unicode&&genericUnavailable
+    if(!genericUnavailable||!p5CodexToLowerAsciiClaimValid(value)){
+        return "classifier_string_case_invalid_api_negative_missing"
+    }
+    "ok"
 }
 
 private func p5CodexToLowerAsciiClaimValid(knowledge:String):Bool{
