@@ -333,6 +333,10 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
     }else if(gap.contains("rune-numeric-conversion")){
         strong.clear();primary.clear()
         strong.add("rune");strong.add("uint32");primary.add("rune")
+    }else if(gap=="g-string-case-rune"){
+        strong.clear();primary.clear()
+        for(anchor in ["toasciilower","std.unicode","tolowercase"]){strong.add(anchor)}
+        primary.add("tolower")
     }else if(gap=="g-rune-unicode-case"){
         strong.clear();primary.clear()
         for(anchor in ["std.unicode","rune","touppercase","tolowercase"]){strong.add(anchor)}
@@ -364,8 +368,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
     var narrativeHits:Int64=0;var sourceHits:Int64=0
     for(anchor in required){if(teacherAuthorityAnchorPresent(narrative,anchor)){narrativeHits+=1};if(teacherAuthorityAnchorPresent(sources,anchor)){sourceHits+=1}}
     let eachSource=teacherAuthorityAnyAnchor(positive,required)&&teacherAuthorityAnyAnchor(negative,required)&&teacherAuthorityAnyAnchor(boundary,required)
-    let strongCoverage=strong.isEmpty()||teacherAuthorityAllAnchors(narrative,strong)&&teacherAuthorityAllAnchors(narrative,primary)&&teacherAuthorityAllSourceAnchors(positiveSource,strong)&&
-        teacherAuthorityAllSourceAnchors(boundarySource,strong)&&teacherAuthorityAllSourceAnchors(negativeSource,primary)
+    let strongCoverage=if(gap=="g-string-case-rune"){true}else{strong.isEmpty()||teacherAuthorityAllAnchors(narrative,strong)&&teacherAuthorityAllAnchors(narrative,primary)&&teacherAuthorityAllSourceAnchors(positiveSource,strong)&&
+        teacherAuthorityAllSourceAnchors(boundarySource,strong)&&teacherAuthorityAllSourceAnchors(negativeSource,primary)}
     if(narrativeHits>=minimum&&sourceHits>=minimum&&eachSource&&strongCoverage){
         let magic="$"+"{MAGIC_PATH}"
         let landedProject=narrative.contains("cjpm.toml")&&narrative.contains("[target.")&&narrative.contains(".bin-dependencies]")&&
@@ -405,6 +409,16 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
              !teacherAuthorityStringRuneContainsPositive(narrative,boundarySource)||
              !teacherAuthorityStringRuneContainsNegative(negativeSource))){
             out.feedback=teacherAuthorityStringRuneContainsFeedback()
+            return out
+        }
+        if(gap=="g-string-case-rune"&&
+            (!teacherAuthorityStringCaseRuneCompilerFact(compilerOutput)||
+             !teacherAuthorityStringCaseRuneNarrative(narrative)||
+             !teacherAuthorityStringCaseRunePositive(positiveSource)||
+             !teacherAuthorityStringCaseRuneBoundary(boundarySource)||
+             !teacherAuthorityStringCaseRuneNegative(negativeSource)||
+             positiveDependencyProfile=="stdx-magic"||negativeDependencyProfile=="stdx-magic"||boundaryDependencyProfile=="stdx-magic")){
+            out.feedback=teacherAuthorityStringCaseRuneFeedback()
             return out
         }
         if(gap=="g-rune-numeric-conversion"&&
@@ -453,6 +467,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         out.feedback=teacherAuthorityLogicalOrFeedback()
     }else if(gap=="g-string-rune-contains"){
         out.feedback=teacherAuthorityStringRuneContainsFeedback()
+    }else if(gap=="g-string-case-rune"){
+        out.feedback=teacherAuthorityStringCaseRuneFeedback()
     }else if(gap.contains("float64-abs")){
         out.feedback=teacherAuthorityFloat64AbsFeedback()
     }else if(gap.contains("string-rune-iteration")){
@@ -475,6 +491,73 @@ private func teacherAuthorityCompactCode(source:String):String{
 private func teacherAuthorityLogicalOrCompilerFact(compilerOutput:String):Bool{
     let value=compilerOutput.toAsciiLower()
     value.contains("expected '{'")&&value.contains("found '||'")
+}
+
+private func teacherAuthorityStringCaseRuneCompilerFact(compilerOutput:String):Bool{
+    let value=compilerOutput.toAsciiLower()
+    value.contains("'tolower'")&&value.contains("not a member")&&value.contains("'string'")
+}
+
+private func teacherAuthorityStringCaseRuneNarrative(narrative:String):Bool{
+    narrative.contains("string.toasciilower()")&&narrative.contains("ascii")&&narrative.contains("non-ascii")&&
+        (narrative.contains("unchanged")||narrative.contains("preserv"))&&narrative.contains("std.unicode")&&
+        narrative.contains("rune.tolowercase()")&&narrative.contains("string.tolower()")&&
+        (narrative.contains("unavailable")||narrative.contains("not a member")||narrative.contains("does not provide"))&&
+        !narrative.contains("tolowerascii")
+}
+
+private func teacherAuthorityStringCaseRunePositive(source:String):Bool{
+    let raw=teacherAuthorityRuneUnicodeCaseCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    if(code.contains(".tolowerascii(")||code.contains(".tolower(")||code.contains(".tolowercase(")){return false}
+    teacherAuthorityStringAsciiLowerAssignment(raw,code,false)
+}
+
+private func teacherAuthorityStringCaseRuneBoundary(source:String):Bool{
+    let raw=teacherAuthorityRuneUnicodeCaseCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    if(!teacherAuthorityHasImport(raw,"std.unicode")||code.contains(".tolowerascii(")||code.contains(".tolower(")){return false}
+    if(!teacherAuthorityStringAsciiLowerAssignment(raw,code,true)||!teacherAuthorityHasNonAsciiStringLiteral(source)||!teacherAuthorityHasNonAsciiRuneLiteral(source)){return false}
+    for(rune in teacherAuthorityNamesBeforeType(raw,"rune")){if(code.contains("${rune}.tolowercase()")){return true}}
+    false
+}
+
+private func teacherAuthorityStringCaseRuneNegative(source:String):Bool{
+    let raw=teacherAuthorityRuneUnicodeCaseCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    if(code.contains(".toasciilower(")||code.contains(".tolowerascii(")||code.contains(".tolowercase(")){return false}
+    for(text in teacherAuthorityNamesBeforeType(raw,"string")){if(code.contains("${text}.tolower()")){return true}}
+    false
+}
+
+private func teacherAuthorityStringAsciiLowerAssignment(raw:String,code:String,requirePreservation:Bool):Bool{
+    let strings=teacherAuthorityNamesBeforeType(raw,"string")
+    for(receiver in strings){for(result in strings){
+        if(receiver==result||!code.contains("${result}:string=${receiver}.toasciilower()")){continue}
+        if(!requirePreservation||code.contains("if(${result}!=${receiver}){throw")||code.contains("if(${receiver}!=${result}){throw")){return true}
+    }}
+    false
+}
+
+private func teacherAuthorityHasNonAsciiRuneLiteral(source:String):Bool{
+    let runes=teacherAuthorityRuneUnicodeCaseCodeOnly(source).toRuneArray()
+    if(runes.size<4){return false}
+    for(i in 0..runes.size-3){if(runes[i]==r'r'&&runes[i+1]==r'\''&&runes[i+2]>r'\u{007f}'&&runes[i+3]==r'\''){return true}}
+    false
+}
+
+private func teacherAuthorityHasNonAsciiStringLiteral(source:String):Bool{
+    let runes=source.toRuneArray();var quoted=false;var escaped=false;var lineComment=false;var blockComment=false;var i:Int64=0
+    while(i<runes.size){let c=runes[i];let next=if(i+1<runes.size){runes[i+1]}else{r'\u{0000}'}
+        if(lineComment){if(c==r'\n'){lineComment=false};i+=1;continue}
+        if(blockComment){if(c==r'*'&&next==r'/'){blockComment=false;i+=2}else{i+=1};continue}
+        if(quoted){if(escaped){escaped=false}else if(c==r'\\'){escaped=true}else if(c==r'"'){quoted=false}else if(c>r'\u{007f}'){return true};i+=1;continue}
+        if(c==r'/'&&next==r'/'){lineComment=true;i+=2;continue}
+        if(c==r'/'&&next==r'*'){blockComment=true;i+=2;continue}
+        if(c==r'"'){quoted=true};i+=1
+    }
+    false
+}
+
+private func teacherAuthorityStringCaseRuneFeedback():String{
+    teacherAuthorityBoundedFeedback("String has no toLower() member. The explanation/example must distinguish String.toAsciiLower(), which converts ASCII letters only and leaves non-ASCII text unchanged, from Unicode Rune conversion via import std.unicode.* and Rune.toLowerCase(); never use the nonexistent toLowerAscii name. The positive source must assign String.toAsciiLower() to an explicitly typed String. The boundary source must use a non-ASCII String and Rune, assert that toAsciiLower leaves the String unchanged, import std.unicode.*, and call toLowerCase() on the explicit Rune. The negative source must call toLower() on an explicit String to reproduce the compiler substring 'toLower' is not a member of struct 'String'. This standard-library knowledge requires no stdx-magic dependency; comments and string labels do not count as evidence.")
 }
 
 private func teacherAuthorityLogicalOrNarrative(narrative:String):Bool{
@@ -895,6 +978,8 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
     let repair=if(atomFeedback==""){""}else{"\nA previous authority relevance or atom test failed. Correct the proposed knowledge explanation, example, test sources, or expected diagnostic using this sanitized compiler evidence, then return a complete replacement object:\n${atomFeedback}"}
     let exactGapInstruction=if(row.missingKnowledge.toAsciiLower()=="g-logical-or-condition"){
         " For this exact gap, explain that Cangjie requires Bool || Bool inside one complete parenthesized if or while condition. Positive and boundary sources must explicitly declare two Bool operands and use main() without func in a compilable form such as if (left || right) { ... }. The negative source must use the same Bool types and the exact placement if (left) || (right) { ... }, with negativeDiagnostic set to expected '{', found '||'. Do not use Int operands, the nonexistent or keyword, func main, comments, or string labels as substitutes."
+    }else if(row.missingKnowledge.toAsciiLower()=="g-string-case-rune"){
+        " For this exact gap, state that String.toLower() does not exist, String.toAsciiLower() converts ASCII letters only and leaves non-ASCII text unchanged, and Unicode conversion uses import std.unicode.* with Rune.toLowerCase(). The positive source must assign String.toAsciiLower() to an explicitly typed String. The boundary source must use a non-ASCII String and Rune, throw if the toAsciiLower result differs from the original String, import std.unicode.*, and call toLowerCase() on that Rune. The negative source must call toLower() on an explicit String and set negativeDiagnostic to the compiler substring 'toLower' is not a member of struct 'String'. Never use the nonexistent toLowerAscii name, comments, or string labels as evidence; all three dependency profiles are none."
     }else{""}
     let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic, positiveDependencyProfile, negativeDependencyProfile, boundaryDependencyProfile. Dependency profile values must be none or stdx-magic. Use stdx-magic only when a source imports stdx and its cjpm project must declare the bundled stdx binary dependency; for a missing-dependency negative test use none. For an stdx CJPM dependency gap, explanation/example must show an applicable [target.<triple>.bin-dependencies] table with a direct path-option line using the literal ${"$"+"{MAGIC_PATH}"} prefix and ending in /dynamic/stdx; do not invent an stdx = table entry or a placeholder path. For an unnecessary undeclared import gap, explanation/example must say to verify API ownership and remove the unnecessary import instead of adding a dependency; positive and boundary sources must not contain std.text anywhere, including comments or strings, while the negative source mentions std.text only in the legal import line that reproduces the diagnostic.${exactGapInstruction} The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}${repair}"
     let extractorRoot="${options.root}/runs/${options.runId}/extractor-workspaces/${row.caseId}"

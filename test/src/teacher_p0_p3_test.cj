@@ -586,6 +586,42 @@ public class TeacherP0P3Test {
         @Expect(unrelated.ok,true)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRequiresExactStringCaseRuneApis():Unit{
+        let compiler="error: 'toLower' is not a member of struct 'String'"
+        let narrative="String.toLower() is unavailable. String.toAsciiLower() converts ASCII only and leaves non-ASCII characters unchanged. For Unicode case conversion, import std.unicode.*, obtain Rune values, and call Rune.toLowerCase(). 中文😀"
+        let positive="main(){ let text: String = \"XYZ\"; let lowered: String = text.toAsciiLower(); if (lowered != \"xyz\") { throw IllegalStateException(\"ascii lower failed\") } }"
+        let boundary="import std.unicode.*\nmain(){ let text: String = \"中😀\"; let lowered: String = text.toAsciiLower(); if (lowered != text) { throw IllegalStateException(\"non ascii changed\") }; let rune: Rune = r'中'; println(rune.toLowerCase()) }"
+        let negative="main(){ let text: String = \"ABC\"; println(text.toLower()) }"
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-STRING-CASE-RUNE",narrative,narrative,positive,negative,boundary)
+        @Expect(relevant.ok,true);@Expect(relevant.anchors.contains("toasciilower"),true)
+        @Expect(relevant.anchors.contains("std.unicode"),true);@Expect(relevant.anchors.contains("tolowercase"),true)
+
+        let generic="Use a lowercase helper when processing text."
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING-CASE-RUNE",generic,generic,positive,negative,boundary).ok,false)
+        let wrongApi=positive.replace("toAsciiLower","toLowerAscii")
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING-CASE-RUNE",narrative,narrative,wrongApi,negative,boundary).ok,false)
+        let wrongNegative=negative.replace("toLower()","toAsciiLower()")
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING-CASE-RUNE",narrative,narrative,positive,wrongNegative,boundary).ok,false)
+        let noPreservation=boundary.replace("if (lowered != text) { throw IllegalStateException(\"non ascii changed\") }; ","")
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING-CASE-RUNE",narrative,narrative,positive,negative,noPreservation).ok,false)
+        let stringReceiver=boundary.replace("let rune: Rune = r'中'; println(rune.toLowerCase())","println(text.toLowerCase())")
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING-CASE-RUNE",narrative,narrative,positive,negative,stringReceiver).ok,false)
+        let disguised="main(){ let text: String = \"ABC\"; println(\"text.toAsciiLower()\"); // text.toAsciiLower()\n println(text) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING-CASE-RUNE",narrative,narrative,disguised,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-STRING-CASE-RUNE",narrative,narrative,positive,negative,boundary,
+            positiveDependencyProfile:"stdx-magic",negativeDependencyProfile:"none",boundaryDependencyProfile:"none").ok,false)
+
+        let unsafeEvidence=compiler+" /Users/private/token Authorization Bearer secret "+String(Array<Rune>(2000,repeat:r'界'))
+        let unsafeResult=validateTeacherAuthorityRelevance(unsafeEvidence,"G-STRING-CASE-RUNE",generic,generic,disguised,wrongNegative,disguised)
+        @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.toRuneArray().size<=803,true)
+        @Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false)
+        @Expect(unsafeResult.feedback.contains("Authorization"),false);@Expect(unsafeResult.feedback.contains("😀"),false)
+
+        let unrelated=validateTeacherAuthorityRelevance("invalid binary operator '==' on type 'UInt8' and 'Rune'","G-RUNE-BYTE-COMPARE",
+            "Do not compare UInt8 == Rune without conversion.","UInt8 == Rune","UInt8 == Rune","UInt8 == Rune","UInt8 == Rune")
+        @Expect(unrelated.ok,true)
+    }
+
     @TestCase public func candidateAuthorityRelevanceRequiresExactRuneUnicodeCaseConversion():Unit{
         let compiler="error: undeclared identifier 'toUpper'; undeclared identifier 'toLower'"
         let narrative="For a Rune, import std.unicode.* and call Rune.toUpperCase() and Rune.toLowerCase(); Rune.toUpper() and Rune.toLower() are not declared. 中文😀"
@@ -1149,6 +1185,15 @@ public class TeacherP0P3Test {
     @TestCase public func candidateLogicalOrAtomReproducesAuthorityDiagnostic():Unit {
         let root="/tmp/teacher-logical-or-atom-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         let bundle="{\"tests\":[{\"category\":\"positive\",\"source\":\"main() { let left: Bool = true; let right: Bool = false; if (left || right) { println(left) } }\"},{\"category\":\"negative\",\"source\":\"main() { let left: Bool = true; let right: Bool = false; if (left) || (right) { println(left) } }\",\"expectedDiagnostic\":\"expected '{', found '||'\"},{\"category\":\"boundary\",\"source\":\"main() { let left: Bool = false; let right: Bool = false; while (left || right) { break } }\"}]}"
+        try{@Expect(executeTeacherAtomTestBundle(bundle,root).ok,true)}finally{try{remove(Path(root),recursive:true)}catch(_:Exception){}}
+    }
+
+    @TestCase public func candidateStringCaseRuneAtomReproducesAuthorityDiagnostic():Unit {
+        let root="/tmp/teacher-string-case-rune-atom-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        let positive="main() { let text: String = \\\"XYZ\\\"; let lowered: String = text.toAsciiLower(); if (lowered != \\\"xyz\\\") { throw IllegalStateException(\\\"ascii lower failed\\\") } }"
+        let negative="main() { let text: String = \\\"ABC\\\"; println(text.toLower()) }"
+        let boundary="import std.unicode.*\\nmain() { let text: String = \\\"中😀\\\"; let lowered: String = text.toAsciiLower(); if (lowered != text) { throw IllegalStateException(\\\"non ascii changed\\\") }; let rune: Rune = r'中'; println(rune.toLowerCase()) }"
+        let bundle="{\"tests\":[{\"category\":\"positive\",\"source\":\"${positive}\"},{\"category\":\"negative\",\"source\":\"${negative}\",\"expectedDiagnostic\":\"'toLower' is not a member of struct 'String'\"},{\"category\":\"boundary\",\"source\":\"${boundary}\"}]}"
         try{@Expect(executeTeacherAtomTestBundle(bundle,root).ok,true)}finally{try{remove(Path(root),recursive:true)}catch(_:Exception){}}
     }
 
