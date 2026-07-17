@@ -337,6 +337,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         strong.clear();primary.clear()
         for(anchor in ["std.unicode","rune","touppercase","tolowercase"]){strong.add(anchor)}
         primary.add("toupper");primary.add("tolower")
+    }else if(gap=="g-logical-or-condition"){
+        strong.clear();primary.clear();strong.add("||");primary.add("||")
     }else if(combinedStringByteRune){
         strong.clear();primary.clear()
         strong.add("uint8");strong.add("rune");strong.add("torunearray")
@@ -421,6 +423,16 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
             out.feedback=teacherAuthorityRuneUnicodeCaseFeedback()
             return out
         }
+        if(gap=="g-logical-or-condition"&&
+            (!teacherAuthorityLogicalOrCompilerFact(compilerOutput)||
+             !teacherAuthorityLogicalOrNarrative(narrative)||
+             !teacherAuthorityLogicalOrPositive(positiveSource)||
+             !teacherAuthorityLogicalOrPositive(boundarySource)||
+             !teacherAuthorityLogicalOrNegative(negativeSource)||
+             positiveDependencyProfile=="stdx-magic"||negativeDependencyProfile=="stdx-magic"||boundaryDependencyProfile=="stdx-magic")){
+            out.feedback=teacherAuthorityLogicalOrFeedback()
+            return out
+        }
         if(combinedStringByteRune&&
             (!teacherAuthorityCombinedStringByteRunePositive(narrative,positiveSource)||
              !teacherAuthorityCombinedStringByteRunePositive(narrative,boundarySource)||
@@ -437,6 +449,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         out.feedback=teacherAuthorityRuneNumericFeedback()
     }else if(gap=="g-rune-unicode-case"){
         out.feedback=teacherAuthorityRuneUnicodeCaseFeedback()
+    }else if(gap=="g-logical-or-condition"){
+        out.feedback=teacherAuthorityLogicalOrFeedback()
     }else if(gap=="g-string-rune-contains"){
         out.feedback=teacherAuthorityStringRuneContainsFeedback()
     }else if(gap.contains("float64-abs")){
@@ -456,6 +470,70 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
 
 private func teacherAuthorityCompactCode(source:String):String{
     teacherAuthorityCodeOnly(source).toAsciiLower().replace(" ","").replace("\t","").replace("\n","").replace("\r","")
+}
+
+private func teacherAuthorityLogicalOrCompilerFact(compilerOutput:String):Bool{
+    let value=compilerOutput.toAsciiLower()
+    value.contains("expected '{'")&&value.contains("found '||'")
+}
+
+private func teacherAuthorityLogicalOrNarrative(narrative:String):Bool{
+    narrative.contains("||")&&narrative.contains("bool")&&narrative.contains("condition")&&
+        (narrative.contains("parenthes")||narrative.contains("inside"))&&
+        (narrative.contains("brace")||narrative.contains("block")||narrative.contains("expected '{'"))
+}
+
+private func teacherAuthorityLogicalOrCode(source:String):String{
+    teacherAuthorityRuneUnicodeCaseCodeOnly(source).toAsciiLower().replace(" ","").replace("\t","").replace("\n","").replace("\r","")
+}
+
+private func teacherAuthorityLogicalOrMainAndTypes(source:String):Bool{
+    let raw=teacherAuthorityRuneUnicodeCaseCodeOnly(source).toAsciiLower()
+    let code=teacherAuthorityLogicalOrCode(source)
+    if(code.contains("funcmain(")||(!code.contains("main(){")&&!code.contains("main():unit{"))||teacherAuthorityHasIdentifierToken(raw,"or")){return false}
+    teacherAuthorityNamesBeforeType(raw,"bool").size>=2
+}
+
+private func teacherAuthorityLogicalOrPositive(source:String):Bool{
+    if(!teacherAuthorityLogicalOrMainAndTypes(source)){return false}
+    let raw=teacherAuthorityRuneUnicodeCaseCodeOnly(source).toAsciiLower()
+    let code=teacherAuthorityLogicalOrCode(source)
+    let names=teacherAuthorityNamesBeforeType(raw,"bool")
+    for(left in names){for(right in names){
+        if(left!=right&&(code.contains("if(${left}||${right}){")||code.contains("while(${left}||${right}){"))){return true}
+    }}
+    false
+}
+
+private func teacherAuthorityLogicalOrNegative(source:String):Bool{
+    if(!teacherAuthorityLogicalOrMainAndTypes(source)){return false}
+    let raw=teacherAuthorityRuneUnicodeCaseCodeOnly(source).toAsciiLower()
+    let code=teacherAuthorityLogicalOrCode(source)
+    let names=teacherAuthorityNamesBeforeType(raw,"bool")
+    for(left in names){for(right in names){
+        if(left!=right&&(code.contains("if(${left})||(${right}){")||code.contains("while(${left})||(${right}){"))){return true}
+    }}
+    false
+}
+
+private func teacherAuthorityHasIdentifierToken(source:String,token:String):Bool{
+    let runes=source.toRuneArray();let target=token.toRuneArray()
+    if(target.isEmpty()||runes.size<target.size){return false}
+    for(i in 0..=runes.size-target.size){
+        var matches=true
+        for(j in 0..target.size){if(runes[i+j]!=target[j]){matches=false;break}}
+        if(matches){
+            let leftOk=i==0||!teacherAuthorityIdentifierRune(runes[i-1])
+            let after=i+target.size
+            let rightOk=after>=runes.size||!teacherAuthorityIdentifierRune(runes[after])
+            if(leftOk&&rightOk){return true}
+        }
+    }
+    false
+}
+
+private func teacherAuthorityLogicalOrFeedback():String{
+    teacherAuthorityBoundedFeedback("Cangjie logical OR uses Bool || Bool inside one complete parenthesized if or while condition. Positive and boundary sources must explicitly declare two Bool operands, use main() without the func keyword, and compile a form such as if (left || right) { ... }. The negative source must declare the same Bool operand types and reproduce the authority placement error with if (left) || (right) { ... }; set negativeDiagnostic to the compiler substring expected '{', found '||'. Do not substitute Int/Bool type errors, the nonexistent or keyword, func main, comments, or string labels. This syntax requires no stdx-magic dependency.")
 }
 
 private func teacherAuthorityStringRuneIterationPositive(narrative:String,source:String):Bool{
@@ -810,7 +888,10 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
     let solutionHash=teacherDirectoryHash(solutionRoot)
     let allowedEvidence=teacherSanitizeEvidence(row.evidence+"\n"+row.compilerOutput)
     let repair=if(atomFeedback==""){""}else{"\nA previous authority relevance or atom test failed. Correct the proposed knowledge explanation, example, test sources, or expected diagnostic using this sanitized compiler evidence, then return a complete replacement object:\n${atomFeedback}"}
-    let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic, positiveDependencyProfile, negativeDependencyProfile, boundaryDependencyProfile. Dependency profile values must be none or stdx-magic. Use stdx-magic only when a source imports stdx and its cjpm project must declare the bundled stdx binary dependency; for a missing-dependency negative test use none. For an stdx CJPM dependency gap, explanation/example must show an applicable [target.<triple>.bin-dependencies] table with a direct path-option line using the literal ${"$"+"{MAGIC_PATH}"} prefix and ending in /dynamic/stdx; do not invent an stdx = table entry or a placeholder path. For an unnecessary undeclared import gap, explanation/example must say to verify API ownership and remove the unnecessary import instead of adding a dependency; positive and boundary sources must not contain std.text anywhere, including comments or strings, while the negative source mentions std.text only in the legal import line that reproduces the diagnostic. The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}${repair}"
+    let exactGapInstruction=if(row.missingKnowledge.toAsciiLower()=="g-logical-or-condition"){
+        " For this exact gap, explain that Cangjie requires Bool || Bool inside one complete parenthesized if or while condition. Positive and boundary sources must explicitly declare two Bool operands and use main() without func in a compilable form such as if (left || right) { ... }. The negative source must use the same Bool types and the exact placement if (left) || (right) { ... }, with negativeDiagnostic set to expected '{', found '||'. Do not use Int operands, the nonexistent or keyword, func main, comments, or string labels as substitutes."
+    }else{""}
+    let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic, positiveDependencyProfile, negativeDependencyProfile, boundaryDependencyProfile. Dependency profile values must be none or stdx-magic. Use stdx-magic only when a source imports stdx and its cjpm project must declare the bundled stdx binary dependency; for a missing-dependency negative test use none. For an stdx CJPM dependency gap, explanation/example must show an applicable [target.<triple>.bin-dependencies] table with a direct path-option line using the literal ${"$"+"{MAGIC_PATH}"} prefix and ending in /dynamic/stdx; do not invent an stdx = table entry or a placeholder path. For an unnecessary undeclared import gap, explanation/example must say to verify API ownership and remove the unnecessary import instead of adding a dependency; positive and boundary sources must not contain std.text anywhere, including comments or strings, while the negative source mentions std.text only in the legal import line that reproduces the diagnostic.${exactGapInstruction} The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}${repair}"
     let extractorRoot="${options.root}/runs/${options.runId}/extractor-workspaces/${row.caseId}"
     try { if(!exists(Path(extractorRoot))){Directory.create(Path(extractorRoot),recursive:true)} } catch(_:Exception){return(emptyTeacherAtomSpec(),"extractor_workspace_failed")}
     let schemaPath="${extractorRoot}/response.schema.json";let responsePath="${extractorRoot}/response.json"

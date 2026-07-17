@@ -553,6 +553,39 @@ public class TeacherP0P3Test {
         @Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false);@Expect(unsafeResult.feedback.contains("Authorization"),false)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRequiresExactLogicalOrConditionPlacement():Unit{
+        let compiler="error: expected '{', found '||' | error: trailing closure can only be used on function calls with function or variable names"
+        let narrative="Cangjie logical OR uses Bool || Bool inside the complete parenthesized if or while condition; closing the condition before || makes the parser expect the block opening brace. 中文😀"
+        let positive="main() { let left: Bool = true; let right: Bool = false; if (left || right) { println(left) } }"
+        let boundary="main() { let left: Bool = false; let right: Bool = false; while (left || right) { break } }"
+        let negative="main() { let left: Bool = true; let right: Bool = false; if (left) || (right) { println(left) } }"
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-LOGICAL-OR-CONDITION",narrative,narrative,positive,negative,boundary)
+        @Expect(relevant.ok,true);@Expect(relevant.anchors.contains("||"),true)
+
+        let typeError="main() { let left: Bool = true; let right: Int64 = 1; if (left || right) { println(left) } }"
+        let keyword="main() { let left: Bool = true; let right: Bool = false; if (left or right) { println(left) } }"
+        let funcMain=positive.replace("main()","func main()")
+        let validNegative=positive
+        let disguised="main() { let left: Bool = true; let right: Bool = false; println(\"if (left) || (right) {\"); // if (left) || (right) {\n if (left || right) { println(left) } }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-LOGICAL-OR-CONDITION",narrative,narrative,positive,typeError,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-LOGICAL-OR-CONDITION",narrative,narrative,keyword,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-LOGICAL-OR-CONDITION",narrative,narrative,funcMain,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-LOGICAL-OR-CONDITION",narrative,narrative,positive,validNegative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-LOGICAL-OR-CONDITION",narrative,narrative,positive,disguised,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-LOGICAL-OR-CONDITION",narrative,narrative,positive,negative,boundary,
+            positiveDependencyProfile:"stdx-magic",negativeDependencyProfile:"none",boundaryDependencyProfile:"none").ok,false)
+
+        let unsafeEvidence=compiler+" /Users/private/token Authorization Bearer secret "+String(Array<Rune>(2000,repeat:r'界'))
+        let unsafeResult=validateTeacherAuthorityRelevance(unsafeEvidence,"G-LOGICAL-OR-CONDITION","generic","generic","main(){}","main(){}","main(){}")
+        @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.toRuneArray().size<=803,true)
+        @Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false)
+        @Expect(unsafeResult.feedback.contains("Authorization"),false);@Expect(unsafeResult.feedback.contains("😀"),false)
+
+        let unrelated=validateTeacherAuthorityRelevance("invalid binary operator '==' on type 'UInt8' and 'Rune'","G-RUNE-BYTE-COMPARE",
+            "Do not compare UInt8 == Rune without conversion.","UInt8 == Rune","UInt8 == Rune","UInt8 == Rune","UInt8 == Rune")
+        @Expect(unrelated.ok,true)
+    }
+
     @TestCase public func candidateAuthorityRelevanceRequiresExactRuneUnicodeCaseConversion():Unit{
         let compiler="error: undeclared identifier 'toUpper'; undeclared identifier 'toLower'"
         let narrative="For a Rune, import std.unicode.* and call Rune.toUpperCase() and Rune.toLowerCase(); Rune.toUpper() and Rune.toLower() are not declared. 中文😀"
@@ -1096,6 +1129,12 @@ public class TeacherP0P3Test {
     @TestCase public func candidateAtomRunsInRealLocalCangjieWorkspaces():Unit {
         let root="/tmp/teacher-real-atom-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         let bundle="{\"tests\":[{\"category\":\"positive\",\"source\":\"main() { let value: Int64 = 1 }\"},{\"category\":\"negative\",\"source\":\"main() { let value: MissingType = 1 }\",\"expectedDiagnostic\":\"undeclared type name\"},{\"category\":\"boundary\",\"source\":\"main() { let text = \\\"中文😀\\\"; let count = text.toRuneArray().size }\"}]}"
+        try{@Expect(executeTeacherAtomTestBundle(bundle,root).ok,true)}finally{try{remove(Path(root),recursive:true)}catch(_:Exception){}}
+    }
+
+    @TestCase public func candidateLogicalOrAtomReproducesAuthorityDiagnostic():Unit {
+        let root="/tmp/teacher-logical-or-atom-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        let bundle="{\"tests\":[{\"category\":\"positive\",\"source\":\"main() { let left: Bool = true; let right: Bool = false; if (left || right) { println(left) } }\"},{\"category\":\"negative\",\"source\":\"main() { let left: Bool = true; let right: Bool = false; if (left) || (right) { println(left) } }\",\"expectedDiagnostic\":\"expected '{', found '||'\"},{\"category\":\"boundary\",\"source\":\"main() { let left: Bool = false; let right: Bool = false; while (left || right) { break } }\"}]}"
         try{@Expect(executeTeacherAtomTestBundle(bundle,root).ok,true)}finally{try{remove(Path(root),recursive:true)}catch(_:Exception){}}
     }
 
