@@ -23,6 +23,11 @@ private class P5CodexFakeExecutor <: TeacherCommandExecutor {
         if (mode == "oversized") { File.writeTo(Path(output), Array<UInt8>(262145, repeat: UInt8(65))); return TeacherProcessResult(0, "") }
         let knowledge = match(mode){
             case "string_case_valid" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String performs ASCII-only conversion. Rune.toAsciiLowerCase(): Rune is ASCII-only. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. The failing String.toLower() receiver is unavailable. 中文🙂"
+            case "string_case_returns_rune" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
+            case "string_case_produces_rune" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() produces a Rune. String.toLower() is unavailable."
+            case "string_case_result_is_rune" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and the result of Rune.toLowerCase() is a Rune. String.toLower() is unavailable."
+            case "string_case_v2_a_missing_type" => "In Cangjie 1.0.0, direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and performs ASCII-only lowercasing. Rune.toAsciiLowerCase() returns a Rune and is also ASCII-only. Unicode lowercasing requires import std.unicode.* and Rune.toLowerCase(). String.toLower() is unavailable, and toLowerAscii is not a Cangjie API."
+            case "string_case_comment_disguise" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.*; // Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
             case "string_case_iteration_rune" => "Direct String iteration yields Rune values. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable."
             case "string_case_wrong_api" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toLowerAscii(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable."
             case "string_case_no_import" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion uses Rune.toLowerCase(): Rune. String.toLower() is unavailable."
@@ -114,8 +119,15 @@ public class TeacherP5CodexClassifierTest {
         @Expect(prompt.contains("direct String iteration yields UInt8"),true)
         @Expect(prompt.contains("String.toAsciiLower()"),true);@Expect(prompt.contains("Rune.toAsciiLowerCase()"),true)
         @Expect(prompt.contains("import std.unicode.* and Rune.toLowerCase()"),true)
+        @Expect(prompt.contains("Rune.toLowerCase() returns a Rune"),true)
 
-        for(mode in ["string_case_iteration_rune","string_case_wrong_api","string_case_no_import","string_case_word_pile"]){
+        for(mode in ["string_case_returns_rune","string_case_produces_rune","string_case_result_is_rune"]){
+            let equivalent=p5CodexFixture("accept-${mode}",requestBody:p5StringCaseRequest())
+            @Expect(executeTeacherP5CodexClassifierAdapter(equivalent.args,executor:P5CodexFakeExecutor(mode:mode),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
+        }
+
+        for(mode in ["string_case_iteration_rune","string_case_wrong_api","string_case_no_import","string_case_word_pile",
+            "string_case_v2_a_missing_type","string_case_comment_disguise"]){
             let fixture=p5CodexFixture("reject-${mode}",requestBody:p5StringCaseRequest())
             let rejected=executeTeacherP5CodexClassifierAdapter(fixture.args,executor:P5CodexFakeExecutor(mode:mode),codexExecutable:"/fake/codex",timeoutMillis:1000)
             @Expect(rejected.diagnostic,"classifier_response_source_fact_unsupported")

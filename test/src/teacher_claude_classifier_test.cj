@@ -141,13 +141,25 @@ public class TeacherClaudeClassifierTest {
             @Expect(prompt.contains("direct String iteration yields UInt8"),true)
             @Expect(prompt.contains("String.toAsciiLower()"),true);@Expect(prompt.contains("Rune.toAsciiLowerCase()"),true)
             @Expect(prompt.contains("import std.unicode.* and Rune.toLowerCase()"),true)
+            @Expect(prompt.contains("Rune.toLowerCase() returns a Rune"),true)
             remove(Path("${r}/workspace/response.json"))
+
+            for(text in [
+                "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable.",
+                "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() produces a Rune. String.toLower() is unavailable.",
+                "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and the result of Rune.toLowerCase() is a Rune. String.toLower() is unavailable."
+            ]){
+                @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(text)))).diagnostic,"ok")
+                remove(Path("${r}/workspace/response.json"))
+            }
 
             for(text in [
                 "Direct String iteration yields Rune values. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable.",
                 "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toLowerAscii(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable.",
                 "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion uses Rune.toLowerCase(): Rune. String.toLower() is unavailable.",
-                "UInt8 String iteration String.toAsciiLower Rune.toAsciiLowerCase std.unicode Rune.toLowerCase unavailable"
+                "UInt8 String iteration String.toAsciiLower Rune.toAsciiLowerCase std.unicode Rune.toLowerCase unavailable",
+                "In Cangjie 1.0.0, direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and performs ASCII-only lowercasing. Rune.toAsciiLowerCase() returns a Rune and is also ASCII-only. Unicode lowercasing requires import std.unicode.* and Rune.toLowerCase(). String.toLower() is unavailable, and toLowerAscii is not a Cangjie API.",
+                "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.*; // Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
             ]){
                 let rejected=runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(text))))
                 @Expect(rejected.diagnostic,"classifier_response_source_fact_unsupported")

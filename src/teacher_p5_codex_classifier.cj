@@ -243,7 +243,7 @@ private func p5CodexGroundingPrompt(request:String):String{
         let source=p5CodexString(o,"studentSourceExcerpt").toAsciiLower()
         let compiler=p5CodexString(o,"compilerTestSummary").toAsciiLower()
         if(p5CodexStringCaseFailure(source,compiler)){
-            "For this visible String casing failure, use these exact Cangjie 1.0 facts: direct String iteration yields UInt8 bytes; String.toAsciiLower() returns a String and is ASCII-only; Rune.toAsciiLowerCase() returns a Rune and is ASCII-only; Unicode casing requires import std.unicode.* and Rune.toLowerCase(). String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Do not replace these relationships with generic casing advice. "
+            "For this visible String casing failure, use these exact Cangjie 1.0 facts: direct String iteration yields UInt8 bytes; String.toAsciiLower() returns a String and is ASCII-only; Rune.toAsciiLowerCase() returns a Rune and is ASCII-only; Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Do not replace these relationships with generic casing advice. "
         }else{""}
     }catch(_:Exception){""}
 }
@@ -274,10 +274,24 @@ private func p5CodexStringCaseFactsValid(knowledge:String):Bool{
     let runeAscii=knowledge.contains("rune.toasciilowercase()")&&knowledge.contains("ascii-only")&&
         (knowledge.contains("returns a rune")||knowledge.contains(": rune"))
     let unicode=knowledge.contains("unicode")&&knowledge.contains("requires import std.unicode")&&
-        knowledge.contains("rune.tolowercase()")&&(knowledge.contains("returns a rune")||knowledge.contains(": rune"))
+        p5CodexRuneLowerResultValid(knowledge)
     let genericUnavailable=knowledge.contains("string.tolower()")&&
         (knowledge.contains("unavailable")||knowledge.contains("does not provide")||knowledge.contains("not a member")||knowledge.contains("does not exist"))
     iterationUInt8&&!iterationRune&&stringAscii&&runeAscii&&unicode&&genericUnavailable
+}
+
+private func p5CodexRuneLowerResultValid(knowledge:String):Bool{
+    for(clause in knowledge.replace(";", ". ").split(". ")){
+        let value=clause.trimAscii()
+        if(!value.contains("rune.tolowercase()")){continue}
+        if(value.contains("//")||value.contains("/*")||value.contains("*/")){return false}
+        if(value.contains("rune.tolowercase() returns a rune")||
+            value.contains("rune.tolowercase() produces a rune")||
+            value.contains("rune.tolowercase() result is a rune")||
+            value.contains("result of rune.tolowercase() is a rune")||
+            value.contains("rune.tolowercase(): rune")){return true}
+    }
+    false
 }
 
 private func p5CodexOutputSchema(): String {
