@@ -586,6 +586,45 @@ public class TeacherP0P3Test {
         @Expect(unrelated.ok,true)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRequiresExactReservedMatchIdentifierFacts():Unit{
+        let compiler="error: expected identifier or pattern after 'var', found keyword 'match' 中文😀 /Users/private/token Authorization"
+        let narrative="match is a Cangjie keyword, so an ordinary identifier cannot be named match. Rename it to isMatch, or use the raw identifier `match` with backticks when the keyword spelling must be retained."
+        let positive="main(){ var isMatch: Bool = true; println(isMatch) }"
+        let boundary="main(){ var `match`: Bool = true; println(`match`) }"
+        let negative="main(){ var match: Bool = true; println(match) }"
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-RESERVED-KEYWORD-MATCH",narrative,narrative,positive,negative,boundary)
+        @Expect(relevant.ok,true);@Expect(relevant.anchors.contains("match"),true)
+
+        let absolute="The match keyword can never be used as an identifier; always rename it to isMatch."
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RESERVED-KEYWORD-MATCH",absolute,absolute,positive,negative,boundary).ok,false)
+        let generic="main(){ var found: Bool = true; println(found) }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RESERVED-KEYWORD-MATCH",narrative,narrative,generic,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RESERVED-KEYWORD-MATCH",narrative,narrative,positive,negative,positive).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RESERVED-KEYWORD-MATCH",narrative,narrative,positive,boundary,boundary).ok,false)
+        let disguised="// var isMatch: Bool = true\nmain(){ println(\"isMatch raw identifier `match`\") }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RESERVED-KEYWORD-MATCH",narrative,narrative,disguised,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance("undeclared identifier 'match'","G-RESERVED-KEYWORD-MATCH",narrative,narrative,positive,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-RESERVED-KEYWORD-MATCH",narrative,narrative,positive,negative,boundary,
+            positiveDependencyProfile:"stdx-magic",negativeDependencyProfile:"none",boundaryDependencyProfile:"none").ok,false)
+
+        let atomBundle="{\"tests\":[{\"category\":\"positive\",\"source\":\"main(){ var isMatch: Bool = true; println(isMatch) }\"},{\"category\":\"negative\",\"source\":\"main(){ var match: Bool = true; println(match) }\",\"expectedDiagnostic\":\"expected identifier or pattern after 'var', found keyword 'match'\"},{\"category\":\"boundary\",\"source\":\"main(){ var `match`: Bool = true; println(`match`) }\"}]}"
+        let atomRoot="/tmp/teacher-atom-reserved-match"
+        try{let atomResult=executeTeacherAtomTestBundle(atomBundle,atomRoot);@Expect(atomResult.ok,true);@Expect(atomResult.feedback,"")}finally{try{remove(Path(atomRoot),recursive:true)}catch(_:Exception){}}
+
+        let unsafeResult=validateTeacherAuthorityRelevance(compiler+String(Array<Rune>(2000,repeat:r'界')),
+            "G-RESERVED-KEYWORD-MATCH","generic","generic",disguised,boundary,disguised)
+        @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.toRuneArray().size<=803,true)
+        @Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false)
+        @Expect(unsafeResult.feedback.contains("Authorization"),false);@Expect(unsafeResult.feedback.contains("😀"),false)
+
+        let unrelated=validateTeacherAuthorityRelevance("invalid binary operator '<' on type 'UInt8' and 'Rune'","G-RUNE-BYTE-COMPARE",
+            "UInt8 and Rune are distinct; use toRuneArray before Rune comparison.","UInt8 Rune toRuneArray",
+            "main(){ let byte:UInt8=UInt8(65); let rune:Rune=r'A'; let runes:Array<Rune>=\"A\".toRuneArray(); println(byte); println(rune); println(runes) }",
+            "main(){ let byte:UInt8=UInt8(65); println(byte<r'A') }",
+            "main(){ let byte:UInt8=UInt8(0); let rune:Rune=r'中'; let runes:Array<Rune>=\"中\".toRuneArray(); println(byte); println(rune); println(runes) }")
+        @Expect(unrelated.feedback.contains("raw identifier"),false)
+    }
+
     @TestCase public func candidateAuthorityRelevanceRequiresExactStringCaseRuneApis():Unit{
         let compiler="error: 'toLower' is not a member of struct 'String'"
         let narrative="String.toLower() is unavailable. String.toAsciiLower() converts ASCII only and leaves non-ASCII characters unchanged. For Unicode case conversion, import std.unicode.*, obtain Rune values, and call Rune.toLowerCase(). 中文😀"

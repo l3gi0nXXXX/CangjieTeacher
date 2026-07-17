@@ -343,6 +343,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         primary.add("toupper");primary.add("tolower")
     }else if(gap=="g-logical-or-condition"){
         strong.clear();primary.clear();strong.add("||");primary.add("||")
+    }else if(gap=="g-reserved-keyword-match"){
+        strong.clear();primary.clear();strong.add("match");primary.add("match")
     }else if(combinedStringByteRune){
         strong.clear();primary.clear()
         strong.add("uint8");strong.add("rune");strong.add("torunearray")
@@ -368,7 +370,7 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
     var narrativeHits:Int64=0;var sourceHits:Int64=0
     for(anchor in required){if(teacherAuthorityAnchorPresent(narrative,anchor)){narrativeHits+=1};if(teacherAuthorityAnchorPresent(sources,anchor)){sourceHits+=1}}
     let eachSource=teacherAuthorityAnyAnchor(positive,required)&&teacherAuthorityAnyAnchor(negative,required)&&teacherAuthorityAnyAnchor(boundary,required)
-    let strongCoverage=if(gap=="g-string-case-rune"){true}else{strong.isEmpty()||teacherAuthorityAllAnchors(narrative,strong)&&teacherAuthorityAllAnchors(narrative,primary)&&teacherAuthorityAllSourceAnchors(positiveSource,strong)&&
+    let strongCoverage=if(gap=="g-string-case-rune"||gap=="g-reserved-keyword-match"){true}else{strong.isEmpty()||teacherAuthorityAllAnchors(narrative,strong)&&teacherAuthorityAllAnchors(narrative,primary)&&teacherAuthorityAllSourceAnchors(positiveSource,strong)&&
         teacherAuthorityAllSourceAnchors(boundarySource,strong)&&teacherAuthorityAllSourceAnchors(negativeSource,primary)}
     if(narrativeHits>=minimum&&sourceHits>=minimum&&eachSource&&strongCoverage){
         let magic="$"+"{MAGIC_PATH}"
@@ -447,6 +449,16 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
             out.feedback=teacherAuthorityLogicalOrFeedback()
             return out
         }
+        if(gap=="g-reserved-keyword-match"&&
+            (!teacherAuthorityReservedMatchCompilerFact(compilerOutput)||
+             !teacherAuthorityReservedMatchNarrative(narrative)||
+             !teacherAuthorityReservedMatchPositive(positiveSource)||
+             !teacherAuthorityReservedMatchBoundary(boundarySource)||
+             !teacherAuthorityReservedMatchNegative(negativeSource)||
+             positiveDependencyProfile=="stdx-magic"||negativeDependencyProfile=="stdx-magic"||boundaryDependencyProfile=="stdx-magic")){
+            out.feedback=teacherAuthorityReservedMatchFeedback()
+            return out
+        }
         if(combinedStringByteRune&&
             (!teacherAuthorityCombinedStringByteRunePositive(narrative,positiveSource)||
              !teacherAuthorityCombinedStringByteRunePositive(narrative,boundarySource)||
@@ -465,6 +477,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         out.feedback=teacherAuthorityRuneUnicodeCaseFeedback()
     }else if(gap=="g-logical-or-condition"){
         out.feedback=teacherAuthorityLogicalOrFeedback()
+    }else if(gap=="g-reserved-keyword-match"){
+        out.feedback=teacherAuthorityReservedMatchFeedback()
     }else if(gap=="g-string-rune-contains"){
         out.feedback=teacherAuthorityStringRuneContainsFeedback()
     }else if(gap=="g-string-case-rune"){
@@ -491,6 +505,40 @@ private func teacherAuthorityCompactCode(source:String):String{
 private func teacherAuthorityLogicalOrCompilerFact(compilerOutput:String):Bool{
     let value=compilerOutput.toAsciiLower()
     value.contains("expected '{'")&&value.contains("found '||'")
+}
+
+private func teacherAuthorityReservedMatchCompilerFact(compilerOutput:String):Bool{
+    let value=compilerOutput.toAsciiLower()
+    value.contains("expected identifier or pattern after 'var'")&&value.contains("found keyword 'match'")
+}
+
+private func teacherAuthorityReservedMatchNarrative(narrative:String):Bool{
+    let ordinary=narrative.contains("ordinary identifier")&&narrative.contains("keyword")&&narrative.contains("match")&&
+        (narrative.contains("cannot")||narrative.contains("must not"))
+    let rename=narrative.contains("ismatch")&&(narrative.contains("rename")||narrative.contains("name"))
+    let raw=narrative.contains("raw identifier")&&narrative.contains("`match`")&&
+        (narrative.contains("legal")||narrative.contains("allowed")||narrative.contains("can be")||narrative.contains("use the raw"))
+    ordinary&&rename&&raw
+}
+
+private func teacherAuthorityReservedMatchPositive(source:String):Bool{
+    let code=teacherAuthorityCompactCode(source)
+    !code.contains("varmatch")&&!code.contains("var`match`")&&
+        code.contains("varismatch:bool=")&&code.contains("println(ismatch)")
+}
+
+private func teacherAuthorityReservedMatchBoundary(source:String):Bool{
+    let code=teacherAuthorityCompactCode(source)
+    code.contains("var`match`:bool=")&&code.contains("println(`match`)")&&!code.contains("varmatch")
+}
+
+private func teacherAuthorityReservedMatchNegative(source:String):Bool{
+    let code=teacherAuthorityCompactCode(source)
+    code.contains("varmatch:bool=")&&code.contains("println(match)")&&!code.contains("`match`")
+}
+
+private func teacherAuthorityReservedMatchFeedback():String{
+    teacherAuthorityBoundedFeedback("Cangjie reserves match as a keyword, so plain var match cannot declare an ordinary identifier. The explanation/example must distinguish ordinary identifiers from raw identifiers: rename the variable to isMatch, or use the legal raw identifier `match` with backticks when retaining the spelling. The positive source must declare var isMatch: Bool and use isMatch. The boundary source must declare and use var `match`: Bool. The negative source must declare and use plain var match: Bool to reproduce expected identifier or pattern after 'var', found keyword 'match'. Do not claim that match can never be an identifier, and do not satisfy the gate with comments or string labels. All dependency profiles are none.")
 }
 
 private func teacherAuthorityStringCaseRuneCompilerFact(compilerOutput:String):Bool{
@@ -980,6 +1028,8 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
         " For this exact gap, explain that Cangjie requires Bool || Bool inside one complete parenthesized if or while condition. Positive and boundary sources must explicitly declare two Bool operands and use main() without func in a compilable form such as if (left || right) { ... }. The negative source must use the same Bool types and the exact placement if (left) || (right) { ... }, with negativeDiagnostic set to expected '{', found '||'. Do not use Int operands, the nonexistent or keyword, func main, comments, or string labels as substitutes."
     }else if(row.missingKnowledge.toAsciiLower()=="g-string-case-rune"){
         " For this exact gap, state that String.toLower() does not exist, String.toAsciiLower() converts ASCII letters only and leaves non-ASCII text unchanged, and Unicode conversion uses import std.unicode.* with Rune.toLowerCase(). The positive source must assign String.toAsciiLower() to an explicitly typed String. The boundary source must use a non-ASCII String and Rune, throw if the toAsciiLower result differs from the original String, import std.unicode.*, and call toLowerCase() on that Rune. The negative source must call toLower() on an explicit String and set negativeDiagnostic to the compiler substring 'toLower' is not a member of struct 'String'. Never use the nonexistent toLowerAscii name, comments, or string labels as evidence; all three dependency profiles are none."
+    }else if(row.missingKnowledge.toAsciiLower()=="g-reserved-keyword-match"){
+        " For this exact gap, state that match is a keyword and cannot be used as a plain ordinary identifier, but may legally be retained as the raw identifier `match` with backticks; also show the simpler rename isMatch. The positive source must declare and use var isMatch: Bool. The boundary source must declare and use var `match`: Bool with backticks. The negative source must declare and use plain var match: Bool and set negativeDiagnostic to expected identifier or pattern after 'var', found keyword 'match'. Do not claim that match can never be an identifier, and do not use comments or string labels as evidence; all dependency profiles are none."
     }else{""}
     let prompt="Extract reusable Cangjie knowledge as one JSON object. Never include the case id, solution code, task answer, hidden tests, or reference text. Required fields: provider=codex, model=${options.model}, knowledgeFamily (K4 enum), concept, explanation, example, citation, sourceClass, positiveSource, negativeSource, boundarySource, negativeDiagnostic, positiveDependencyProfile, negativeDependencyProfile, boundaryDependencyProfile. Dependency profile values must be none or stdx-magic. Use stdx-magic only when a source imports stdx and its cjpm project must declare the bundled stdx binary dependency; for a missing-dependency negative test use none. For an stdx CJPM dependency gap, explanation/example must show an applicable [target.<triple>.bin-dependencies] table with a direct path-option line using the literal ${"$"+"{MAGIC_PATH}"} prefix and ending in /dynamic/stdx; do not invent an stdx = table entry or a placeholder path. For an unnecessary undeclared import gap, explanation/example must say to verify API ownership and remove the unnecessary import instead of adding a dependency; positive and boundary sources must not contain std.text anywhere, including comments or strings, while the negative source mentions std.text only in the legal import line that reproduces the diagnostic.${exactGapInstruction} The three Source fields must each be a complete small Cangjie main source; positive and boundary must compile, negative must fail. Set citation to exactly '${row.citation}' with no Markdown, label, hash, or appended metadata. Set sourceClass to exactly 'official'. negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler for negativeSource, not an explanatory sentence. Do not place any evidence hash or binding metadata inside user-facing knowledge fields. Bind internally to gap=${row.missingKnowledge}, targetVersion=${row.targetVersion}, sourceEvidenceHash=${row.evidenceHash}, completedRunEvidenceHash=${run.evidenceHash}, solutionContentHash=${solutionHash}. Allowed first-attempt evidence follows:\n${allowedEvidence}${repair}"
     let extractorRoot="${options.root}/runs/${options.runId}/extractor-workspaces/${row.caseId}"
