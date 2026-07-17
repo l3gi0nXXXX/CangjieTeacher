@@ -21,6 +21,7 @@ public class TeacherClaudeClassifierTest {
     private func request():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-007\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"缺少 Rune 知识😀\"}"}
     private func absRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CASE-GENERIC-ABS\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"compile_error 中文😀\",\"studentSourceExcerpt\":\"main(): Unit { let value: Float64 = -3.5; println(value.abs()) }\",\"compilerTestSummary\":\"error: undeclared identifier 'abs' 中文😀\"}"}
     private func stringCaseRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-016\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"compile_error 中文😀\",\"studentSourceExcerpt\":\"for (c in text.toLower()) { println(c) }\",\"compilerTestSummary\":\"error: 'toLower' is not a member of struct 'String' 中文😀\"}"}
+    private func reservedMatchRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-018\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"compile_error 中文😀\",\"studentSourceExcerpt\":\"var match = true\",\"compilerTestSummary\":\"error: expected identifier or pattern after 'var', found keyword 'match' 中文😀\"}"}
     private func prerequisiteRequest(summary:String):String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CASE-GENERIC-IMPORT\",\"runId\":\"run-中文😀\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"resultEvidenceHash\":\"sha256:evidence\",\"failureObservation\":\"compile_error 中文😀\",\"studentSourceExcerpt\":\"main(): Unit { println(1) }\",\"compilerTestSummary\":\"${summary}\"}"}
     private func structured(category!:String="reasoning_failure",model!:String="GLM-5.2"):String{
         let body="{\"category\":\"${category}\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}"
@@ -168,6 +169,40 @@ public class TeacherClaudeClassifierTest {
 
             File.writeTo(Path("${r}/workspace/request.json"),request().toArray())
             @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("Use Rune boundaries for 中文😀 text.")))).diagnostic,"ok")
+        }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
+    }
+
+    // P5-C-018-UT/POS/NEG/BND: Claude must preserve the raw-identifier boundary for reserved `match`.
+    @TestCase public func reservedMatchRawIdentifierFactsAreRequestAwareAndFailClosed():Unit{
+        let setup=prepare("reserved-match-facts");let r=setup[0]
+        try{
+            File.writeTo(Path("${r}/workspace/request.json"),reservedMatchRequest().toArray())
+            let valid="The reserved keyword `match` is invalid as a plain identifier. The backtick form `match` is a legal raw identifier. Alternatively, rename the variable to a non-keyword name. 中文😀"
+            let correct=ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(valid)))
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:correct).diagnostic,"ok")
+            let prompt=correct.specs[0].args[1]
+            @Expect(prompt.contains("plain identifier"),true);@Expect(prompt.contains("raw identifier"),true)
+            @Expect(prompt.contains("`match`"),true);@Expect(prompt.contains("rename"),true)
+            remove(Path("${r}/workspace/response.json"))
+            let equivalent="Because `match` is a keyword, it is not valid as an ordinary identifier. As a raw identifier, `match` is valid, and using a different variable name is another option."
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(equivalent)))).diagnostic,"ok")
+            remove(Path("${r}/workspace/response.json"))
+
+            for(text in [
+                "Cangjie reserves `match` for match expressions, so it cannot be used as a local variable identifier.",
+                "In Cangjie, `match` is a reserved keyword and cannot be used as a variable name or identifier; choose another name.",
+                "The reserved keyword `match` is invalid as a plain identifier; rename the variable to a non-keyword name.",
+                "The reserved keyword `match` is invalid as a plain identifier, while the backtick form `match` is a legal raw identifier.",
+                "The reserved keyword `match` is invalid as a plain identifier. // The backtick form `match` is a legal raw identifier; rename it.",
+                "match keyword plain identifier raw identifier legal rename"
+            ]){
+                let rejected=runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured(text))))
+                @Expect(rejected.diagnostic,"classifier_response_source_fact_unsupported")
+                @Expect(exists(Path("${r}/workspace/response.json")),false)
+            }
+
+            File.writeTo(Path("${r}/workspace/request.json"),request().toArray())
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("Cangjie reserves `match` for match expressions, so it cannot be used as a local variable identifier.")))).diagnostic,"ok")
         }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
     }
 

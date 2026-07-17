@@ -244,6 +244,8 @@ private func p5CodexGroundingPrompt(request:String):String{
         let compiler=p5CodexString(o,"compilerTestSummary").toAsciiLower()
         if(p5CodexStringCaseFailure(source,compiler)){
             "For this visible String casing failure, use these exact Cangjie 1.0 facts: direct String iteration yields UInt8 bytes; String.toAsciiLower() returns a String and is ASCII-only; Rune.toAsciiLowerCase() returns a Rune and is ASCII-only; Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Do not replace these relationships with generic casing advice. "
+        }else if(p5CodexReservedMatchFailure(source,compiler)){
+            "For this visible reserved-keyword failure, use all of these exact Cangjie 1.0 facts: `match` is invalid as a plain identifier; the backtick form `match` is a legal raw identifier; alternatively, rename it to a non-keyword name. Never claim that `match` is forbidden as every kind of identifier. "
         }else{""}
     }catch(_:Exception){""}
 }
@@ -254,9 +256,32 @@ private func p5CodexResponseFactsValid(requestText:String,responseText:String):B
         if(p5CodexString(response,"category").toAsciiLower()!="knowledge_gap"){return true}
         let source=p5CodexString(request,"studentSourceExcerpt").toAsciiLower()
         let compiler=p5CodexString(request,"compilerTestSummary").toAsciiLower()
-        if(!p5CodexStringCaseFailure(source,compiler)){return true}
-        p5CodexStringCaseFactsValid(p5CodexString(response,"knowledgeText").toAsciiLower())
+        let knowledge=p5CodexString(response,"knowledgeText").toAsciiLower()
+        if(p5CodexStringCaseFailure(source,compiler)){return p5CodexStringCaseFactsValid(knowledge)}
+        if(p5CodexReservedMatchFailure(source,compiler)){return p5CodexReservedMatchFactsValid(knowledge)}
+        true
     }catch(_:Exception){false}
+}
+
+private func p5CodexReservedMatchFailure(source:String,compiler:String):Bool{
+    source.contains("var match")&&compiler.contains("expected identifier")&&compiler.contains("found keyword 'match'")
+}
+
+private func p5CodexReservedMatchFactsValid(knowledge:String):Bool{
+    if(knowledge.contains("//")||knowledge.contains("/*")||knowledge.contains("*/")||
+        knowledge.contains("cannot be used as a local variable identifier")||
+        knowledge.contains("cannot be used as a variable name or identifier")||
+        knowledge.contains("cannot be used as an identifier")){return false}
+    let plainScope=knowledge.contains("plain identifier")||knowledge.contains("ordinary identifier")||knowledge.contains("regular identifier")
+    let plainInvalid=knowledge.contains("`match`")&&knowledge.contains("keyword")&&plainScope&&
+        (knowledge.contains("invalid")||knowledge.contains("not valid")||knowledge.contains("cannot be used"))
+    let rawLegal=(knowledge.contains("backtick form `match`")&&knowledge.contains("legal raw identifier"))||
+        (knowledge.contains("raw identifier `match`")&&(knowledge.contains("is legal")||knowledge.contains("is valid")))||
+        knowledge.contains("`match` is a legal raw identifier")||knowledge.contains("`match` is a valid raw identifier")||
+        (knowledge.contains("as a raw identifier")&&knowledge.contains("`match` is valid"))
+    let rename=knowledge.contains("rename")||knowledge.contains("renaming")||knowledge.contains("different variable name")||
+        knowledge.contains("non-keyword name")
+    plainInvalid&&rawLegal&&rename
 }
 
 private func p5CodexStringCaseFailure(source:String,compiler:String):Bool{

@@ -149,6 +149,8 @@ private func claudeClassifierGroundingPrompt(request:String):String{
         let compiler=classifierString(o,"compilerTestSummary").toAsciiLower()
         if(claudeClassifierStringCaseFailure(source,compiler)){
             "For this visible String casing failure, use these exact Cangjie 1.0 facts: direct String iteration yields UInt8 bytes; String.toAsciiLower() returns a String and is ASCII-only; Rune.toAsciiLowerCase() returns a Rune and is ASCII-only; Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Do not replace these relationships with generic casing advice. "
+        }else if(claudeClassifierReservedMatchFailure(source,compiler)){
+            "For this visible reserved-keyword failure, use all of these exact Cangjie 1.0 facts: `match` is invalid as a plain identifier; the backtick form `match` is a legal raw identifier; alternatively, rename it to a non-keyword name. Never claim that `match` is forbidden as every kind of identifier. "
         }else if(source.contains(".abs(")&&compiler.contains("undeclared identifier 'abs'")){
             "For this visible receiver-style absolute-value failure, do not infer any package or import; if classifying a knowledge gap, state that receiver .abs() is unavailable and use the global documented abs(value) form. "
         }else{""}
@@ -165,6 +167,9 @@ private func claudeClassifierResponseFactsValid(requestText:String,responseText:
         if(claudeClassifierStringCaseFailure(source,compiler)){
             return claudeClassifierStringCaseFactsValid(knowledge)
         }
+        if(claudeClassifierReservedMatchFailure(source,compiler)){
+            return claudeClassifierReservedMatchFactsValid(knowledge)
+        }
         if(source.contains(".abs(")&&compiler.contains("undeclared identifier 'abs'")){
             let receiverUnavailable=knowledge.contains("receiver")&&knowledge.contains(".abs(")&&
                 (knowledge.contains("unavailable")||knowledge.contains("does not provide")||knowledge.contains("no member"))
@@ -177,6 +182,27 @@ private func claudeClassifierResponseFactsValid(requestText:String,responseText:
         for(packageName in claudeClassifierPackageTokens(knowledge)){if(!evidence.contains(packageName)){return false}}
         true
     }catch(_:Exception){false}
+}
+
+private func claudeClassifierReservedMatchFailure(source:String,compiler:String):Bool{
+    source.contains("var match")&&compiler.contains("expected identifier")&&compiler.contains("found keyword 'match'")
+}
+
+private func claudeClassifierReservedMatchFactsValid(knowledge:String):Bool{
+    if(knowledge.contains("//")||knowledge.contains("/*")||knowledge.contains("*/")||
+        knowledge.contains("cannot be used as a local variable identifier")||
+        knowledge.contains("cannot be used as a variable name or identifier")||
+        knowledge.contains("cannot be used as an identifier")){return false}
+    let plainScope=knowledge.contains("plain identifier")||knowledge.contains("ordinary identifier")||knowledge.contains("regular identifier")
+    let plainInvalid=knowledge.contains("`match`")&&knowledge.contains("keyword")&&plainScope&&
+        (knowledge.contains("invalid")||knowledge.contains("not valid")||knowledge.contains("cannot be used"))
+    let rawLegal=(knowledge.contains("backtick form `match`")&&knowledge.contains("legal raw identifier"))||
+        (knowledge.contains("raw identifier `match`")&&(knowledge.contains("is legal")||knowledge.contains("is valid")))||
+        knowledge.contains("`match` is a legal raw identifier")||knowledge.contains("`match` is a valid raw identifier")||
+        (knowledge.contains("as a raw identifier")&&knowledge.contains("`match` is valid"))
+    let rename=knowledge.contains("rename")||knowledge.contains("renaming")||knowledge.contains("different variable name")||
+        knowledge.contains("non-keyword name")
+    plainInvalid&&rawLegal&&rename
 }
 
 private func claudeClassifierStringCaseFailure(source:String,compiler:String):Bool{

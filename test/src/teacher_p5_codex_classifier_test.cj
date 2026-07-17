@@ -32,6 +32,14 @@ private class P5CodexFakeExecutor <: TeacherCommandExecutor {
             case "string_case_wrong_api" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toLowerAscii(): Rune. Unicode conversion requires import std.unicode.* and Rune.toLowerCase(): Rune. String.toLower() is unavailable."
             case "string_case_no_import" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower(): String. Rune.toAsciiLowerCase(): Rune. Unicode conversion uses Rune.toLowerCase(): Rune. String.toLower() is unavailable."
             case "string_case_word_pile" => "UInt8 String iteration String.toAsciiLower Rune.toAsciiLowerCase std.unicode Rune.toLowerCase unavailable"
+            case "reserved_match_valid" => "The reserved keyword `match` is invalid as a plain identifier. The backtick form `match` is a legal raw identifier. Alternatively, rename the variable to a non-keyword name. 中文🙂"
+            case "reserved_match_valid_equivalent" => "Because `match` is a keyword, it is not valid as an ordinary identifier. As a raw identifier, `match` is valid, and using a different variable name is another option."
+            case "reserved_match_v1_a" => "Cangjie reserves `match` for match expressions, so it cannot be used as a local variable identifier."
+            case "reserved_match_v1_b" => "In Cangjie, `match` is a reserved keyword and cannot be used as a variable name or identifier; choose another name."
+            case "reserved_match_no_raw" => "The reserved keyword `match` is invalid as a plain identifier; rename the variable to a non-keyword name."
+            case "reserved_match_no_rename" => "The reserved keyword `match` is invalid as a plain identifier, while the backtick form `match` is a legal raw identifier."
+            case "reserved_match_comment_disguise" => "The reserved keyword `match` is invalid as a plain identifier. // The backtick form `match` is a legal raw identifier; rename the variable."
+            case "reserved_match_word_pile" => "match keyword plain identifier raw identifier legal rename"
             case _ => "Use Rune boundaries for 中文🙂 text."
         }
         let body = if (mode == "malformed") { "{" } else if (mode == "forbidden") { "/Users/private/秘密🙂 token=secret" } else if (mode == "retrieval") { "{\"category\":\"retrieval_failure\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}" } else {
@@ -139,6 +147,29 @@ public class TeacherP5CodexClassifierTest {
         @Expect(executeTeacherP5CodexClassifierAdapter(unrelated.args,executor:P5CodexFakeExecutor(),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
     }
 
+    // P5-C-018-UT/POS/NEG/BND: ordinary `match`, raw identifier, and rename are one inseparable fact contract.
+    @TestCase public func p5CReservedMatchRawIdentifierFactsAreRequestAwareAndFailClosed(): Unit {
+        let accepted=p5CodexFixture("reserved-match-valid",requestBody:p5ReservedMatchRequest())
+        let validFake=P5CodexFakeExecutor(mode:"reserved_match_valid")
+        @Expect(executeTeacherP5CodexClassifierAdapter(accepted.args,executor:validFake,codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
+        let prompt=validFake.specs[0].args[validFake.specs[0].args.size-1]
+        @Expect(prompt.contains("plain identifier"),true);@Expect(prompt.contains("raw identifier"),true)
+        @Expect(prompt.contains("`match`"),true);@Expect(prompt.contains("rename"),true)
+        let equivalent=p5CodexFixture("reserved-match-valid-equivalent",requestBody:p5ReservedMatchRequest())
+        @Expect(executeTeacherP5CodexClassifierAdapter(equivalent.args,executor:P5CodexFakeExecutor(mode:"reserved_match_valid_equivalent"),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
+
+        for(mode in ["reserved_match_v1_a","reserved_match_v1_b","reserved_match_no_raw","reserved_match_no_rename",
+            "reserved_match_comment_disguise","reserved_match_word_pile"]){
+            let fixture=p5CodexFixture("reject-${mode}",requestBody:p5ReservedMatchRequest())
+            let rejected=executeTeacherP5CodexClassifierAdapter(fixture.args,executor:P5CodexFakeExecutor(mode:mode),codexExecutable:"/fake/codex",timeoutMillis:1000)
+            @Expect(rejected.diagnostic,"classifier_response_source_fact_unsupported")
+            @Expect(exists(Path(fixture.output)),false)
+        }
+
+        let unrelated=p5CodexFixture("reserved-match-unrelated")
+        @Expect(executeTeacherP5CodexClassifierAdapter(unrelated.args,executor:P5CodexFakeExecutor(mode:"reserved_match_v1_a"),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
+    }
+
     // P5-C-UT-05/POS-05/NEG-05/BND-05: failures expose only a workspace-local safe enum sidecar.
     @TestCase public func p5CSafeDiagnosticSidecarIsAtomicBoundedAndStaleSafe(): Unit {
         let sidecarName = "classifier-diagnostic.json"
@@ -174,6 +205,8 @@ private class P5CodexFixture {
 }
 
 private func p5StringCaseRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-016\",\"runId\":\"run-中文🙂\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"failureObservation\":\"compile_error 中文🙂\",\"studentSourceExcerpt\":\"for (c in text.toLower()) { println(c) }\",\"compilerTestSummary\":\"error: 'toLower' is not a member of struct 'String' 中文🙂\",\"resultEvidenceHash\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"}
+
+private func p5ReservedMatchRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-018\",\"runId\":\"run-中文🙂\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"failureObservation\":\"compile_error 中文🙂\",\"studentSourceExcerpt\":\"var match = true\",\"compilerTestSummary\":\"error: expected identifier or pattern after 'var', found keyword 'match' 中文🙂\",\"resultEvidenceHash\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"}
 
 private func p5CodexFixture(label:String,model!:String="GPT-5.6-Sol",requestBody!:String=""):P5CodexFixture{
     let root="/tmp/teacher-p5-codex-${label}-${DateTime.now().toUnixTimeStamp().toNanoseconds()}";let workspace="${root}/workspace";let runtime="${root}/runtime-home"
