@@ -586,6 +586,35 @@ public class TeacherP0P3Test {
         @Expect(unrelated.ok,true)
     }
 
+    @TestCase public func candidateAuthorityRelevanceRequiresExactControlFlowParentheses():Unit{
+        let compiler="error: expected '(', found 'd' | error: expected '(' after 'if', found 'm' | error: trailing closure can only be used on function calls with function or variable names"
+        let narrative="Cangjie if and while control-flow expressions require each Bool condition inside parentheses before the brace-delimited block. 中文😀"
+        let positive="main() { let keepRunning: Bool = false; while (keepRunning) { break }; let ready: Bool = true; if (ready) { println(ready) } }"
+        let boundary="main() { let enabled: Bool = false; while (enabled) { break }; if (!enabled) { println(\"中文😀\") } }"
+        let negative="main() { let ready: Bool = true; if ready { println(ready) } }"
+        let relevant=validateTeacherAuthorityRelevance(compiler,"G-CONTROL-FLOW-PARENTHESES",narrative,narrative,positive,negative,boundary)
+        @Expect(relevant.ok,true)
+
+        let onlyIf="main() { let ready: Bool = true; if (ready) { println(ready) } }"
+        let onlyWhile="main() { let ready: Bool = false; while (ready) { break } }"
+        let wrongNegative="main() { let ready: Int64 = 1; if (ready) { println(ready) } }"
+        let funcMain=positive.replace("main()","func main()")
+        let disguised="main() { println(\"while (ready) and if (ready)\"); // if ready { while ready {\n let ready: Bool = true; if (ready) { println(ready) } }"
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-CONTROL-FLOW-PARENTHESES",narrative,narrative,onlyIf,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-CONTROL-FLOW-PARENTHESES",narrative,narrative,positive,negative,onlyWhile).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-CONTROL-FLOW-PARENTHESES",narrative,narrative,positive,wrongNegative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-CONTROL-FLOW-PARENTHESES",narrative,narrative,funcMain,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-CONTROL-FLOW-PARENTHESES",narrative,narrative,disguised,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance("expected '{', found '||'","G-CONTROL-FLOW-PARENTHESES",narrative,narrative,positive,negative,boundary).ok,false)
+        @Expect(validateTeacherAuthorityRelevance(compiler,"G-CONTROL-FLOW-PARENTHESES",narrative,narrative,positive,negative,boundary,
+            positiveDependencyProfile:"stdx-magic",negativeDependencyProfile:"none",boundaryDependencyProfile:"none").ok,false)
+
+        let unsafeEvidence=compiler+" /Users/private/token Authorization Bearer secret "+String(Array<Rune>(2000,repeat:r'界'))
+        let unsafeResult=validateTeacherAuthorityRelevance(unsafeEvidence,"G-CONTROL-FLOW-PARENTHESES","generic","generic","main(){}","main(){}","main(){}")
+        @Expect(unsafeResult.ok,false);@Expect(unsafeResult.feedback.toRuneArray().size<=803,true)
+        @Expect(unsafeResult.feedback.contains("/Users"),false);@Expect(unsafeResult.feedback.toAsciiLower().contains("token"),false)
+    }
+
     @TestCase public func candidateAuthorityRelevanceRequiresExactReservedMatchIdentifierFacts():Unit{
         let compiler="error: expected identifier or pattern after 'var', found keyword 'match' 中文😀 /Users/private/token Authorization"
         let narrative="match is a Cangjie keyword, so an ordinary identifier cannot be named match. Rename it to isMatch, or use the raw identifier `match` with backticks when the keyword spelling must be retained."
@@ -1224,6 +1253,15 @@ public class TeacherP0P3Test {
     @TestCase public func candidateLogicalOrAtomReproducesAuthorityDiagnostic():Unit {
         let root="/tmp/teacher-logical-or-atom-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         let bundle="{\"tests\":[{\"category\":\"positive\",\"source\":\"main() { let left: Bool = true; let right: Bool = false; if (left || right) { println(left) } }\"},{\"category\":\"negative\",\"source\":\"main() { let left: Bool = true; let right: Bool = false; if (left) || (right) { println(left) } }\",\"expectedDiagnostic\":\"expected '{', found '||'\"},{\"category\":\"boundary\",\"source\":\"main() { let left: Bool = false; let right: Bool = false; while (left || right) { break } }\"}]}"
+        try{@Expect(executeTeacherAtomTestBundle(bundle,root).ok,true)}finally{try{remove(Path(root),recursive:true)}catch(_:Exception){}}
+    }
+
+    @TestCase public func candidateControlFlowParenthesesAtomReproducesAuthorityDiagnostic():Unit {
+        let root="/tmp/teacher-control-flow-parentheses-atom-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        let positive="main() { let keepRunning: Bool = false; while (keepRunning) { break }; let ready: Bool = true; if (ready) { println(ready) } }"
+        let negative="main() { let ready: Bool = true; if ready { println(ready) } }"
+        let boundary="main() { let enabled: Bool = false; while (enabled) { break }; if (!enabled) { println(enabled) } }"
+        let bundle="{\"tests\":[{\"category\":\"positive\",\"source\":\"${positive}\"},{\"category\":\"negative\",\"source\":\"${negative}\",\"expectedDiagnostic\":\"expected '(' after 'if'\"},{\"category\":\"boundary\",\"source\":\"${boundary}\"}]}"
         try{@Expect(executeTeacherAtomTestBundle(bundle,root).ok,true)}finally{try{remove(Path(root),recursive:true)}catch(_:Exception){}}
     }
 

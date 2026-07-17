@@ -343,6 +343,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         primary.add("toupper");primary.add("tolower")
     }else if(gap=="g-logical-or-condition"){
         strong.clear();primary.clear();strong.add("||");primary.add("||")
+    }else if(gap=="g-control-flow-parentheses"){
+        strong.clear();primary.clear();strong.add("if");strong.add("while");strong.add("bool");primary.add("if")
     }else if(gap=="g-reserved-keyword-match"){
         strong.clear();primary.clear();strong.add("match");primary.add("match")
     }else if(combinedStringByteRune){
@@ -449,6 +451,16 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
             out.feedback=teacherAuthorityLogicalOrFeedback()
             return out
         }
+        if(gap=="g-control-flow-parentheses"&&
+            (!teacherAuthorityControlFlowParenthesesCompilerFact(compilerOutput)||
+             !teacherAuthorityControlFlowParenthesesNarrative(narrative)||
+             !teacherAuthorityControlFlowParenthesesPositive(positiveSource)||
+             !teacherAuthorityControlFlowParenthesesPositive(boundarySource)||
+             !teacherAuthorityControlFlowParenthesesNegative(negativeSource)||
+             positiveDependencyProfile=="stdx-magic"||negativeDependencyProfile=="stdx-magic"||boundaryDependencyProfile=="stdx-magic")){
+            out.feedback=teacherAuthorityControlFlowParenthesesFeedback()
+            return out
+        }
         if(gap=="g-reserved-keyword-match"&&
             (!teacherAuthorityReservedMatchCompilerFact(compilerOutput)||
              !teacherAuthorityReservedMatchNarrative(narrative)||
@@ -477,6 +489,8 @@ public func validateTeacherAuthorityRelevance(compilerOutput:String,missingKnowl
         out.feedback=teacherAuthorityRuneUnicodeCaseFeedback()
     }else if(gap=="g-logical-or-condition"){
         out.feedback=teacherAuthorityLogicalOrFeedback()
+    }else if(gap=="g-control-flow-parentheses"){
+        out.feedback=teacherAuthorityControlFlowParenthesesFeedback()
     }else if(gap=="g-reserved-keyword-match"){
         out.feedback=teacherAuthorityReservedMatchFeedback()
     }else if(gap=="g-string-rune-contains"){
@@ -505,6 +519,42 @@ private func teacherAuthorityCompactCode(source:String):String{
 private func teacherAuthorityLogicalOrCompilerFact(compilerOutput:String):Bool{
     let value=compilerOutput.toAsciiLower()
     value.contains("expected '{'")&&value.contains("found '||'")
+}
+
+private func teacherAuthorityControlFlowParenthesesCompilerFact(compilerOutput:String):Bool{
+    let value=compilerOutput.toAsciiLower()
+    value.contains("expected '('")&&value.contains("expected '(' after 'if'")
+}
+
+private func teacherAuthorityControlFlowParenthesesNarrative(narrative:String):Bool{
+    narrative.contains("if")&&narrative.contains("while")&&narrative.contains("bool")&&
+        narrative.contains("condition")&&narrative.contains("parenthes")&&
+        (narrative.contains("brace")||narrative.contains("block"))
+}
+
+private func teacherAuthorityControlFlowParenthesesMain(source:String):Bool{
+    let code=teacherAuthorityCompactCode(source)
+    !code.contains("funcmain(")&&(code.contains("main(){")||code.contains("main():unit{"))
+}
+
+private func teacherAuthorityControlFlowParenthesesPositive(source:String):Bool{
+    if(!teacherAuthorityControlFlowParenthesesMain(source)){return false}
+    let raw=teacherAuthorityCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    if(teacherAuthorityNamesBeforeType(raw,"bool").isEmpty()){return false}
+    code.contains("if(")&&code.contains("while(")
+}
+
+private func teacherAuthorityControlFlowParenthesesNegative(source:String):Bool{
+    if(!teacherAuthorityControlFlowParenthesesMain(source)){return false}
+    let raw=teacherAuthorityCodeOnly(source).toAsciiLower();let code=teacherAuthorityCompactCode(source)
+    for(name in teacherAuthorityNamesBeforeType(raw,"bool")){
+        if(code.contains("if${name}{")&&!code.contains("if(${name}){")){return true}
+    }
+    false
+}
+
+private func teacherAuthorityControlFlowParenthesesFeedback():String{
+    teacherAuthorityBoundedFeedback("Cangjie if and while control-flow expressions require a Bool condition enclosed in parentheses before the brace-delimited block. Positive and boundary sources must use main() without func, declare explicit Bool values, and demonstrate both if (condition) { ... } and while (condition) { ... }. The negative source must declare an explicit Bool and use if condition { ... } without the required parentheses to reproduce expected '(' after 'if'. Do not substitute a non-Bool condition, logical-OR placement error, func main, comments, or string labels. All dependency profiles are none.")
 }
 
 private func teacherAuthorityReservedMatchCompilerFact(compilerOutput:String):Bool{
@@ -1026,6 +1076,8 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
     let repair=if(atomFeedback==""){""}else{"\nA previous authority relevance or atom test failed. Correct the proposed knowledge explanation, example, test sources, or expected diagnostic using this sanitized compiler evidence, then return a complete replacement object:\n${atomFeedback}"}
     let exactGapInstruction=if(row.missingKnowledge.toAsciiLower()=="g-logical-or-condition"){
         " For this exact gap, explain that Cangjie requires Bool || Bool inside one complete parenthesized if or while condition. Positive and boundary sources must explicitly declare two Bool operands and use main() without func in a compilable form such as if (left || right) { ... }. The negative source must use the same Bool types and the exact placement if (left) || (right) { ... }, with negativeDiagnostic set to expected '{', found '||'. Do not use Int operands, the nonexistent or keyword, func main, comments, or string labels as substitutes."
+    }else if(row.missingKnowledge.toAsciiLower()=="g-control-flow-parentheses"){
+        " For this exact gap, explain that Cangjie if and while control-flow expressions require each Bool condition inside parentheses before the brace-delimited block. Positive and boundary sources must use main() without func, declare explicit Bool values, and demonstrate both if (condition) { ... } and while (condition) { ... }. The negative source must declare an explicit Bool and use if condition { ... } without parentheses, with negativeDiagnostic set to expected '(' after 'if'. Do not substitute non-Bool conditions, logical-OR placement errors, comments, or string labels; all three dependency profiles are none."
     }else if(row.missingKnowledge.toAsciiLower()=="g-string-case-rune"){
         " For this exact gap, state that String.toLower() does not exist, String.toAsciiLower() converts ASCII letters only and leaves non-ASCII text unchanged, and Unicode conversion uses import std.unicode.* with Rune.toLowerCase(). The positive source must assign String.toAsciiLower() to an explicitly typed String. The boundary source must use a non-ASCII String and Rune, throw if the toAsciiLower result differs from the original String, import std.unicode.*, and call toLowerCase() on that Rune. The negative source must call toLower() on an explicit String and set negativeDiagnostic to the compiler substring 'toLower' is not a member of struct 'String'. Never use the nonexistent toLowerAscii name, comments, or string labels as evidence; all three dependency profiles are none."
     }else if(row.missingKnowledge.toAsciiLower()=="g-reserved-keyword-match"){
