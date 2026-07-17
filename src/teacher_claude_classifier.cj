@@ -210,7 +210,7 @@ private func claudeClassifierStringCaseFailure(source:String,compiler:String):Bo
 }
 
 private func claudeClassifierStringCaseFactsValid(knowledge:String):Bool{
-    if(knowledge.contains("tolowerascii")){return false}
+    if(!claudeClassifierToLowerAsciiClaimValid(knowledge)){return false}
     let iterationUInt8=(knowledge.contains("string iteration yields uint8")||
         knowledge.contains("iterating a string yields uint8")||knowledge.contains("string iteration produces uint8"))
     let iterationRune=knowledge.contains("string iteration yields rune")||
@@ -219,11 +219,32 @@ private func claudeClassifierStringCaseFactsValid(knowledge:String):Bool{
         (knowledge.contains("returns a string")||knowledge.contains(": string"))
     let runeAscii=knowledge.contains("rune.toasciilowercase()")&&knowledge.contains("ascii-only")&&
         (knowledge.contains("returns a rune")||knowledge.contains(": rune"))
-    let unicode=knowledge.contains("unicode")&&knowledge.contains("requires import std.unicode")&&
+    let unicode=knowledge.contains("unicode")&&claudeClassifierUnicodeImportRequired(knowledge)&&
         claudeClassifierRuneLowerResultValid(knowledge)
     let genericUnavailable=knowledge.contains("string.tolower()")&&
         (knowledge.contains("unavailable")||knowledge.contains("does not provide")||knowledge.contains("not a member")||knowledge.contains("does not exist"))
     iterationUInt8&&!iterationRune&&stringAscii&&runeAscii&&unicode&&genericUnavailable
+}
+
+private func claudeClassifierToLowerAsciiClaimValid(knowledge:String):Bool{
+    if(!knowledge.contains("tolowerascii")){return true}
+    if(knowledge.contains("//")||knowledge.contains("/*")||knowledge.contains("*/")){return false}
+    let denied=knowledge.contains("tolowerascii is not a cangjie api")||
+        knowledge.contains("tolowerascii is unavailable")||knowledge.contains("tolowerascii does not exist")
+    if(!denied){return false}
+    !(knowledge.contains("use tolowerascii")||knowledge.contains("call tolowerascii")||
+        knowledge.contains("tolowerascii returns")||knowledge.contains("tolowerascii is available")||
+        knowledge.contains("rune.tolowerascii")||knowledge.contains("string.tolowerascii"))
+}
+
+private func claudeClassifierUnicodeImportRequired(knowledge:String):Bool{
+    for(clause in knowledge.replace(";", ". ").split(". ")){
+        let value=clause.trimAscii()
+        if(!value.contains("std.unicode")){continue}
+        if(value.contains("//")||value.contains("/*")||value.contains("*/")){return false}
+        if(value.contains("requires import std.unicode")||value.contains("requires importing std.unicode")){return true}
+    }
+    false
 }
 
 private func claudeClassifierRuneLowerResultValid(knowledge:String):Bool{
