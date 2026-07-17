@@ -132,6 +132,7 @@ private func p5CodexClassifierDiagnosticAllowed(value: String): Bool {
         "classifier_string_case_unicode_import_missing", "classifier_string_case_unicode_rune_api_missing",
         "classifier_string_case_unicode_return_type_missing", "classifier_string_case_invalid_api_negative_missing",
         "classifier_string_case_contradictory", "classifier_string_case_comment_disguised",
+        "classifier_string_case_solution_leakage",
         "classifier_failure_unknown"].contains(value)
 }
 
@@ -249,7 +250,7 @@ private func p5CodexGroundingPrompt(request:String):String{
         let source=p5CodexString(o,"studentSourceExcerpt").toAsciiLower()
         let compiler=p5CodexString(o,"compilerTestSummary").toAsciiLower()
         if(p5CodexStringCaseFailure(source,compiler)){
-            "For this visible String casing failure, use these exact Cangjie 1.0 facts: direct String iteration yields UInt8 bytes; String.toAsciiLower() returns a String and is ASCII-only; Rune.toAsciiLowerCase() returns a Rune and is ASCII-only; Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. The knowledgeText must contain the exact clause: Unicode casing requires import std.unicode.*. The knowledgeText must contain the exact invalid API clause: String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Do not replace these relationships with generic casing advice. "
+            "For this visible String casing failure, use these exact Cangjie 1.0 facts: direct String iteration yields UInt8 bytes; String.toAsciiLower() returns a String and is ASCII-only; Rune.toAsciiLowerCase() returns a Rune and is ASCII-only; Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. The knowledgeText must contain the exact clause: Unicode casing requires import std.unicode.*. The knowledgeText must contain the exact invalid API clause: String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Do not replace these relationships with generic casing advice. Do not include the task-specific counting algorithm or implementation strategy in knowledgeText. "
         }else if(p5CodexReservedMatchFailure(source,compiler)){
             "For this visible reserved-keyword failure, use all of these exact Cangjie 1.0 facts: `match` is invalid as a plain identifier; the backtick form `match` is a legal raw identifier; alternatively, rename it to a non-keyword name. The knowledgeText must contain the exact clause: The backtick form `match` is a legal raw identifier. The knowledgeText must also contain the exact clause: `match` is invalid as a plain identifier. It must also state that renaming to a non-keyword name is valid. Never claim that `match` is forbidden as every kind of identifier. "
         }else{""}
@@ -262,8 +263,13 @@ private func p5CodexResponseFactsDiagnostic(requestText:String,responseText:Stri
         if(p5CodexString(response,"category").toAsciiLower()!="knowledge_gap"){return "ok"}
         let source=p5CodexString(request,"studentSourceExcerpt").toAsciiLower()
         let compiler=p5CodexString(request,"compilerTestSummary").toAsciiLower()
+        let task=p5CodexString(request,"taskText").toAsciiLower()
         let knowledge=p5CodexString(response,"knowledgeText").toAsciiLower()
         if(p5CodexStringCaseFailure(source,compiler)){
+            if(!p5CodexContainsComment(knowledge)&&p5CodexDistinctCaseCountGoal(task)&&
+                p5CodexDistinctCaseCountSolution(knowledge)){
+                return "classifier_string_case_solution_leakage"
+            }
             return p5CodexStringCaseFactsDiagnostic(knowledge)
         }
         if(p5CodexReservedMatchFailure(source,compiler)){return p5CodexReservedMatchFactsDiagnostic(knowledge)}
@@ -303,8 +309,35 @@ private func p5CodexStringCaseFailure(source:String,compiler:String):Bool{
     source.contains(".tolower(")&&compiler.contains("'tolower' is not a member")&&compiler.contains("'string'")
 }
 
+private func p5CodexContainsComment(value:String):Bool{
+    value.contains("//")||value.contains("/*")||value.contains("*/")
+}
+
+private func p5CodexDistinctCaseCountGoal(value:String):Bool{
+    let count=value.contains("count")||value.contains("how many")||value.contains("number of")||
+        value.contains("统计")||value.contains("计数")
+    let distinct=value.contains("distinct")||value.contains("unique")||value.contains("不同")||
+        value.contains("唯一")||value.contains("不重复")
+    let character=value.contains("character")||value.contains("字符")
+    let insensitive=value.contains("case-insensitive")||value.contains("case insensitive")||
+        value.contains("case insensitively")||value.contains("regardless of case")||value.contains("ignore case")||
+        value.contains("ignoring case")||value.contains("不区分大小写")||value.contains("忽略大小写")
+    count&&distinct&&character&&insensitive
+}
+
+private func p5CodexDistinctCaseCountSolution(knowledge:String):Bool{
+    if(!p5CodexDistinctCaseCountGoal(knowledge)){return false}
+    knowledge.contains("hashset")||knowledge.contains("hash set")||knowledge.contains("collect ")||
+        knowledge.contains("collect into")||knowledge.contains("collecting")||knowledge.contains("collected")||
+        knowledge.contains("iterate over")||knowledge.contains("iterating over")||knowledge.contains("loop")||
+        knowledge.contains("for (")||knowledge.contains("torunearray")||knowledge.contains("normalize case")||
+        knowledge.contains("遍历")||knowledge.contains("循环")||knowledge.contains("收集")||
+        (knowledge.contains("先")&&knowledge.contains("再"))||
+        (knowledge.contains("first ")&&knowledge.contains(" then "))
+}
+
 private func p5CodexStringCaseFactsDiagnostic(knowledge:String):String{
-    if(knowledge.contains("//")||knowledge.contains("/*")||knowledge.contains("*/")){
+    if(p5CodexContainsComment(knowledge)){
         return "classifier_string_case_comment_disguised"
     }
     let value=knowledge.replace("`", "")

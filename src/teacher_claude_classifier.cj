@@ -111,6 +111,7 @@ private func claudeClassifierDiagnosticAllowed(value:String):Bool{
         "classifier_string_case_unicode_import_missing","classifier_string_case_unicode_rune_api_missing",
         "classifier_string_case_unicode_return_type_missing","classifier_string_case_invalid_api_negative_missing",
         "classifier_string_case_contradictory","classifier_string_case_comment_disguised",
+        "classifier_string_case_solution_leakage",
         "classifier_failure_unknown"].contains(value)
 }
 
@@ -157,7 +158,7 @@ private func claudeClassifierGroundingPrompt(request:String):String{
         let o=JsonValue.fromStr(request).asObject();let source=classifierString(o,"studentSourceExcerpt").toAsciiLower()
         let compiler=classifierString(o,"compilerTestSummary").toAsciiLower()
         if(claudeClassifierStringCaseFailure(source,compiler)){
-            "For this visible String casing failure, use these exact Cangjie 1.0 facts: direct String iteration yields UInt8 bytes; String.toAsciiLower() returns a String and is ASCII-only; Rune.toAsciiLowerCase() returns a Rune and is ASCII-only; Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. The knowledgeText must contain the exact clause: Unicode casing requires import std.unicode.*. The knowledgeText must contain the exact invalid API clause: String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Do not replace these relationships with generic casing advice. "
+            "For this visible String casing failure, use these exact Cangjie 1.0 facts: direct String iteration yields UInt8 bytes; String.toAsciiLower() returns a String and is ASCII-only; Rune.toAsciiLowerCase() returns a Rune and is ASCII-only; Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. The knowledgeText must contain the exact clause: Unicode casing requires import std.unicode.*. The knowledgeText must contain the exact invalid API clause: String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Do not replace these relationships with generic casing advice. Do not include the task-specific counting algorithm or implementation strategy in knowledgeText. "
         }else if(claudeClassifierReservedMatchFailure(source,compiler)){
             "For this visible reserved-keyword failure, use all of these exact Cangjie 1.0 facts: `match` is invalid as a plain identifier; the backtick form `match` is a legal raw identifier; alternatively, rename it to a non-keyword name. The knowledgeText must contain the exact clause: The backtick form `match` is a legal raw identifier. The knowledgeText must also contain the exact clause: `match` is invalid as a plain identifier. It must also state that renaming to a non-keyword name is valid. Never claim that `match` is forbidden as every kind of identifier. "
         }else if(source.contains(".abs(")&&compiler.contains("undeclared identifier 'abs'")){
@@ -173,7 +174,12 @@ private func claudeClassifierResponseFactsDiagnostic(requestText:String,response
         let knowledge=classifierString(response,"knowledgeText").toAsciiLower()
         let source=classifierString(request,"studentSourceExcerpt").toAsciiLower()
         let compiler=classifierString(request,"compilerTestSummary").toAsciiLower()
+        let task=classifierString(request,"taskText").toAsciiLower()
         if(claudeClassifierStringCaseFailure(source,compiler)){
+            if(!claudeClassifierContainsComment(knowledge)&&claudeClassifierDistinctCaseCountGoal(task)&&
+                claudeClassifierDistinctCaseCountSolution(knowledge)){
+                return "classifier_string_case_solution_leakage"
+            }
             return claudeClassifierStringCaseFactsDiagnostic(knowledge)
         }
         if(claudeClassifierReservedMatchFailure(source,compiler)){
@@ -225,8 +231,35 @@ private func claudeClassifierStringCaseFailure(source:String,compiler:String):Bo
     source.contains(".tolower(")&&compiler.contains("'tolower' is not a member")&&compiler.contains("'string'")
 }
 
+private func claudeClassifierContainsComment(value:String):Bool{
+    value.contains("//")||value.contains("/*")||value.contains("*/")
+}
+
+private func claudeClassifierDistinctCaseCountGoal(value:String):Bool{
+    let count=value.contains("count")||value.contains("how many")||value.contains("number of")||
+        value.contains("统计")||value.contains("计数")
+    let distinct=value.contains("distinct")||value.contains("unique")||value.contains("不同")||
+        value.contains("唯一")||value.contains("不重复")
+    let character=value.contains("character")||value.contains("字符")
+    let insensitive=value.contains("case-insensitive")||value.contains("case insensitive")||
+        value.contains("case insensitively")||value.contains("regardless of case")||value.contains("ignore case")||
+        value.contains("ignoring case")||value.contains("不区分大小写")||value.contains("忽略大小写")
+    count&&distinct&&character&&insensitive
+}
+
+private func claudeClassifierDistinctCaseCountSolution(knowledge:String):Bool{
+    if(!claudeClassifierDistinctCaseCountGoal(knowledge)){return false}
+    knowledge.contains("hashset")||knowledge.contains("hash set")||knowledge.contains("collect ")||
+        knowledge.contains("collect into")||knowledge.contains("collecting")||knowledge.contains("collected")||
+        knowledge.contains("iterate over")||knowledge.contains("iterating over")||knowledge.contains("loop")||
+        knowledge.contains("for (")||knowledge.contains("torunearray")||knowledge.contains("normalize case")||
+        knowledge.contains("遍历")||knowledge.contains("循环")||knowledge.contains("收集")||
+        (knowledge.contains("先")&&knowledge.contains("再"))||
+        (knowledge.contains("first ")&&knowledge.contains(" then "))
+}
+
 private func claudeClassifierStringCaseFactsDiagnostic(knowledge:String):String{
-    if(knowledge.contains("//")||knowledge.contains("/*")||knowledge.contains("*/")){
+    if(claudeClassifierContainsComment(knowledge)){
         return "classifier_string_case_comment_disguised"
     }
     let value=knowledge.replace("`", "")

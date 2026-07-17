@@ -28,6 +28,12 @@ private class P5CodexFakeExecutor <: TeacherCommandExecutor {
             case "string_case_result_is_rune" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and the result of Rune.toLowerCase() is a Rune. String.toLower() is unavailable."
             case "string_case_v3_importing" => "In Cangjie 1.0.0, direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and performs ASCII-only casing. Rune.toAsciiLowerCase() returns a Rune and is also ASCII-only. Unicode casing requires importing std.unicode.*, after which Rune.toLowerCase() returns a Rune. String.toLower() is unavailable, and toLowerAscii is not a Cangjie API."
             case "string_case_v4_inline_import" => "In Cangjie 1.0.0, direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and performs ASCII-only lowercasing. Rune.toAsciiLowerCase() returns a Rune and is also ASCII-only. Unicode casing requires `import std.unicode.*`; Rune.toLowerCase() returns a Rune. String.toLower() is unavailable, and toLowerAscii is not a Cangjie API."
+            case "string_case_solution_leak" => "In Cangjie 1.0.0, direct String iteration yields UInt8 bytes, not Rune values. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. When counting distinct characters case-insensitively, iterate over the String as Runes, normalize case, and collect into a HashSet<Rune>."
+            case "string_case_solution_leak_chinese" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. 统计不区分大小写的不同字符时，遍历字符并收集到 HashSet<Rune>。中文🙂"
+            case "string_case_solution_leak_word_pile" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. count distinct character case-insensitive HashSet collect loop"
+            case "string_case_solution_leak_comment" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. // Count distinct characters regardless of case with a HashSet."
+            case "string_case_generic_hashset" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. HashSet is a general collection type."
+            case "string_case_goal_without_strategy" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable and toLowerAscii is not a Cangjie API. Character casing is relevant when counting distinct characters regardless of case."
             case "string_case_inline_mention" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing mentions `std.unicode.*`; Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
             case "string_case_inline_after_import" => "Direct String iteration yields UInt8 bytes. String.toAsciiLower() returns a String and is ASCII-only. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. After `import std.unicode.*`, Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
             case "string_case_no_string_ascii" => "Direct String iteration yields UInt8 bytes. Rune.toAsciiLowerCase() returns a Rune and is ASCII-only. Unicode casing requires import std.unicode.* and Rune.toLowerCase() returns a Rune. String.toLower() is unavailable."
@@ -142,9 +148,10 @@ public class TeacherP5CodexClassifierTest {
         @Expect(prompt.contains("Rune.toLowerCase() returns a Rune"),true)
         @Expect(prompt.contains("knowledgeText must contain the exact clause: Unicode casing requires import std.unicode.*"),true)
         @Expect(prompt.contains("knowledgeText must contain the exact invalid API clause: String.toLower() is unavailable and toLowerAscii is not a Cangjie API."),true)
+        @Expect(prompt.contains("Do not include the task-specific counting algorithm or implementation strategy in knowledgeText."),true)
 
         for(mode in ["string_case_returns_rune","string_case_produces_rune","string_case_result_is_rune","string_case_v3_importing",
-            "string_case_v4_inline_import"]){
+            "string_case_v4_inline_import","string_case_generic_hashset","string_case_goal_without_strategy"]){
             let equivalent=p5CodexFixture("accept-${mode}",requestBody:p5StringCaseRequest())
             @Expect(executeTeacherP5CodexClassifierAdapter(equivalent.args,executor:P5CodexFakeExecutor(mode:mode),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
         }
@@ -163,6 +170,10 @@ public class TeacherP5CodexClassifierTest {
             ("string_case_v2_a_missing_type","classifier_string_case_unicode_return_type_missing"),
             ("string_case_no_invalid_api_negative","classifier_string_case_invalid_api_negative_missing"),
             ("string_case_wrong_api_conflict","classifier_string_case_contradictory"),
+            ("string_case_solution_leak","classifier_string_case_solution_leakage"),
+            ("string_case_solution_leak_chinese","classifier_string_case_solution_leakage"),
+            ("string_case_solution_leak_word_pile","classifier_string_case_solution_leakage"),
+            ("string_case_solution_leak_comment","classifier_string_case_comment_disguised"),
             ("string_case_comment_disguise","classifier_string_case_comment_disguised")]){
             let fixture=p5CodexFixture("reject-${mode}",requestBody:p5StringCaseRequest())
             let rejected=executeTeacherP5CodexClassifierAdapter(fixture.args,executor:P5CodexFakeExecutor(mode:mode),codexExecutable:"/fake/codex",timeoutMillis:1000)
@@ -174,8 +185,8 @@ public class TeacherP5CodexClassifierTest {
             @Expect(sidecar.contains("token="),false)
         }
 
-        let unrelated=p5CodexFixture("string-case-unrelated")
-        @Expect(executeTeacherP5CodexClassifierAdapter(unrelated.args,executor:P5CodexFakeExecutor(),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
+        let unrelated=p5CodexFixture("string-case-unrelated",requestBody:p5StringCaseNonGoalRequest())
+        @Expect(executeTeacherP5CodexClassifierAdapter(unrelated.args,executor:P5CodexFakeExecutor(mode:"string_case_solution_leak"),codexExecutable:"/fake/codex",timeoutMillis:1000).diagnostic,"ok")
     }
 
     // P5-C-018-UT/POS/NEG/BND: ordinary `match`, raw identifier, and rename are one inseparable fact contract.
@@ -247,7 +258,9 @@ private class P5CodexFixture {
     public init(root:String,workspace:String,runtimeHome:String,request:String,output:String,args:Array<String>){this.root=root;this.workspace=workspace;this.runtimeHome=runtimeHome;this.request=request;this.output=output;this.args=args}
 }
 
-private func p5StringCaseRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-016\",\"runId\":\"run-中文🙂\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"failureObservation\":\"compile_error 中文🙂\",\"studentSourceExcerpt\":\"for (c in text.toLower()) { println(c) }\",\"compilerTestSummary\":\"error: 'toLower' is not a member of struct 'String' 中文🙂\",\"resultEvidenceHash\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"}
+private func p5StringCaseRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-016\",\"runId\":\"run-中文🙂\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"taskText\":\"Count distinct characters regardless of case. 统计不区分大小写的不同字符。\",\"failureObservation\":\"compile_error 中文🙂\",\"studentSourceExcerpt\":\"for (c in text.toLower()) { println(c) }\",\"compilerTestSummary\":\"error: 'toLower' is not a member of struct 'String' 中文🙂\",\"resultEvidenceHash\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"}
+
+private func p5StringCaseNonGoalRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CASE-STRING-DISPLAY\",\"runId\":\"run-中文🙂\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"taskText\":\"Convert a String to lowercase for display.\",\"failureObservation\":\"compile_error 中文🙂\",\"studentSourceExcerpt\":\"for (c in text.toLower()) { println(c) }\",\"compilerTestSummary\":\"error: 'toLower' is not a member of struct 'String' 中文🙂\",\"resultEvidenceHash\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"}
 
 private func p5ReservedMatchRequest():String{"{\"schemaVersion\":\"ckb-p5-classifier-request-v1\",\"caseId\":\"CJ-HUMANEVAL-018\",\"runId\":\"run-中文🙂\",\"datasetVersion\":\"dataset-v1\",\"attempt\":1,\"runMode\":\"development\",\"failureObservation\":\"compile_error 中文🙂\",\"studentSourceExcerpt\":\"var match = true\",\"compilerTestSummary\":\"error: expected identifier or pattern after 'var', found keyword 'match' 中文🙂\",\"resultEvidenceHash\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"}
 
