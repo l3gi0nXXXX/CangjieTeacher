@@ -709,6 +709,54 @@ public class TeacherP0P3Test {
         @Expect(auditCaseSpecificity(candidate, ["func secretCase"] ).passed, true)
         @Expect(auditCandidateAgainstSolutions(candidate, ["func hiddenAnswer(x: Int64) { return x * 987654 }" ]).passed, true)
     }
+    // P3-POS-02 / P3-NEG-01: empirical knowledge is source-less only when
+    // its dedicated provenance is enforced by the candidate control path.
+    @TestCase public func p3TeacherEmpiricalSourceClassHasNoFakeCitation(): Unit {
+        let observation = TeacherObservation("CJ-HUMANEVAL-163", "algorithm_pattern", "stable derived-key ordering",
+            "1.0.0", "Preserve input order when derived keys compare equal.", "", "teacher_empirical", "sha256:evidence")
+        @Expect(validateTeacherObservation(observation), true)
+        let candidate = TeacherCandidateExport("G-STABLE-DERIVED-KEY-ORDERING", "algorithm_pattern",
+            "stable derived-key ordering", "1.0.0", observation.explanation, "Use an indexed stable insertion.",
+            "", "teacher_empirical", "sha256:provenance", buildKnowledgeAtomTestBundle("positive", "negative", "boundary"))
+        @Expect(validateTeacherCandidateExport(candidate), true)
+        let unverified = TeacherCandidateExport(candidate.identity, candidate.knowledgeFamily, candidate.concept,
+            candidate.targetVersion, candidate.explanation, candidate.example, "", "unknown_empirical",
+            candidate.provenanceHash, candidate.tests)
+        @Expect(validateTeacherCandidateExport(unverified), false)
+    }
+    @TestCase public func p3Pos02TeacherEmpiricalBuildBindsAllProvenance(): Unit {
+        let root = "/tmp/cangjie-teacher-empirical-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            Directory.create(Path(root), recursive: true)
+            File.writeTo(Path("${root}/manifest.jsonl"), (teacherJoin(caseLines(), "\n") + "\n").toArray())
+            Directory.create(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src"), recursive: true)
+            File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"), "private opaque implementation 987654".toArray())
+            let run = TeacherRunManifest("teacher-r1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol",
+                "prompt-hash", 1, "complete", 0, "sha256:completed-evidence")
+            _ = persistCompletedTeacherRuns("${root}/runs/teacher-r1/completed.manifest", [run])
+            _ = persistTeacherRunArtifacts(root, run, "generation", "verification")
+            _ = persistTeacherSolutionBinding(root, run)
+            let evidence = "valid first sample failed public verifier with expected and actual values"
+            let gap = "{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"dataset-v1\",\"teacherRunId\":\"student-r1\",\"evidenceHash\":\"sha256:${teacherStableHash(evidence)}\",\"evidence\":\"${evidence}\",\"failureTaxonomy\":\"unit_failure\",\"knowledgeGapConfirmations\":0,\"sourceClass\":\"teacher_empirical\",\"caseId\":\"CJ-HUMANEVAL-000\",\"benchmark\":\"Cangjie-HumanEval\",\"taskText\":\"authority bound task\",\"visibleTestExcerpt\":\"\",\"compilerOutput\":\"knowledge gap\",\"missingKnowledge\":\"G-STRING\",\"interfaceId\":\"KI-02\",\"contentFamily\":\"KC-02\",\"updateMechanism\":\"KU-11\",\"targetVersion\":\"1.0.0\",\"officialCitation\":\"\"}\n"
+            File.writeTo(Path("${root}/gap.jsonl"), gap.toArray())
+            let options = TeacherCliOptions(); options.root=root; options.manifest="${root}/manifest.jsonl"
+            options.checksum=teacherStableHash(teacherJoin(caseLines(), "\n"));options.authorityGap="${root}/gap.jsonl"
+            options.runId="teacher-r1";options.outputRoot="${root}/exports/empirical";options.model="gpt-5.6-sol"
+            let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"algorithm_pattern\",\"concept\":\"UTF-8 String Rune iteration\",\"explanation\":\"Use String Rune iteration for Unicode character boundaries.\",\"example\":\"Declare text.runes(); compare with &&, <, > for 中文😀.\",\"citation\":\"\",\"sourceClass\":\"teacher_empirical\",\"positiveSource\":\"main() { let text: String = \\\"ok\\\" }\",\"negativeSource\":\"main() { let text: String = unknownName }\",\"boundarySource\":\"main() { let text: String = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\",\"positiveDependencyProfile\":\"none\",\"negativeDependencyProfile\":\"none\",\"boundaryDependencyProfile\":\"none\"}"
+            let built=buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(0,extractorJson)]),atomExecutor:AtomRepairExecutor())
+            @Expect(built.ok,true);@Expect(built.accepted,1)
+            let ckb=teacherReadUtf8File("${options.outputRoot}/candidate-knowledge/ckb-benchmark-gap.jsonl")
+            let object=JsonValue.fromStr(ckb.trimAscii()).asObject();let bundle=object.get("knowledgeAtomTestBundle").getOrThrow().asObject()
+            @Expect(p3CkbString(object,"sourceClass"),"teacher_empirical")
+            @Expect(p3CkbString(object,"officialCitation"),"")
+            @Expect(bundle.get("teacherEmpiricalProvenance").isSome(),true)
+            @Expect(bundle.get("execution").getOrThrow().asObject().get("commandEvidenceHash").isSome(),true)
+            @Expect(p3CkbString(object,"evidence").contains("independentExperimentEvidenceHash=sha256:"),true)
+            let badGap=gap.replace("teacher_empirical","unknown_empirical")
+            File.writeTo(Path("${root}/bad-gap.jsonl"),badGap.toArray());options.authorityGap="${root}/bad-gap.jsonl";options.outputRoot="${root}/exports/bad"
+            @Expect(buildTeacherCandidates(options).diagnostic,"source_class_not_allowed")
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
     // P3-NEG-01
     @TestCase public func p3CaseSpecificAndSolutionSimilarCandidatesBlocked(): Unit {
         let specific = TeacherCandidateExport("id", "language", "concept", "1.0.0", "For CJ-HUMANEVAL-011", "expectedOutput is 9", "official", "official", "hash", buildKnowledgeAtomTestBundle("p", "n", "b"))

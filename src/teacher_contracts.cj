@@ -136,8 +136,9 @@ public func parseTeacherObservation(text: String): TeacherObservation {
 public func validateTeacherObservation(value: TeacherObservation): Bool {
     let families = ["language", "standard_library", "type_adaptation", "algorithm_pattern", "diagnostic", "boundary_check",
         "syntax", "stdx", "toolchain", "compiler_diagnostic", "version_migration", "engineering_practice"]
-    return families.contains(value.knowledgeFamily) && !value.concept.isEmpty() && !value.targetVersion.isEmpty() &&
-        !value.citation.isEmpty() && (value.sourceClass == "official" || value.sourceClass == "approved")
+    let sourceValid = (value.sourceClass == "official" || value.sourceClass == "approved") && !value.citation.isEmpty() ||
+        value.sourceClass == "teacher_empirical" && value.citation.isEmpty()
+    return families.contains(value.knowledgeFamily) && !value.concept.isEmpty() && !value.targetVersion.isEmpty() && sourceValid
 }
 
 public func renderTeacherRunManifest(value: TeacherRunManifest): String {
@@ -161,8 +162,9 @@ public func renderTeacherDatasetManifest(value: TeacherDatasetManifest): String 
 
 public func validateTeacherCandidateExport(value: TeacherCandidateExport): Bool {
     !value.identity.isEmpty() && !value.knowledgeFamily.isEmpty() && !value.concept.isEmpty() &&
-        !value.targetVersion.isEmpty() && !value.explanation.isEmpty() && !value.citation.isEmpty() &&
-        (value.sourceClass == "official" || value.sourceClass == "approved") &&
+        !value.targetVersion.isEmpty() && !value.explanation.isEmpty() &&
+        (((value.sourceClass == "official" || value.sourceClass == "approved") && !value.citation.isEmpty()) ||
+            (value.sourceClass == "teacher_empirical" && value.citation.isEmpty())) &&
         !value.provenanceHash.isEmpty() && value.tests.isComplete()
 }
 public func renderTeacherCandidateExport(value: TeacherCandidateExport): String {
