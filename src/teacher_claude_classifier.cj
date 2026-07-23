@@ -13,6 +13,7 @@ private let CLAUDE_CLASSIFIER_MODEL = "GLM-5.2"
 private let CLAUDE_CLASSIFIER_REQUEST_SCHEMA = "ckb-p5-classifier-request-v1"
 private let CLAUDE_CLASSIFIER_RESPONSE_SCHEMA = "ckb-p5-classifier-response-v1"
 private let CLAUDE_CLASSIFIER_MAX_BYTES: Int64 = 1048576
+private let CLAUDE_CLASSIFIER_TIMEOUT_MILLIS: Int64 = 1800000
 
 public class ClaudeClassifierRunResult {
     public var ok = false
@@ -73,7 +74,7 @@ public func runClaudeClassifierAdapter(args: Array<String>,
         "--bare", "--disable-slash-commands", "--strict-mcp-config",
         "--mcp-config", "{\"mcpServers\":{}}", "--tools", ""],
         options.workspace, env: [("HOME", options.runtimeHome), ("CLAUDE_CONFIG_DIR", options.runtimeHome),
-            ("CANGJIE_TEACHER_SESSION", options.sessionId)], timeoutMillis: 300000))
+            ("CANGJIE_TEACHER_SESSION", options.sessionId)], timeoutMillis: CLAUDE_CLASSIFIER_TIMEOUT_MILLIS))
     if (cli.timedOut) { return failClaudeClassifier(result, options, "classifier_timeout") }
     if (cli.exitCode != 0) { return failClaudeClassifier(result, options, "classifier_process_failed") }
     if (cli.output == "invalid_response_encoding") { return failClaudeClassifier(result, options, "invalid_response_encoding") }
