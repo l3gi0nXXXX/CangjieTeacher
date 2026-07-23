@@ -69,8 +69,8 @@ public func runClaudeClassifierAdapter(args: Array<String>,
         claudeClassifierGroundingPrompt(request) +
         "Return one schema-valid object. Never infer or reveal hidden tests, reference answers, credentials, or local paths. Request:\n" + request
     let cli = executor.execute(TeacherCommandSpec("claude", ["-p", prompt, "--model", CLAUDE_CLASSIFIER_MODEL,
-        "--json-schema", schema, "--output-format", "stream-json", "--effort", "low", "--verbose",
-        "--no-session-persistence", "--bare", "--disable-slash-commands", "--strict-mcp-config",
+        "--json-schema", schema, "--output-format", "json", "--effort", "low", "--no-session-persistence",
+        "--bare", "--disable-slash-commands", "--strict-mcp-config",
         "--mcp-config", "{\"mcpServers\":{}}", "--tools", ""],
         options.workspace, env: [("HOME", options.runtimeHome), ("CLAUDE_CONFIG_DIR", options.runtimeHome),
             ("CANGJIE_TEACHER_SESSION", options.sessionId)], timeoutMillis: 300000))
@@ -78,7 +78,7 @@ public func runClaudeClassifierAdapter(args: Array<String>,
     if (cli.exitCode != 0) { return failClaudeClassifier(result, options, "classifier_process_failed") }
     if (cli.output == "invalid_response_encoding") { return failClaudeClassifier(result, options, "invalid_response_encoding") }
     if (cli.output.toArray().size > CLAUDE_CLASSIFIER_MAX_BYTES) { return failClaudeClassifier(result, options, "classifier_output_too_large") }
-    let decoded = decodeClaudeClassifierStream(cli.output)
+    let decoded = decodeClaudeClassifierTerminalJson(cli.output)
     if (decoded[1] != "ok") { return failClaudeClassifier(result, options, decoded[1]) }
     let factDiagnostic=claudeClassifierResponseFactsDiagnostic(request,decoded[0])
     if(factDiagnostic!="ok"){return failClaudeClassifier(result,options,factDiagnostic)}
@@ -102,7 +102,8 @@ private func removeClaudeClassifierDiagnostic(options:ClaudeClassifierOptions):B
 }
 private func claudeClassifierDiagnosticAllowed(value:String):Bool{
     ["invalid_response_encoding","request_too_large","request_contract_invalid","classifier_timeout","classifier_process_failed",
-        "classifier_output_too_large","malformed_stream_json","duplicate_init","classifier_unsuccessful_result","missing_init",
+        "classifier_output_too_large","malformed_stream_json","malformed_terminal_json","duplicate_init",
+        "classifier_unsuccessful_result","missing_init",
         "observed_model_mismatch","missing_or_duplicate_terminal_result","response_contract_invalid","response_contains_forbidden_data",
         "malformed_structured_output","classifier_response_source_fact_unsupported","response_write_failed","diagnostic_reset_failed",
         "classifier_reserved_match_plain_missing","classifier_reserved_match_raw_missing",
@@ -391,6 +392,28 @@ public func decodeClaudeClassifierStream(raw: String): (String, String) {
         if(claudeClassifierForbidden(response)){return("","response_contains_forbidden_data")}
         (response,"ok")
     } catch (_: Exception) { ("","malformed_structured_output") }
+}
+
+// Non-streaming JSON keeps model reasoning outside the classifier protocol while
+// still binding the successful terminal result to the single observed model.
+public func decodeClaudeClassifierTerminalJson(raw:String):(String,String){
+    if(raw.toArray().size>CLAUDE_CLASSIFIER_MAX_BYTES){return("","classifier_output_too_large")}
+    try{
+        let terminal=JsonValue.fromStr(raw).asObject()
+        if(classifierString(terminal,"type")!="result"||classifierString(terminal,"subtype")!="success"||
+            classifierBool(terminal,"is_error")){return("","classifier_unsuccessful_result")}
+        let usage=terminal.get("modelUsage").getOrThrow().asObject()
+        if(usage.getFields().size!=1){return("","observed_model_mismatch")}
+        match(usage.get(CLAUDE_CLASSIFIER_MODEL)){
+            case Some(_) => ()
+            case None => return("","observed_model_mismatch")
+        }
+        let structured=match(terminal.get("structured_output")){case Some(v)=>v.asObject();case None=>return("","malformed_structured_output")}
+        if(!validClaudeClassifierResponse(structured)){return("","response_contract_invalid")}
+        let response=renderClaudeClassifierResponse(structured)
+        if(claudeClassifierForbidden(response)){return("","response_contains_forbidden_data")}
+        (response,"ok")
+    }catch(_:Exception){("","malformed_terminal_json")}
 }
 
 private func validClaudeClassifierResponse(o:JsonObject):Bool{

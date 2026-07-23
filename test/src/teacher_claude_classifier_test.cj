@@ -28,26 +28,32 @@ public class TeacherClaudeClassifierTest {
         let body="{\"category\":\"${category}\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}"
         "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"${model}\"}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":${body}}\n"
     }
+    private func terminalJson(category!:String="reasoning_failure",model!:String="GLM-5.2",extraModel!:Bool=false):String{
+        let body="{\"category\":\"${category}\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}"
+        let extra=if(extraModel){",\"other-model\":{}"}else{""}
+        "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"modelUsage\":{\"${model}\":{}${extra}},\"structured_output\":${body}}"
+    }
     private func args(root:String):Array<String>{["--request","${root}/workspace/request.json","--output","${root}/workspace/response.json","--workspace","${root}/workspace","--runtime-home","${root}/runtime-home","--session-id","session-中文😀","--expected-provider","claude-code","--expected-model","GLM-5.2"]}
     private func prepare(name:String):(String,Array<String>){let r=root(name);Directory.create(Path("${r}/workspace"),recursive:true);Directory.create(Path("${r}/runtime-home"),recursive:true);File.writeTo(Path("${r}/workspace/request.json"),request().toArray());(r,args(r))}
     private func oversizedLine():String{var value="x";for(_ in 0..21){value+=value};value}
     private func knowledgeStructured(text:String):String{
         let body="{\"category\":\"knowledge_gap\",\"knowledgeFamily\":\"standard_library\",\"reusable\":true,\"sourceClass\":\"official\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"purificationPassed\":true,\"canonicalKnowledgeId\":\"GENERAL-ABS-API\",\"targetVersion\":\"1.0.0\",\"evidenceId\":\"sha256:evidence\",\"knowledgeText\":\"${text}\"}"
-        "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"GLM-5.2\"}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":${body}}\n"
+        "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"modelUsage\":{\"GLM-5.2\":{}},\"structured_output\":${body}}"
     }
 
-    // P5-C-UT-02 + P5-C-POS-02: exact isolated Claude argv and a native init/result identity produce response v1.
+    // P5-C-UT-02 + P5-C-POS-02: exact isolated Claude argv and a native terminal identity produce response v1.
     @TestCase public func exactClaudeContractAndUtf8Positive():Unit{
         let setup=prepare("positive");let r=setup[0]
         try{
-            let executor=ClassifierExecutor(TeacherProcessResult(0,structured()));let result=runClaudeClassifierAdapter(setup[1],executor:executor)
+            let executor=ClassifierExecutor(TeacherProcessResult(0,terminalJson()));let result=runClaudeClassifierAdapter(setup[1],executor:executor)
             @Expect(result.ok,true);@Expect(result.diagnostic,"ok");@Expect(executor.specs.size,1)
             let spec=executor.specs[0];@Expect(spec.executable,"claude");@Expect(spec.args.contains("-p"),true);@Expect(spec.args.contains("--json-schema"),true)
             @Expect(spec.args[1].contains("root cause"),true);@Expect(spec.args[1].contains("even when failureObservation is compile_error or unit_failure"),true)
             @Expect(spec.args[1].contains("case-specific"),true)
             @Expect(spec.args[1].contains("knowledgeFamily must be exactly one of syntax, standard_library"),true)
             @Expect(spec.args[1].contains("sourceClass must be exactly official"),true);@Expect(spec.args[1].contains("targetVersion must be 1.0.0"),true)
-            @Expect(spec.args.contains("stream-json"),true);@Expect(spec.args.contains("--no-session-persistence"),true);@Expect(spec.args.contains("--bare"),true)
+            @Expect(spec.args.contains("json"),true);@Expect(spec.args.contains("stream-json"),false);@Expect(spec.args.contains("--verbose"),false)
+            @Expect(spec.args.contains("--no-session-persistence"),true);@Expect(spec.args.contains("--bare"),true)
             @Expect(spec.args[8],"--effort");@Expect(spec.args[9],"low")
             @Expect(spec.args.contains("--strict-mcp-config"),true);@Expect(spec.args.contains("--tools"),true);@Expect(spec.args.contains("GLM-5.2"),true)
             @Expect(spec.args.contains("{\"mcpServers\":{}}"),true);@Expect(spec.args.contains("{}"),false)
@@ -61,7 +67,7 @@ public class TeacherClaudeClassifierTest {
         let setup=prepare("fake-cli");let r=setup[0];let oldPath=getVariable("PATH")
         try{
             let fake="${r}/bin/claude";Directory.create(Path("${r}/bin"),recursive:true)
-            let script="#!/bin/zsh\n[[ \" $* \" == *\" --model GLM-5.2 \"* ]] || exit 21\n[[ \" $* \" == *\" --json-schema \"* ]] || exit 22\n[[ \" $* \" == *\" --no-session-persistence \"* ]] || exit 23\n[[ \" $* \" == *\" --tools  \"* ]] || exit 24\nprint -r -- '{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"GLM-5.2\"}'\nprint -r -- '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":{\"category\":\"reasoning_failure\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}}'\n"
+            let script="#!/bin/zsh\n[[ \" $* \" == *\" --model GLM-5.2 \"* ]] || exit 21\n[[ \" $* \" == *\" --json-schema \"* ]] || exit 22\n[[ \" $* \" == *\" --output-format json \"* ]] || exit 23\n[[ \" $* \" == *\" --effort low \"* ]] || exit 24\n[[ \" $* \" == *\" --no-session-persistence \"* ]] || exit 25\n[[ \" $* \" == *\" --tools  \"* ]] || exit 26\nprint -r -- '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"modelUsage\":{\"GLM-5.2\":{}},\"structured_output\":{\"category\":\"reasoning_failure\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}}'\n"
             File.writeTo(Path(fake),script.toArray());@Expect(launch("/bin/chmod",["700",fake]).wait(),0)
             let previous=match(oldPath){case Some(v)=>v;case None=>"/usr/bin:/bin"};setVariable("PATH","${r}/bin:${previous}")
             let result=runClaudeClassifierAdapter(setup[1]);@Expect(result.ok,true);@Expect(teacherReadUtf8File("${r}/workspace/response.json").contains("reasoning_failure"),true)
@@ -77,6 +83,9 @@ public class TeacherClaudeClassifierTest {
             @Expect(decodeClaudeClassifierStream("{bad")[1],"malformed_stream_json")
             @Expect(decodeClaudeClassifierStream(oversizedLine())[1],"classifier_output_too_large")
             @Expect(decodeClaudeClassifierStream(structured())[0].contains("reasoning_failure"),true)
+            @Expect(decodeClaudeClassifierTerminalJson("{bad")[1],"malformed_terminal_json")
+            @Expect(decodeClaudeClassifierTerminalJson(oversizedLine())[1],"classifier_output_too_large")
+            @Expect(decodeClaudeClassifierTerminalJson(terminalJson())[0].contains("reasoning_failure"),true)
         }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
     }
 
@@ -88,6 +97,8 @@ public class TeacherClaudeClassifierTest {
             @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(9,"failed"))).diagnostic,"classifier_process_failed")
             @Expect(decodeClaudeClassifierStream("{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"GLM-5.2\"}\n")[1],"missing_or_duplicate_terminal_result")
             @Expect(decodeClaudeClassifierStream(structured(model:"wrong-model"))[1],"observed_model_mismatch")
+            @Expect(decodeClaudeClassifierTerminalJson(terminalJson(model:"wrong-model"))[1],"observed_model_mismatch")
+            @Expect(decodeClaudeClassifierTerminalJson(terminalJson(extraModel:true))[1],"observed_model_mismatch")
             let wrong=setup[1].clone();wrong[13]="GPT-5.6";@Expect(runClaudeClassifierAdapter(wrong,executor:ClassifierExecutor(TeacherProcessResult(0,structured()))).diagnostic,"expected_identity_not_allowed")
             @Expect(exists(Path("${r}/workspace/response.json")),false)
         }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
@@ -113,7 +124,7 @@ public class TeacherClaudeClassifierTest {
             let incomplete=ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("Use the documented Float64 API.")))
             @Expect(runClaudeClassifierAdapter(setup[1],executor:incomplete).diagnostic,"classifier_response_source_fact_unsupported")
             let privatePath=knowledgeStructured("Use global abs(value); see /Users/private/秘密😀.")
-            @Expect(decodeClaudeClassifierStream(privatePath)[1],"response_contains_forbidden_data")
+            @Expect(decodeClaudeClassifierTerminalJson(privatePath)[1],"response_contains_forbidden_data")
 
             File.writeTo(Path("${r}/workspace/request.json"),prerequisiteRequest("root imports package 'std.unicode' but it is not declared as a dependency").toArray())
             let supported=ClassifierExecutor(TeacherProcessResult(0,knowledgeStructured("The visible dependency diagnostic requires import std.unicode.*.")))
@@ -269,8 +280,8 @@ public class TeacherClaudeClassifierTest {
             @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(124,"private timeout payload",timedOut:true))).diagnostic,"classifier_timeout")
             @Expect(teacherReadUtf8File(sidecar.toString()).contains("classifier_timeout"),true)
             @Expect(teacherReadUtf8File(sidecar.toString()).contains("private timeout payload"),false)
-            @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,"{bad"))).diagnostic,"malformed_stream_json")
-            @Expect(teacherReadUtf8File(sidecar.toString()).contains("malformed_stream_json"),true)
+            @Expect(runClaudeClassifierAdapter(setup[1],executor:ClassifierExecutor(TeacherProcessResult(0,"{bad"))).diagnostic,"malformed_terminal_json")
+            @Expect(teacherReadUtf8File(sidecar.toString()).contains("malformed_terminal_json"),true)
         }finally{try{remove(Path(r),recursive:true)}catch(_:Exception){}}
     }
 }
