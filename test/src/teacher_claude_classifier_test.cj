@@ -48,6 +48,7 @@ public class TeacherClaudeClassifierTest {
             @Expect(spec.args[1].contains("knowledgeFamily must be exactly one of syntax, standard_library"),true)
             @Expect(spec.args[1].contains("sourceClass must be exactly official"),true);@Expect(spec.args[1].contains("targetVersion must be 1.0.0"),true)
             @Expect(spec.args.contains("stream-json"),true);@Expect(spec.args.contains("--no-session-persistence"),true);@Expect(spec.args.contains("--bare"),true)
+            @Expect(spec.args[8],"--effort");@Expect(spec.args[9],"low")
             @Expect(spec.args.contains("--strict-mcp-config"),true);@Expect(spec.args.contains("--tools"),true);@Expect(spec.args.contains("GLM-5.2"),true)
             @Expect(spec.args.contains("{\"mcpServers\":{}}"),true);@Expect(spec.args.contains("{}"),false)
             let output=teacherReadUtf8File("${r}/workspace/response.json");@Expect(output.contains("\"schemaVersion\":\"ckb-p5-classifier-response-v1\""),true)
