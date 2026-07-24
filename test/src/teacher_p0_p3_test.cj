@@ -94,9 +94,16 @@ private class RecordingExecutor <: TeacherCommandExecutor {
         if (exists(Path("${spec.cwd}/src/TestMain.cj"))) { observedInjectedTests = true }
         let selected = if (index < results.size) { results[index] } else { results[results.size - 1] }
         index += 1
-        for(i in 0..spec.args.size-1){if(spec.args[i]=="--output-last-message"&&i+1<spec.args.size&&selected.exitCode==0&&!selected.timedOut){File.writeTo(Path(spec.args[i+1]),selected.output.toArray())}}
+        for(i in 0..spec.args.size-1){if(spec.args[i]=="--output-last-message"&&i+1<spec.args.size&&selected.exitCode==0&&!selected.timedOut){
+            let bytes=if(selected.output=="__INVALID_UTF8__"){[UInt8(0xff),UInt8(0xfe)]}else{selected.output.toArray()}
+            File.writeTo(Path(spec.args[i+1]),bytes)
+        }}
         selected
     }
+}
+private func fallbackExtractorResults(finalResponse:String):Array<TeacherProcessResult>{
+    [TeacherProcessResult(124,"timeout",timedOut:true),TeacherProcessResult(7,"provider unavailable"),
+        TeacherProcessResult(0,"__INVALID_UTF8__"),TeacherProcessResult(0,finalResponse)]
 }
 private class AtomRepairExecutor <: TeacherCommandExecutor {
     private var negativeBuilds:Int64=0
@@ -1356,27 +1363,42 @@ public class TeacherP0P3Test {
             File.writeTo(Path("${root}/gap.jsonl"), gap.toArray())
             let options = TeacherCliOptions(); options.command="candidate-build"; options.root=root; options.manifest="${root}/manifest.jsonl"
             options.checksum=teacherStableHash(teacherJoin(caseLines(), "\n"));options.authorityGap="${root}/gap.jsonl";options.runId="teacher-r1";options.outputRoot="${root}/exports/r1";options.model="gpt-5.6-sol"
-            let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 String Rune iteration\",\"explanation\":\"Use String Rune iteration for Unicode character boundaries.\",\"example\":\"Declare a String and iterate over text.runes(); comparisons may contain &&, <, and > for 中文😀 boundaries.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let text: String = \\\"ok\\\" }\",\"negativeSource\":\"main() { let text: String = unknownName }\",\"boundarySource\":\"main() { let text: String = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\"}"
+            let extractorJson="{\"provider\":\"codex\",\"model\":\"gpt-5.6-sol\",\"knowledgeFamily\":\"syntax\",\"concept\":\"UTF-8 String Rune iteration\",\"explanation\":\"Use String Rune iteration for Unicode character boundaries.\",\"example\":\"Declare a String and iterate over text.runes(); comparisons may contain &&, <, and > for 中文😀 boundaries.\",\"citation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\",\"sourceClass\":\"official\",\"positiveSource\":\"main() { let text: String = \\\"ok\\\" }\",\"negativeSource\":\"main() { let text: String = unknownName }\",\"boundarySource\":\"main() { let text: String = \\\"中文😀\\\" }\",\"negativeDiagnostic\":\"undefined\",\"positiveDependencyProfile\":\"none\",\"negativeDependencyProfile\":\"none\",\"boundaryDependencyProfile\":\"none\"}"
             let irrelevantJson=extractorJson.replace("Use String Rune iteration for Unicode character boundaries.","Use Rune iteration for Unicode boundaries.").replace("Declare a String and iterate over text.runes() for Chinese and emoji.","Iterate over runes.").replace("let text: String", "let value: Int64")
             let badExtractorJson=extractorJson.replace("\"negativeDiagnostic\":\"undefined\"","\"negativeDiagnostic\":\"wrong diagnostic 中文😀\"")
-            let extractor=RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true),TeacherProcessResult(7,"provider unavailable"),TeacherProcessResult(0,irrelevantJson),TeacherProcessResult(0,badExtractorJson),TeacherProcessResult(0,extractorJson)])
+            let extractor=RecordingExecutor(results:[TeacherProcessResult(124,"timeout",timedOut:true),
+                TeacherProcessResult(7,"provider unavailable"),
+                TeacherProcessResult(0,"__INVALID_UTF8__"),
+                TeacherProcessResult(0,irrelevantJson),TeacherProcessResult(0,badExtractorJson),
+                TeacherProcessResult(0,extractorJson)])
             let atom=AtomRepairExecutor()
             let result = buildTeacherCandidates(options,extractorExecutor:extractor,atomExecutor:atom)
             @Expect(result.ok, true); @Expect(result.accepted, 1)
-            @Expect(extractor.specs.size,5)
-            @Expect(extractor.specs[4].args.contains("gpt-5.6-sol"), true)
-            @Expect(extractor.specs[4].args.contains("read-only"), true)
-            @Expect(extractor.specs[4].args.contains("--ephemeral"), true)
-            @Expect(extractor.specs[4].args.contains("-C"), true)
-            @Expect(extractor.specs[4].args.contains("--output-schema"), true)
-            @Expect(extractor.specs[4].args.contains("--output-last-message"), true)
-            @Expect(extractor.specs[4].args.contains("--cwd"), false)
-            @Expect(extractor.specs[4].args.contains("--full-auto"), false)
-            @Expect(extractor.specs[4].args[extractor.specs[4].args.size-1].contains("Set citation to exactly 'https://docs.cangjie-lang.cn/docs/1.0.0/'"),true)
-            @Expect(extractor.specs[4].args[extractor.specs[4].args.size-1].contains("negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler"),true)
-            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].contains("Required public failure anchors and prerequisites: string"),true)
-            @Expect(extractor.specs[4].args[extractor.specs[4].args.size-1].contains("wrong diagnostic 中文😀"),true)
-            @Expect(extractor.specs[4].args[extractor.specs[4].args.size-1].contains("undefined name 中文😀"),true)
+            @Expect(extractor.specs.size,6)
+            for(i in 0..3){@Expect(extractor.specs[i].args.contains("--output-schema"),true)}
+            @Expect(extractor.specs[3].args.contains("--output-schema"),false)
+            @Expect(extractor.specs[3].args.contains("--output-last-message"),true)
+            @Expect(extractor.specs[3].executable,options.extractor)
+            @Expect(extractor.specs[3].cwd,"${root}/teacher-solutions/CJ-HUMANEVAL-000")
+            @Expect(extractor.specs[3].timeoutMillis,options.timeoutMillis)
+            @Expect(extractor.specs[3].args.contains("gpt-5.6-sol"),true)
+            @Expect(extractor.specs[3].args.contains("read-only"),true)
+            @Expect(extractor.specs[3].args.contains("--ephemeral"),true)
+            @Expect(extractor.specs[3].args.contains("-C"),true)
+            @Expect(extractor.specs[3].args[extractor.specs[3].args.size-1].endsWith("Return only the JSON object, without Markdown fences or commentary."),true)
+            @Expect(extractor.specs[5].args.contains("gpt-5.6-sol"), true)
+            @Expect(extractor.specs[5].args.contains("read-only"), true)
+            @Expect(extractor.specs[5].args.contains("--ephemeral"), true)
+            @Expect(extractor.specs[5].args.contains("-C"), true)
+            @Expect(extractor.specs[5].args.contains("--output-schema"), true)
+            @Expect(extractor.specs[5].args.contains("--output-last-message"), true)
+            @Expect(extractor.specs[5].args.contains("--cwd"), false)
+            @Expect(extractor.specs[5].args.contains("--full-auto"), false)
+            @Expect(extractor.specs[5].args[extractor.specs[5].args.size-1].contains("Set citation to exactly 'https://docs.cangjie-lang.cn/docs/1.0.0/'"),true)
+            @Expect(extractor.specs[5].args[extractor.specs[5].args.size-1].contains("negativeDiagnostic must be a short literal substring emitted by the Cangjie compiler"),true)
+            @Expect(extractor.specs[4].args[extractor.specs[4].args.size-1].contains("Required public failure anchors and prerequisites: string"),true)
+            @Expect(extractor.specs[5].args[extractor.specs[5].args.size-1].contains("wrong diagnostic 中文😀"),true)
+            @Expect(extractor.specs[5].args[extractor.specs[5].args.size-1].contains("undefined name 中文😀"),true)
             @Expect(exists(Path("${root}/exports/r1/observations.tsv")), true)
             @Expect(exists(Path("${root}/exports/r1/atom-tests.jsonl")), true)
             @Expect(exists(Path("${root}/exports/r1/candidate-knowledge.tsv")), true)
@@ -1392,6 +1414,18 @@ public class TeacherP0P3Test {
             @Expect(ckb.contains("\"knowledgeAtomTestBundle\":${canonicalBundle}"), true)
             @Expect(p3CkbString(ckbObject, "candidateHash"), p3CkbCandidateHash(ckb))
             @Expect(teacherReadUtf8File("${root}/exports/r1/candidate-knowledge.tsv").toAsciiLower().contains("cj-humaneval-"), false)
+            let missingProfile=extractorJson.replace(",\"boundaryDependencyProfile\":\"none\"","")
+            options.outputRoot="${root}/exports/fallback-missing"
+            @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(
+                results:fallbackExtractorResults(missingProfile))).diagnostic,"extractor_contract_invalid")
+            let invalidProfile=extractorJson.replace("\"positiveDependencyProfile\":\"none\"","\"positiveDependencyProfile\":\"invalid\"")
+            options.outputRoot="${root}/exports/fallback-profile"
+            @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(
+                results:fallbackExtractorResults(invalidProfile))).diagnostic,"extractor_contract_invalid")
+            let extraField=extractorJson.replace("\"boundaryDependencyProfile\":\"none\"","\"boundaryDependencyProfile\":\"none\",\"extra\":\"forbidden\"")
+            options.outputRoot="${root}/exports/fallback-extra"
+            @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(
+                results:fallbackExtractorResults(extraField))).diagnostic,"extractor_contract_invalid")
             // Multiple cases share one private exports parent. Publishing a
             // second candidate must not try to recreate that existing parent.
             options.outputRoot="${root}/exports/r2"

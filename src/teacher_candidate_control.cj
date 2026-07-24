@@ -1107,16 +1107,25 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
     let schemaPath="${extractorRoot}/response.schema.json";let responsePath="${extractorRoot}/response.json"
     try{_=teacherAtomicWrite(schemaPath,teacherExtractorOutputSchema())}catch(_:Exception){return(emptyTeacherAtomSpec(),"extractor_schema_write_failed")}
     var raw=""
+    var transportFailures:Int64=0
     while(true){
         try{if(exists(Path(responsePath))){remove(Path(responsePath))}}catch(_:Exception){}
-        let process=executor.execute(TeacherCommandSpec(options.extractor,["exec","--model",options.model,"--sandbox","read-only","--skip-git-repo-check","--ephemeral","--ignore-user-config","--ignore-rules","-C",solutionRoot,"--output-schema",schemaPath,"--output-last-message",responsePath,prompt],solutionRoot,timeoutMillis:options.timeoutMillis))
-        if(process.timedOut||process.exitCode!=0||!exists(Path(responsePath))){continue}
-        try{raw=teacherReadUtf8File(responsePath)}catch(_:Exception){continue}
-        if(raw.trimAscii()==""){continue};break
+        let structured=transportFailures<3
+        let requestPrompt=if(structured){prompt}else{"${prompt}\nReturn only the JSON object, without Markdown fences or commentary."}
+        let args=if(structured){
+            ["exec","--model",options.model,"--sandbox","read-only","--skip-git-repo-check","--ephemeral","--ignore-user-config","--ignore-rules","-C",solutionRoot,"--output-schema",schemaPath,"--output-last-message",responsePath,requestPrompt]
+        }else{
+            ["exec","--model",options.model,"--sandbox","read-only","--skip-git-repo-check","--ephemeral","--ignore-user-config","--ignore-rules","-C",solutionRoot,"--output-last-message",responsePath,requestPrompt]
+        }
+        let process=executor.execute(TeacherCommandSpec(options.extractor,args,solutionRoot,timeoutMillis:options.timeoutMillis))
+        if(process.timedOut||process.exitCode!=0||!exists(Path(responsePath))){transportFailures++;continue}
+        try{raw=teacherReadUtf8File(responsePath)}catch(_:Exception){transportFailures++;continue}
+        if(raw.trimAscii()==""){transportFailures++;continue};break
     }
     if(raw.toRuneArray().size>262144){return(emptyTeacherAtomSpec(),"extractor_output_too_large")}
     try {
         let o=JsonValue.fromStr(raw.trimAscii()).asObject();let provider=candidateString(o,"provider");let model=candidateString(o,"model")
+        if(!teacherExtractorObjectContractValid(o)){return(emptyTeacherAtomSpec(),"extractor_contract_invalid")}
         if(provider!="codex"||model!=options.model){return(emptyTeacherAtomSpec(),"extractor_identity_mismatch")}
         let spec=TeacherAtomSpec(candidateString(o,"knowledgeFamily"),candidateString(o,"concept"),candidateString(o,"explanation"),candidateString(o,"example"),candidateString(o,"citation"),candidateString(o,"sourceClass"),candidateString(o,"positiveSource"),candidateString(o,"negativeSource"),candidateString(o,"boundarySource"),candidateString(o,"negativeDiagnostic"),candidateString(o,"positiveDependencyProfile"),candidateString(o,"negativeDependencyProfile"),candidateString(o,"boundaryDependencyProfile"),"sha256:${teacherStableHash(raw)}",provider,model)
         if(!teacherK4Family(spec.family)||spec.concept==""||spec.explanation==""||spec.example==""||spec.positiveSource==""||spec.negativeSource==""||spec.boundarySource==""||spec.negativeDiagnostic==""){return(emptyTeacherAtomSpec(),"extractor_contract_invalid")}
@@ -1124,6 +1133,24 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
         if(candidateForbidden(spec.concept+spec.explanation+spec.example+spec.positiveSource+spec.negativeSource+spec.boundarySource)){return(emptyTeacherAtomSpec(),"extractor_contamination")}
         (spec,"ok")
     }catch(_:Exception){(emptyTeacherAtomSpec(),"malformed_extractor_json")}
+}
+
+private func teacherExtractorObjectContractValid(o:JsonObject):Bool{
+    let fields=o.getFields()
+    let names=["provider","model","knowledgeFamily","concept","explanation","example","citation","sourceClass",
+        "positiveSource","negativeSource","boundarySource","negativeDiagnostic","positiveDependencyProfile",
+        "negativeDependencyProfile","boundaryDependencyProfile"]
+    if(fields.size!=names.size){return false}
+    for(name in names){
+        match(o.get(name)){
+            case Some(value)=>try{_=value.asString().getValue()}catch(_:Exception){return false}
+            case None=>return false
+        }
+    }
+    let profiles=["none","stdx-magic"]
+    profiles.contains(candidateString(o,"positiveDependencyProfile"))&&
+        profiles.contains(candidateString(o,"negativeDependencyProfile"))&&
+        profiles.contains(candidateString(o,"boundaryDependencyProfile"))
 }
 
 private func teacherExtractorOutputSchema():String{
