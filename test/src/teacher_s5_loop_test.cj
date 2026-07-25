@@ -57,6 +57,12 @@ private class S5UnexpectedProcess <: TeacherProcess {
     }
 }
 
+private class S5CrashTransportProcess <: TeacherProcess {
+    public func generate(_: TeacherCaseManifest, _: String, _: String, _: String, _: String): TeacherProcessResult {
+        throw IllegalStateException("simulated_teacher_process_crash")
+    }
+}
+
 private class S5FixedVerifier <: TeacherVerifier {
     public func verify(_: TeacherCaseManifest, _: String): TeacherProcessResult {
         TeacherProcessResult(0, "passed")
@@ -88,6 +94,26 @@ public class TeacherS5LoopTest {
             @Expect(history.size, 2)
             @Expect(history[0].status, "verification_failed")
             @Expect(history[1].status, "verified")
+            let firstTransport = loadTeacherTransportEvidence(root, "teacher-s5", caseValue, 1)
+            @Expect(firstTransport.size, 4)
+            @Expect(firstTransport[0].status, "timeout")
+            @Expect(firstTransport[1].status, "process_failed")
+            @Expect(firstTransport[2].status, "empty_output")
+            @Expect(firstTransport[3].status, "succeeded")
+            @Expect(firstTransport[1].previousEvidenceHash, teacherTransportEvidenceHash(firstTransport[0]))
+            let transportText = teacherJoin(firstTransport.map({entry: TeacherTransportEvidence =>
+                renderTeacherTransportEvidence(entry)}), "\n")
+            @Expect(transportText.contains("provider unavailable"), false)
+            @Expect(transportText.toAsciiLower().contains("token="), false)
+            @Expect(firstTransport[0].safeOutputHash.startsWith("sha256:"), true)
+            let timeoutPath = teacherTransportManifestPath(root, "teacher-s5", caseValue.caseId, 1, 1)
+            let timeoutRaw = teacherReadUtf8File(timeoutPath)
+            File.writeTo(Path(timeoutPath), timeoutRaw.replace("timeout", "succeeded").toArray())
+            var statusTamperRejected = false
+            try { _ = loadTeacherTransportEvidence(root, "teacher-s5", caseValue, 1) }
+            catch (e: Exception) { statusTamperRejected = e.message == "teacher_transport_evidence_invalid" }
+            @Expect(statusTamperRejected, true)
+            File.writeTo(Path(timeoutPath), timeoutRaw.toArray())
             @Expect(process.feedback[1].contains("transport attempt"), true)
             @Expect(process.feedback[3].contains("attempt 1"), true)
             @Expect(process.feedback[4].contains("attempt 2"), true)
@@ -95,6 +121,47 @@ public class TeacherS5LoopTest {
             @Expect(process.feedback[4].contains("/Users"), false)
             @Expect(process.feedback[4].toAsciiLower().contains("token="), false)
             @Expect(process.feedback[4].toRuneArray().size <= 4003, true)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // S5-BND-01: a crash while a transport call is active leaves only transport
+    // lineage and resumes the same effective business attempt.
+    @TestCase public func transportCrashResumeKeepsSameBusinessAttempt(): Unit {
+        let root = s5Root("transport-crash-resume")
+        try {
+            let caseValue = s5Case()
+            let workspace = TeacherPaths(root).workspace("teacher-crash", caseValue.caseId)
+            Directory.create(Path("${workspace}/src"), recursive: true)
+            File.writeTo(Path("${workspace}/src/solution.cj"), "starter 中文😀".toArray())
+            var crashed = false
+            try {
+                _ = runTeacherCase(caseValue, TeacherRunOptions("teacher-crash", root, "gpt-5.6-sol",
+                    S5CrashTransportProcess(), S5FixedVerifier(), S5Clock(),
+                    repairUntilVerified: true, persistAttemptProgress: true))
+            } catch (e: Exception) { crashed = e.message == "simulated_teacher_process_crash" }
+            @Expect(crashed, true)
+            @Expect(loadTeacherAttemptEvidence(root, "teacher-crash", caseValue).size, 0)
+            let interruptedTransport = loadTeacherTransportEvidence(root, "teacher-crash", caseValue, 1)
+            @Expect(interruptedTransport.size, 1)
+            @Expect(interruptedTransport[0].status, "started")
+
+            let resumedProcess = S5TransportThenRepairProcess()
+            let resumed = runTeacherCase(caseValue, TeacherRunOptions("teacher-crash", root, "gpt-5.6-sol",
+                resumedProcess, S5FixedVerifier(), S5Clock(),
+                repairUntilVerified: true, persistAttemptProgress: true))
+            @Expect(resumed.status, "verified")
+            @Expect(resumed.attempt, 1)
+            @Expect(loadTeacherAttemptEvidence(root, "teacher-crash", caseValue).size, 1)
+            let lineage = loadTeacherTransportEvidence(root, "teacher-crash", caseValue, 1)
+            @Expect(lineage.size, 5)
+            @Expect(lineage[0].status, "interrupted")
+            @Expect(lineage[1].previousEvidenceHash, teacherTransportEvidenceHash(lineage[0]))
+            let lastTransport = teacherTransportManifestPath(root, "teacher-crash", caseValue.caseId, 1, 5)
+            File.writeTo(Path(lastTransport), [UInt8(0xff), UInt8(0xfe)])
+            var transportRejected = false
+            try { _ = loadTeacherTransportEvidence(root, "teacher-crash", caseValue, 1) }
+            catch (e: Exception) { transportRejected = e.message == "teacher_transport_evidence_invalid" }
+            @Expect(transportRejected, true)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
@@ -125,23 +192,36 @@ public class TeacherS5LoopTest {
     // S5-NEG-01: completed work is reusable only under the exact run/case/dataset/prompt/model binding.
     @TestCase public func completedRunReuseRejectsEveryIdentityDrift(): Unit {
         let caseValue = s5Case()
+        let root = s5Root("completed-binding")
         let process = S5UnexpectedProcess()
-        let options = TeacherRunOptions("teacher-s5", "/tmp/unused", "gpt-5.6-sol", process,
+        let options = TeacherRunOptions("teacher-s5", root, "gpt-5.6-sol", process,
             S5FixedVerifier(), S5Clock())
         let exact = TeacherRunManifest("teacher-s5", caseValue.caseId, caseValue.datasetVersion,
             "gpt-5.6-sol", caseValue.promptHash, 3, "complete", 0, "sha256:evidence")
-        @Expect(teacherCompletedRunReusable(exact, caseValue, options), true)
-        @Expect(teacherCompletedRunReusable(TeacherRunManifest("other-run", exact.caseId, exact.datasetVersion,
-            exact.modelId, exact.promptHash, 3, "complete", 0, exact.evidenceHash), caseValue, options), false)
-        @Expect(teacherCompletedRunReusable(TeacherRunManifest(exact.runId, exact.caseId, exact.datasetVersion,
-            "gpt-5.6-wol", exact.promptHash, 3, "complete", 0, exact.evidenceHash), caseValue, options), false)
-        @Expect(teacherCompletedRunReusable(TeacherRunManifest(exact.runId, exact.caseId, "old-dataset",
-            exact.modelId, exact.promptHash, 3, "complete", 0, exact.evidenceHash), caseValue, options), false)
-        @Expect(teacherCompletedRunReusable(TeacherRunManifest(exact.runId, exact.caseId, exact.datasetVersion,
-            exact.modelId, "old-prompt", 3, "complete", 0, exact.evidenceHash), caseValue, options), false)
-        let reused = runTeacherBatch([caseValue], options, [exact])
-        @Expect(reused[0].evidenceHash, exact.evidenceHash)
-        @Expect(process.called, false)
+        try {
+            Directory.create(Path("${root}/teacher-solutions/${caseValue.caseId}/src"), recursive: true)
+            File.writeTo(Path("${root}/teacher-solutions/${caseValue.caseId}/src/solution.cj"), "bound solution".toArray())
+            _ = persistTeacherRunArtifacts(root, exact, "generation", "verification")
+            _ = persistTeacherSolutionBinding(root, exact)
+            @Expect(teacherCompletedRunReusable(exact, caseValue, options), true)
+            @Expect(teacherCompletedRunReusable(TeacherRunManifest("other-run", exact.caseId, exact.datasetVersion,
+                exact.modelId, exact.promptHash, 3, "complete", 0, exact.evidenceHash), caseValue, options), false)
+            @Expect(teacherCompletedRunReusable(TeacherRunManifest(exact.runId, exact.caseId, exact.datasetVersion,
+                "gpt-5.6-wol", exact.promptHash, 3, "complete", 0, exact.evidenceHash), caseValue, options), false)
+            @Expect(teacherCompletedRunReusable(TeacherRunManifest(exact.runId, exact.caseId, "old-dataset",
+                exact.modelId, exact.promptHash, 3, "complete", 0, exact.evidenceHash), caseValue, options), false)
+            @Expect(teacherCompletedRunReusable(TeacherRunManifest(exact.runId, exact.caseId, exact.datasetVersion,
+                exact.modelId, "old-prompt", 3, "complete", 0, exact.evidenceHash), caseValue, options), false)
+            let reused = runTeacherBatch([caseValue], options, [exact])
+            @Expect(reused[0].evidenceHash, exact.evidenceHash)
+            @Expect(process.called, false)
+
+            remove(Path("${root}/runs/${exact.runId}/evidence/${exact.caseId}/solution.binding"))
+            @Expect(teacherCompletedRunReusable(exact, caseValue, options), false)
+            _ = persistTeacherSolutionBinding(root, exact)
+            File.writeTo(Path("${root}/teacher-solutions/${caseValue.caseId}/src/solution.cj"), "tampered".toArray())
+            @Expect(teacherCompletedRunReusable(exact, caseValue, options), false)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
     // S5-NEG-01 / S5-REG-01: user-visible observation fields reject authority text,
@@ -167,5 +247,15 @@ public class TeacherS5LoopTest {
                 caseValue.prompt, "", "teacher_empirical", "evidence")
         } catch (e: Exception) { deriveRejected = e.message == "teacher_observation_authority_leak" }
         @Expect(deriveRejected, true)
+
+        let longCompiler = "compiler diagnostic prefix: the original implementation attempted an invalid " +
+            "conversion from a UTF-8 byte sequence into one Rune without validating the boundary first"
+        let partialLeak = TeacherObservation(caseValue.caseId, "diagnostic", "Compile repair",
+            "1.0.0", "the original implementation attempted an invalid conversion from a UTF-8 byte sequence " +
+            "into one Rune", "", "teacher_empirical", empirical.evidenceHash)
+        @Expect(validateObservationAgainstAuthority(partialLeak, caseValue, [longCompiler]), false)
+        let shortCommon = TeacherObservation(caseValue.caseId, "algorithm_pattern", "Rune iteration",
+            "1.0.0", "Iterate Rune values safely.", "", "teacher_empirical", empirical.evidenceHash)
+        @Expect(validateObservationAgainstAuthority(shortCommon, caseValue, ["Rune"]), true)
     }
 }

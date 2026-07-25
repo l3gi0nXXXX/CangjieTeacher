@@ -5,6 +5,7 @@ import std.convert.Parsable
 import std.fs.*
 
 private let TEACHER_ATTEMPT_SCHEMA = "teacher-attempt/v1"
+private let TEACHER_TRANSPORT_SCHEMA = "teacher-transport/v1"
 
 public class TeacherAttemptEvidence {
     public let runId: String
@@ -27,6 +28,27 @@ public class TeacherAttemptEvidence {
         this.generationDiagnostic = generationDiagnostic; this.verifierDiagnostic = verifierDiagnostic
         this.repeatCount = repeatCount; this.previousEvidenceHash = previousEvidenceHash
         this.snapshotHash = snapshotHash
+    }
+}
+
+public class TeacherTransportEvidence {
+    public let runId: String
+    public let caseId: String
+    public let promptHash: String
+    public let businessAttempt: Int64
+    public let transportAttempt: Int64
+    public let status: String
+    public let exitCode: Int64
+    public let timedOut: Bool
+    public let safeOutputHash: String
+    public let previousEvidenceHash: String
+    public init(runId: String, caseId: String, promptHash: String, businessAttempt: Int64,
+        transportAttempt: Int64, status: String, exitCode: Int64, timedOut: Bool,
+        safeOutputHash: String, previousEvidenceHash: String) {
+        this.runId = runId; this.caseId = caseId; this.promptHash = promptHash
+        this.businessAttempt = businessAttempt; this.transportAttempt = transportAttempt
+        this.status = status; this.exitCode = exitCode; this.timedOut = timedOut
+        this.safeOutputHash = safeOutputHash; this.previousEvidenceHash = previousEvidenceHash
     }
 }
 
@@ -60,6 +82,130 @@ public func parseTeacherAttemptEvidence(raw: String): TeacherAttemptEvidence {
 
 public func teacherAttemptEvidenceHash(value: TeacherAttemptEvidence): String {
     "sha256:${teacherStableHash(renderTeacherAttemptEvidence(value))}"
+}
+
+public func renderTeacherTransportEvidence(value: TeacherTransportEvidence): String {
+    teacherJoin([TEACHER_TRANSPORT_SCHEMA, value.runId, value.caseId, value.promptHash,
+        value.businessAttempt.toString(), value.transportAttempt.toString(), value.status,
+        value.exitCode.toString(), value.timedOut.toString(), value.safeOutputHash,
+        value.previousEvidenceHash].map({field: String => teacherAttemptEscape(field)}), "\t")
+}
+
+public func parseTeacherTransportEvidence(raw: String): TeacherTransportEvidence {
+    let fields = raw.trimAscii().split("\t").map({field: String => teacherAttemptUnescape(field)}).toArray()
+    if (fields.size != 11 || fields[0] != TEACHER_TRANSPORT_SCHEMA) {
+        throw IllegalArgumentException("teacher_transport_evidence_invalid")
+    }
+    try {
+        let timedOut = if (fields[8] == "true") { true } else if (fields[8] == "false") { false }
+            else { throw IllegalArgumentException("teacher_transport_evidence_invalid") }
+        TeacherTransportEvidence(fields[1], fields[2], fields[3], Int64.parse(fields[4]),
+            Int64.parse(fields[5]), fields[6], Int64.parse(fields[7]), timedOut, fields[9], fields[10])
+    } catch (_: Exception) { throw IllegalArgumentException("teacher_transport_evidence_invalid") }
+}
+
+public func teacherTransportEvidenceHash(value: TeacherTransportEvidence): String {
+    "sha256:${teacherStableHash(renderTeacherTransportEvidence(value))}"
+}
+
+public func teacherTransportManifestPath(root: String, runId: String, caseId: String,
+    businessAttempt: Int64, transportAttempt: Int64): String {
+    "${root}/runs/${runId}/transport/${caseId}/business-${businessAttempt}/transport-${transportAttempt}.manifest"
+}
+
+private func validateTeacherTransportEvidence(value: TeacherTransportEvidence, runId: String,
+    caseValue: TeacherCaseManifest, businessAttempt: Int64, transportAttempt: Int64,
+    previousHash: String): Bool {
+    let statuses = ["started", "interrupted", "timeout", "process_failed", "empty_output", "succeeded"]
+    let terminal = value.status != "started"
+    let emptyHash = "sha256:${teacherStableHash("")}"
+    let terminalContract = if (value.status == "interrupted") {
+        value.exitCode == -1 && !value.timedOut &&
+            value.safeOutputHash == "sha256:${teacherStableHash("transport_interrupted")}"
+    } else if (value.status == "timeout") {
+        value.timedOut
+    } else if (value.status == "process_failed") {
+        !value.timedOut && value.exitCode != 0
+    } else if (value.status == "empty_output") {
+        !value.timedOut && value.exitCode == 0 && value.safeOutputHash == emptyHash
+    } else if (value.status == "succeeded") {
+        !value.timedOut && value.exitCode == 0 && value.safeOutputHash != emptyHash
+    } else { false }
+    value.runId == runId && value.caseId == caseValue.caseId && value.promptHash == caseValue.promptHash &&
+        value.businessAttempt == businessAttempt && value.transportAttempt == transportAttempt &&
+        statuses.contains(value.status) && value.previousEvidenceHash == previousHash &&
+        ((!terminal && value.exitCode == -1 && !value.timedOut && value.safeOutputHash.isEmpty()) ||
+        (terminal && value.safeOutputHash.startsWith("sha256:") && terminalContract))
+}
+
+public func loadTeacherTransportEvidence(root: String, runId: String, caseValue: TeacherCaseManifest,
+    businessAttempt: Int64): Array<TeacherTransportEvidence> {
+    let out = ArrayList<TeacherTransportEvidence>()
+    var transportAttempt: Int64 = 1
+    var previousHash = ""
+    while (true) {
+        let path = teacherTransportManifestPath(root, runId, caseValue.caseId, businessAttempt, transportAttempt)
+        if (!exists(Path(path))) { break }
+        try {
+            if (FileInfo(Path(path)).isSymbolicLink()) {
+                throw IllegalArgumentException("teacher_transport_evidence_invalid")
+            }
+            let value = parseTeacherTransportEvidence(teacherReadUtf8File(path))
+            if (!validateTeacherTransportEvidence(value, runId, caseValue, businessAttempt,
+                transportAttempt, previousHash)) {
+                throw IllegalArgumentException("teacher_transport_evidence_invalid")
+            }
+            if (value.status == "started" && exists(Path(teacherTransportManifestPath(root, runId,
+                caseValue.caseId, businessAttempt, transportAttempt + 1)))) {
+                throw IllegalArgumentException("teacher_transport_evidence_invalid")
+            }
+            out.add(value)
+            previousHash = teacherTransportEvidenceHash(value)
+            transportAttempt += 1
+        } catch (_: Exception) { throw IllegalArgumentException("teacher_transport_evidence_invalid") }
+    }
+    let base = Path("${root}/runs/${runId}/transport/${caseValue.caseId}/business-${businessAttempt}")
+    if (exists(base)) {
+        var manifests: Int64 = 0
+        for (entry in Directory.readFrom(base)) {
+            if (entry.name.startsWith("transport-") && entry.name.endsWith(".manifest")) { manifests += 1 }
+        }
+        if (manifests != out.size) { throw IllegalArgumentException("teacher_transport_evidence_invalid") }
+    }
+    out.toArray()
+}
+
+public func persistTeacherTransportStarted(root: String, runId: String, caseValue: TeacherCaseManifest,
+    businessAttempt: Int64, transportAttempt: Int64, previousEvidenceHash: String): String {
+    let value = TeacherTransportEvidence(runId, caseValue.caseId, caseValue.promptHash, businessAttempt,
+        transportAttempt, "started", -1, false, "", previousEvidenceHash)
+    teacherAtomicWrite(teacherTransportManifestPath(root, runId, caseValue.caseId, businessAttempt,
+        transportAttempt), renderTeacherTransportEvidence(value) + "\n")
+}
+
+public func persistTeacherTransportCompleted(root: String, started: TeacherTransportEvidence,
+    result: TeacherProcessResult): TeacherTransportEvidence {
+    if (started.status != "started") { throw IllegalArgumentException("teacher_transport_evidence_invalid") }
+    let status = if (result.timedOut) { "timeout" } else if (result.exitCode != 0) { "process_failed" }
+        else if (result.output.isEmpty()) { "empty_output" } else { "succeeded" }
+    let safeOutputHash = "sha256:${teacherStableHash(teacherAttemptSafeDiagnostic(result.output))}"
+    let completed = TeacherTransportEvidence(started.runId, started.caseId, started.promptHash,
+        started.businessAttempt, started.transportAttempt, status, result.exitCode, result.timedOut,
+        safeOutputHash, started.previousEvidenceHash)
+    _ = teacherAtomicWrite(teacherTransportManifestPath(root, started.runId, started.caseId,
+        started.businessAttempt, started.transportAttempt), renderTeacherTransportEvidence(completed) + "\n")
+    completed
+}
+
+public func persistTeacherTransportInterrupted(root: String,
+    started: TeacherTransportEvidence): TeacherTransportEvidence {
+    if (started.status != "started") { throw IllegalArgumentException("teacher_transport_evidence_invalid") }
+    let completed = TeacherTransportEvidence(started.runId, started.caseId, started.promptHash,
+        started.businessAttempt, started.transportAttempt, "interrupted", -1, false,
+        "sha256:${teacherStableHash("transport_interrupted")}", started.previousEvidenceHash)
+    _ = teacherAtomicWrite(teacherTransportManifestPath(root, started.runId, started.caseId,
+        started.businessAttempt, started.transportAttempt), renderTeacherTransportEvidence(completed) + "\n")
+    completed
 }
 
 public func teacherAttemptManifestPath(root: String, runId: String, caseId: String, attempt: Int64): String {

@@ -1,5 +1,7 @@
 package cangjie_teacher
 
+import std.collection.*
+
 public func deriveKnowledgeObservation(caseValue: TeacherCaseManifest, family: String, concept: String,
     targetVersion: String, explanation: String, citation: String, sourceClass: String, evidence: String): TeacherObservation {
     let observation = TeacherObservation(caseValue.caseId, family, concept, targetVersion, explanation, citation,
@@ -26,12 +28,37 @@ public func validateObservationAgainstAuthority(observation: TeacherObservation,
     let body = "${observation.concept}\n${observation.explanation}\n${observation.citation}".toAsciiLower()
     let authority = [caseValue.caseId, caseValue.prompt, caseValue.signature]
     for (raw in authority) {
-        let value = raw.trimAscii().toAsciiLower()
-        if (!value.isEmpty() && body.contains(value)) { return false }
+        if (teacherObservationContainsProtectedFragment(body, raw)) { return false }
     }
     for (raw in protectedArtifacts) {
-        let value = raw.trimAscii().toAsciiLower()
-        if (!value.isEmpty() && body.contains(value)) { return false }
+        if (teacherObservationContainsProtectedFragment(body, raw)) { return false }
     }
-    true
+    let allProtected = ArrayList<String>()
+    for (raw in authority) { allProtected.add(raw) }
+    for (raw in protectedArtifacts) { allProtected.add(raw) }
+    auditTextAgainstProtectedArtifacts(body, allProtected.toArray()).passed
+}
+
+private func teacherObservationNormalize(value: String): String {
+    let parts = ArrayList<String>()
+    for (part in value.toAsciiLower().replace("\n", " ").replace("\t", " ").replace("\r", " ")
+        .replace("(", " ").replace(")", " ").replace("{", " ").replace("}", " ")
+        .replace(",", " ").replace(";", " ").split(" ")) {
+        if (!part.isEmpty()) { parts.add(part) }
+    }
+    teacherJoin(parts.toArray(), " ")
+}
+
+private func teacherObservationContainsProtectedFragment(body: String, protectedArtifact: String): Bool {
+    let normalizedBody = teacherObservationNormalize(body)
+    let normalizedArtifact = teacherObservationNormalize(protectedArtifact)
+    let artifactRunes = normalizedArtifact.toRuneArray()
+    if (artifactRunes.size < 16) { return false }
+    if (normalizedBody.contains(normalizedArtifact)) { return true }
+    let windowSize: Int64 = 48
+    if (artifactRunes.size < windowSize) { return false }
+    for (start in 0..=artifactRunes.size - windowSize) {
+        if (normalizedBody.contains(String(artifactRunes[start..start + windowSize]))) { return true }
+    }
+    false
 }

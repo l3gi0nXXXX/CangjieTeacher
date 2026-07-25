@@ -112,7 +112,8 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
                     boundaryDependencyProfile:currentSpec.boundaryDependencyProfile)
                 if(!relevance.ok){atomFeedback=relevance.feedback;continue}
                 let observation=deriveKnowledgeObservation(caseValue,currentSpec.family,currentSpec.concept,row.targetVersion,currentSpec.explanation,currentSpec.citation,currentSpec.sourceClass,row.evidence+currentSpec.transcriptHash)
-                if(!validateObservationNoSolutionLeak(observation)){result.diagnostic="observation_leakage";return result}
+                let observationProtected=ArrayList<String>();for(value in [row.taskText,row.visibleTestExcerpt,row.compilerOutput]){observationProtected.add(value)};for(value in protected){observationProtected.add(value)}
+                if(!validateObservationAgainstAuthority(observation,caseValue,observationProtected.toArray())){result.diagnostic="observation_leakage";return result}
                 let normalized=normalizeObservation(observation);let currentIdentity=canonicalKnowledgeIdentity(normalized)
                 match(identities.get(currentIdentity)){case Some(existing)=>if(mergeKnowledgeObservations([existing,normalized]).reviewRequired){result.diagnostic="review_required";return result};case None=>()}
                 let currentBundle=teacherExecutableAtomBundle(currentIdentity,row,currentSpec,options.root,run)

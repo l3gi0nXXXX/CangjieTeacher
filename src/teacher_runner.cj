@@ -132,13 +132,27 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
         let previousHash = if (history.isEmpty()) { "" } else { teacherAttemptEvidenceHash(history[history.size - 1]) }
         let preHash = teacherDirectoryHash("${workspace}/src")
         if (preHash.isEmpty()) { throw IllegalArgumentException("teacher_attempt_workspace_missing") }
-        _ = persistTeacherAttemptStarted(options.root, options.runId, caseValue, teacherAttempt, previousHash, preHash)
         var generated = TeacherProcessResult(3, "")
         while (true) {
+            var transport = loadTeacherTransportEvidence(options.root, options.runId, caseValue, teacherAttempt)
+            if (!transport.isEmpty() && transport[transport.size - 1].status == "started") {
+                _ = persistTeacherTransportInterrupted(options.root, transport[transport.size - 1])
+                transport = loadTeacherTransportEvidence(options.root, options.runId, caseValue, teacherAttempt)
+                feedback = "The previous model transport attempt did not produce a valid terminal result."
+            }
+            let transportAttempt = transport.size + 1
+            let transportPrevious = if (transport.isEmpty()) { "" }
+                else { teacherTransportEvidenceHash(transport[transport.size - 1]) }
+            _ = persistTeacherTransportStarted(options.root, options.runId, caseValue, teacherAttempt,
+                transportAttempt, transportPrevious)
             let guidance = teacherAttemptProgressGuidance(teacherAttempt, history.toArray(), feedback)
             generated = options.process.generate(caseValue, workspace, paths.session(options.runId, caseValue.caseId),
                 paths.runtimeHome(options.runId, caseValue.caseId), guidance)
             generationEvidence += generated.output
+            let startedTransport = parseTeacherTransportEvidence(teacherReadUtf8File(
+                teacherTransportManifestPath(options.root, options.runId, caseValue.caseId,
+                    teacherAttempt, transportAttempt)))
+            _ = persistTeacherTransportCompleted(options.root, startedTransport, generated)
             if (!generated.timedOut && generated.exitCode == 0 && !generated.output.isEmpty()) { break }
             if (!options.repairUntilVerified) {
                 let solutionHash = teacherDirectoryHash("${workspace}/src")
@@ -155,6 +169,7 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
             }
             feedback = "The previous model transport attempt did not produce a valid terminal result."
         }
+        _ = persistTeacherAttemptStarted(options.root, options.runId, caseValue, teacherAttempt, previousHash, preHash)
         let solutionHash = teacherDirectoryHash("${workspace}/src")
         if (solutionHash.isEmpty()) { throw IllegalArgumentException("teacher_attempt_solution_missing") }
         let repeatCount = teacherAttemptRepeatCount(history.toArray(), solutionHash)
@@ -221,5 +236,6 @@ public func teacherCompletedRunReusable(old: TeacherRunManifest, caseValue: Teac
     options: TeacherRunOptions): Bool {
     validateTeacherRunManifest(old) && old.runId == options.runId && old.caseId == caseValue.caseId &&
         old.status == "complete" && old.exitCode == 0 && old.datasetVersion == caseValue.datasetVersion &&
-        old.modelId == options.modelId && old.promptHash == caseValue.promptHash
+        old.modelId == options.modelId && old.promptHash == caseValue.promptHash &&
+        validateTeacherSolutionBinding(options.root, old)
 }

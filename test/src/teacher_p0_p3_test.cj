@@ -661,10 +661,21 @@ public class TeacherP0P3Test {
     @TestCase public func p2TimeoutEmptyUtf8AndResumeAreStable(): Unit {
         @Expect(runTeacherCase(testCase(), options(generate: TeacherProcessResult(0, "", timedOut: true))).status, "timeout")
         @Expect(runTeacherCase(testCase(), options(generate: TeacherProcessResult(0, ""))).status, "empty_output")
-        let completed = finalizeTeacherRun(runTeacherCase(testCase(), options(generate: TeacherProcessResult(0, "中文😀"))), true)
-        let resumed = runTeacherBatch([testCase()], options(generate: TeacherProcessResult(8, "must not replace")), [completed])
-        @Expect(resumed[0].status, "complete")
-        @Expect(resumed[0].evidenceHash, completed.evidenceHash)
+        let root = "/tmp/cangjie-teacher-bound-resume-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            let boundOptions = TeacherRunOptions("run-1", root, "gpt-fake",
+                FakeProcess(TeacherProcessResult(0, "中文😀")), FakeVerifier(TeacherProcessResult(0, "passed")), FakeClock())
+            let completed = finalizeTeacherRun(runTeacherCase(testCase(), boundOptions), true)
+            Directory.create(Path("${root}/teacher-solutions/${completed.caseId}/src"), recursive: true)
+            File.writeTo(Path("${root}/teacher-solutions/${completed.caseId}/src/solution.cj"), "bound 中文😀".toArray())
+            _ = persistTeacherRunArtifacts(root, completed, "generation", "verification")
+            _ = persistTeacherSolutionBinding(root, completed)
+            let noReplace = TeacherRunOptions("run-1", root, "gpt-fake",
+                FakeProcess(TeacherProcessResult(8, "must not replace")), FakeVerifier(TeacherProcessResult(0, "passed")), FakeClock())
+            let resumed = runTeacherBatch([testCase()], noReplace, [completed])
+            @Expect(resumed[0].status, "complete")
+            @Expect(resumed[0].evidenceHash, completed.evidenceHash)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
     // P2-POS-01
     @TestCase public func p2VerifiedRunAndObservationAreSeparated(): Unit {
@@ -1414,6 +1425,14 @@ public class TeacherP0P3Test {
             @Expect(ckb.contains("\"knowledgeAtomTestBundle\":${canonicalBundle}"), true)
             @Expect(p3CkbString(ckbObject, "candidateHash"), p3CkbCandidateHash(ckb))
             @Expect(teacherReadUtf8File("${root}/exports/r1/candidate-knowledge.tsv").toAsciiLower().contains("cj-humaneval-"), false)
+            let authorityLeak=extractorJson.replace("\"concept\":\"UTF-8 String Rune iteration\"",
+                "\"concept\":\"authority bound task\"")
+            options.outputRoot="${root}/exports/authority-leak"
+            let authorityRejected=buildTeacherCandidates(options,
+                extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(0,authorityLeak)]),
+                atomExecutor:AtomRepairExecutor())
+            @Expect(authorityRejected.diagnostic,"observation_leakage")
+            @Expect(exists(Path(options.outputRoot)),false)
             let missingProfile=extractorJson.replace(",\"boundaryDependencyProfile\":\"none\"","")
             options.outputRoot="${root}/exports/fallback-missing"
             @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(

@@ -17,16 +17,26 @@ private func normalizedTokens(value: String): Array<String> {
     return out.toArray()
 }
 
-public func auditCandidateAgainstSolutions(candidate: TeacherCandidateExport, protectedArtifacts: Array<String>): LeakageAuditResult {
-    let body = "${candidate.explanation}\n${candidate.example}\n${candidate.tests.positive}\n${candidate.tests.negative}\n${candidate.tests.boundary}".toAsciiLower()
+public func auditTextAgainstProtectedArtifacts(body: String,
+    protectedArtifacts: Array<String>): LeakageAuditResult {
+    let normalizedBody = body.toAsciiLower()
     let violations = ArrayList<String>()
     for (artifact in protectedArtifacts) {
         let tokens = normalizedTokens(artifact)
         var shared: Int64 = 0
-        for (token in tokens) { if (body.contains(token)) { shared++ } }
-        if (shared >= 8 || (!artifact.isEmpty() && body.contains(artifact.toAsciiLower()))) { violations.add("protected_artifact_similarity") }
+        for (token in tokens) { if (normalizedBody.contains(token)) { shared++ } }
+        let normalizedArtifact = artifact.toAsciiLower()
+        if (shared >= 8 || (normalizedArtifact.toRuneArray().size >= 16 &&
+            normalizedBody.contains(normalizedArtifact))) {
+            violations.add("protected_artifact_similarity")
+        }
     }
-    return LeakageAuditResult(violations.isEmpty(), violations.toArray())
+    LeakageAuditResult(violations.isEmpty(), violations.toArray())
+}
+
+public func auditCandidateAgainstSolutions(candidate: TeacherCandidateExport, protectedArtifacts: Array<String>): LeakageAuditResult {
+    let body = "${candidate.explanation}\n${candidate.example}\n${candidate.tests.positive}\n${candidate.tests.negative}\n${candidate.tests.boundary}".toAsciiLower()
+    auditTextAgainstProtectedArtifacts(body, protectedArtifacts)
 }
 
 public func auditCaseSpecificity(candidate: TeacherCandidateExport, signatures: Array<String>): LeakageAuditResult {
