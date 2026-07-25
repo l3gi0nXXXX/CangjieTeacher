@@ -98,6 +98,9 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
             let run = match (runs.get(row.caseId)) { case Some(v) => v; case None => result.diagnostic = "complete_teacher_run_required"; return result }
             if (row.datasetVersion != caseValue.datasetVersion || run.datasetVersion != row.datasetVersion) { result.diagnostic = "dataset_version_mismatch"; return result }
             if(run.promptHash!=caseValue.promptHash||run.modelId!="gpt-5.6-sol"||run.evidenceHash==""){result.diagnostic="complete_run_identity_invalid";return result}
+            if(!validateTeacherCompletedRunAttemptBinding(options.root,run,caseValue)){
+                result.diagnostic="complete_run_attempt_binding_invalid";return result
+            }
             let solutionRoot = TeacherPaths(options.root).solution(row.caseId)
             if (!exists(Path(solutionRoot))||!validateTeacherSolutionBinding(options.root,run)) { result.diagnostic = "solution_evidence_binding_invalid"; return result }
             let protected = teacherPrivateArtifacts(solutionRoot)
@@ -208,6 +211,9 @@ public func reexportTeacherCandidateBundle(options:TeacherCliOptions,
         let run=match(matchedRun){case Some(v)=>v;case None=>result.diagnostic="complete_teacher_run_required";return result}
         if(!teacherRunCompleteForCandidate(run,options.runId)||run.datasetVersion!=row.datasetVersion||row.datasetVersion!=caseValue.datasetVersion||row.teacherRunId!=options.runId||run.promptHash!=caseValue.promptHash||run.modelId!="gpt-5.6-sol"||run.evidenceHash==""){
             result.diagnostic="reexport_binding_invalid";return result
+        }
+        if(!validateTeacherCompletedRunAttemptBinding(options.root,run,caseValue)){
+            result.diagnostic="complete_run_attempt_binding_invalid";return result
         }
         if(!validateTeacherSolutionBinding(options.root,run)){result.diagnostic="solution_evidence_binding_invalid";return result}
         let observation=try{parseTeacherObservation(observationRaw[0].trimAscii())}catch(_:Exception){result.diagnostic="malformed_teacher_observation";return result}

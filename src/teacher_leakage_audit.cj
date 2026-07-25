@@ -46,8 +46,10 @@ public func teacherProtectedArtifactSimilar(material: String, protectedArtifact:
     let artifactRunes = normalizedArtifact.toRuneArray()
     let artifactTokens = normalizedTokens(normalizedArtifact)
     if (artifactRunes.size < 16) {
-        return artifactRunes.size >= 8 && artifactTokens.size >= 2 &&
-            normalizedMaterial.contains(normalizedArtifact)
+        // A protected identifier or visible literal can be a single short
+        // token. Exact reuse is still authority leakage; public vocabulary
+        // such as "Rune" remains below this distinctive-token threshold.
+        return artifactRunes.size >= 8 && normalizedMaterial.contains(normalizedArtifact)
     }
     if (normalizedMaterial.contains(normalizedArtifact)) { return true }
 

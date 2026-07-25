@@ -319,6 +319,9 @@ public class TeacherS5LoopTest {
         let editedRunes = longArtifact.toRuneArray()
         for (i in 15..editedRunes.size: 32) { editedRunes[i] = r'X' }
         @Expect(teacherProtectedArtifactSimilar(String(editedRunes), longArtifact), true)
+        @Expect(teacherProtectedArtifactSimilar("Do not expose caseKey9.", "caseKey9"), true)
+        @Expect(teacherProtectedArtifactSimilar("The visible literal is amberfox.", "amberfox"), true)
+        @Expect(teacherProtectedArtifactSimilar("Use a different identifier.", "caseKey9"), false)
         @Expect(teacherProtectedArtifactSimilar("Iterate Rune values safely.", "Rune"), false)
     }
 

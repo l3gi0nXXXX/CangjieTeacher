@@ -71,7 +71,11 @@ public class TeacherClaudeClassifierTest {
             let script="#!/bin/zsh\n[[ \" $* \" == *\" --model GLM-5.2 \"* ]] || exit 21\n[[ \" $* \" == *\" --json-schema \"* ]] || exit 22\n[[ \" $* \" == *\" --output-format json \"* ]] || exit 23\n[[ \" $* \" == *\" --effort low \"* ]] || exit 24\n[[ \" $* \" == *\" --no-session-persistence \"* ]] || exit 25\n[[ \" $* \" == *\" --tools  \"* ]] || exit 26\nprint -r -- '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"modelUsage\":{\"GLM-5.2\":{}},\"structured_output\":{\"category\":\"reasoning_failure\",\"knowledgeFamily\":\"\",\"reusable\":false,\"sourceClass\":\"\",\"citation\":\"\",\"purificationPassed\":false,\"canonicalKnowledgeId\":\"\",\"targetVersion\":\"\",\"evidenceId\":\"\",\"knowledgeText\":\"\"}}'\n"
             File.writeTo(Path(fake),script.toArray());@Expect(launch("/bin/chmod",["700",fake]).wait(),0)
             let previous=match(oldPath){case Some(v)=>v;case None=>"/usr/bin:/bin"};setVariable("PATH","${r}/bin:${previous}")
-            let result=runClaudeClassifierAdapter(setup[1]);@Expect(result.ok,true);@Expect(teacherReadUtf8File("${r}/workspace/response.json").contains("reasoning_failure"),true)
+            let result=runClaudeClassifierAdapter(setup[1])
+            // Keep the stable adapter diagnostic visible in test output when
+            // native process execution fails before a response is published.
+            @Expect(result.diagnostic,"ok");@Expect(result.ok,true)
+            @Expect(teacherReadUtf8File("${r}/workspace/response.json").contains("reasoning_failure"),true)
         }finally{match(oldPath){case Some(v)=>setVariable("PATH",v);case None=>setVariable("PATH","")};try{remove(Path(r),recursive:true)}catch(_:Exception){}}
     }
 

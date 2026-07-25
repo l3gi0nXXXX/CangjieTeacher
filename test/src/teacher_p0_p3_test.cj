@@ -59,8 +59,7 @@ private func buildCandidateFixture(root:String,name:String):String{
     File.writeTo(Path("${root}/manifest.jsonl"),(teacherJoin(caseLines(),"\n")+"\n").toArray())
     Directory.create(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src"),recursive:true)
     File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"),"private opaque implementation 987654".toArray())
-    let run=TeacherRunManifest("teacher-r1","CJ-HUMANEVAL-000","dataset-v1","gpt-5.6-sol","prompt-hash",2,"complete",0,"evidence-中文😀")
-    _=persistCompletedTeacherRuns("${root}/runs/teacher-r1/completed.manifest",[run]);_=persistTeacherRunArtifacts(root,run,"generation","verification");_=persistTeacherSolutionBinding(root,run)
+    _=p3PersistTrustedCompletedRun(root)
     let evidence="case=confirmed|taxonomy=knowledge_gap|independent=sha256:abc"
     let gap="{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"dataset-v1\",\"teacherRunId\":\"teacher-r1\",\"evidenceHash\":\"sha256:${teacherStableHash(evidence)}\",\"evidence\":\"${evidence}\",\"failureTaxonomy\":\"knowledge_gap\",\"knowledgeGapConfirmations\":2,\"caseId\":\"CJ-HUMANEVAL-000\",\"benchmark\":\"Cangjie-HumanEval\",\"taskText\":\"authority bound task\",\"visibleTestExcerpt\":\"\",\"compilerOutput\":\"knowledge gap\",\"missingKnowledge\":\"G-STRING\",\"interfaceId\":\"KI-02\",\"contentFamily\":\"KC-02\",\"updateMechanism\":\"KU-11\",\"targetVersion\":\"1.0.0\",\"officialCitation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\"}\n"
     File.writeTo(Path("${root}/gap.jsonl"),gap.toArray())
@@ -89,6 +88,29 @@ private func p3PersistSuccessfulTransport(root: String, runId: String,
     let started = parseTeacherTransportEvidence(teacherReadUtf8File(
         teacherTransportManifestPath(root, runId, caseValue.caseId, businessAttempt, 1)))
     _ = persistTeacherTransportCompleted(root, started, TeacherProcessResult(0, "generated"))
+}
+
+private func p3PersistTrustedCompletedRun(root: String): TeacherRunManifest {
+    let caseValue = testCase()
+    let runId = "teacher-r1"
+    let workspace = "${root}/fixture-workspace"
+    Directory.create(Path("${workspace}/src"), recursive: true)
+    teacherCopyTree("${root}/teacher-solutions/${caseValue.caseId}/src", "${workspace}/src")
+    let solutionHash = teacherDirectoryHash("${workspace}/src")
+    p3PersistSuccessfulTransport(root, runId, caseValue, 1)
+    _ = persistTeacherAttemptStarted(root, runId, caseValue, 1, "", solutionHash)
+    let transport = loadTeacherTransportEvidence(root, runId, caseValue, 1)
+    let evidence = TeacherAttemptEvidence(runId, caseValue.caseId, caseValue.promptHash, 1, "verified",
+        solutionHash, solutionHash, "generation_ok", "passed", 1, "", "",
+        transportCount: transport.size, transportRootHash: teacherTransportChainRootHash(transport))
+    _ = persistTeacherAttemptCompleted(root, caseValue, evidence, workspace)
+    let run = TeacherRunManifest(runId, caseValue.caseId, caseValue.datasetVersion, "gpt-5.6-sol",
+        caseValue.promptHash, 1, "complete", 0, "evidence-中文😀")
+    _ = persistCompletedTeacherRuns("${root}/runs/${runId}/completed.manifest", [run])
+    _ = persistTeacherRunArtifacts(root, run, "generation", "verification")
+    _ = persistTeacherSolutionBinding(root, run)
+    _ = persistTeacherCompletedAttemptBinding(root, run, caseValue)
+    run
 }
 
 private class RecordingExecutor <: TeacherCommandExecutor {
@@ -763,11 +785,7 @@ public class TeacherP0P3Test {
             File.writeTo(Path("${root}/manifest.jsonl"), (teacherJoin(caseLines(), "\n") + "\n").toArray())
             Directory.create(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src"), recursive: true)
             File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"), "private opaque implementation 987654".toArray())
-            let run = TeacherRunManifest("teacher-r1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol",
-                "prompt-hash", 1, "complete", 0, "sha256:completed-evidence")
-            _ = persistCompletedTeacherRuns("${root}/runs/teacher-r1/completed.manifest", [run])
-            _ = persistTeacherRunArtifacts(root, run, "generation", "verification")
-            _ = persistTeacherSolutionBinding(root, run)
+            _ = p3PersistTrustedCompletedRun(root)
             let evidence = "valid first sample failed public verifier with expected and actual values"
             let gap = "{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"dataset-v1\",\"teacherRunId\":\"student-r1\",\"evidenceHash\":\"sha256:${teacherStableHash(evidence)}\",\"evidence\":\"${evidence}\",\"failureTaxonomy\":\"unit_failure\",\"knowledgeGapConfirmations\":0,\"sourceClass\":\"teacher_empirical\",\"caseId\":\"CJ-HUMANEVAL-000\",\"benchmark\":\"Cangjie-HumanEval\",\"taskText\":\"authority bound task\",\"visibleTestExcerpt\":\"\",\"compilerOutput\":\"knowledge gap\",\"missingKnowledge\":\"G-STRING\",\"interfaceId\":\"KI-02\",\"contentFamily\":\"KC-02\",\"updateMechanism\":\"KU-11\",\"targetVersion\":\"1.0.0\",\"officialCitation\":\"\"}\n"
             File.writeTo(Path("${root}/gap.jsonl"), gap.toArray())
@@ -1379,10 +1397,7 @@ public class TeacherP0P3Test {
             File.writeTo(Path("${root}/manifest.jsonl"), manifest.toArray())
             Directory.create(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src"), recursive: true)
             File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"), "private opaque implementation 987654".toArray())
-            let run = TeacherRunManifest("teacher-r1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol", "prompt-hash", 2, "complete", 0, "evidence-中文😀")
-            _ = persistCompletedTeacherRuns("${root}/runs/teacher-r1/completed.manifest", [run])
-            _ = persistTeacherRunArtifacts(root,run,"generation","verification")
-            _ = persistTeacherSolutionBinding(root,run)
+            let run = p3PersistTrustedCompletedRun(root)
             let evidence = "case=confirmed|taxonomy=knowledge_gap|independent=sha256:abc"
             let gap = "{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"dataset-v1\",\"teacherRunId\":\"development-r1\",\"evidenceHash\":\"sha256:${teacherStableHash(evidence)}\",\"evidence\":\"${evidence}\",\"failureTaxonomy\":\"knowledge_gap\",\"knowledgeGapConfirmations\":2,\"caseId\":\"CJ-HUMANEVAL-000\",\"benchmark\":\"Cangjie-HumanEval\",\"taskText\":\"authority bound task\",\"visibleTestExcerpt\":\"\",\"compilerOutput\":\"knowledge gap\",\"missingKnowledge\":\"G-STRING\",\"interfaceId\":\"KI-02\",\"contentFamily\":\"KC-02\",\"updateMechanism\":\"KU-11\",\"targetVersion\":\"1.0.0\",\"officialCitation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\"}\n"
             File.writeTo(Path("${root}/gap.jsonl"), gap.toArray())
@@ -1499,7 +1514,19 @@ public class TeacherP0P3Test {
             @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(0,"not-json")])).diagnostic,"malformed_extractor_json")
             options.model="unexpected-model";options.outputRoot="${root}/exports/model"
             @Expect(buildTeacherCandidates(options,extractorExecutor:extractor).diagnostic,"extractor_model_identity_invalid")
-            options.model="gpt-5.6-sol";_=teacherAtomicWrite("${root}/runs/teacher-r1/evidence/CJ-HUMANEVAL-000/solution.binding","wrong\twrong\twrong\n");options.outputRoot="${root}/exports/binding"
+            options.model="gpt-5.6-sol"
+            let attemptBinding=teacherCompletedAttemptBindingPath(root,run)
+            let attemptBindingRaw=teacherReadUtf8File(attemptBinding)
+            remove(Path(attemptBinding));options.outputRoot="${root}/exports/attempt-binding-missing"
+            @Expect(buildTeacherCandidates(options,extractorExecutor:extractor).diagnostic,
+                "complete_run_attempt_binding_invalid")
+            File.writeTo(Path(attemptBinding),attemptBindingRaw.toArray())
+            File.writeTo(Path(attemptBinding),(attemptBindingRaw+"tampered").toArray())
+            options.outputRoot="${root}/exports/attempt-binding-tampered"
+            @Expect(buildTeacherCandidates(options,extractorExecutor:extractor).diagnostic,
+                "complete_run_attempt_binding_invalid")
+            File.writeTo(Path(attemptBinding),attemptBindingRaw.toArray())
+            _=teacherAtomicWrite("${root}/runs/teacher-r1/evidence/CJ-HUMANEVAL-000/solution.binding","wrong\twrong\twrong\n");options.outputRoot="${root}/exports/binding"
             @Expect(buildTeacherCandidates(options,extractorExecutor:extractor).diagnostic,"solution_evidence_binding_invalid")
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
@@ -1543,6 +1570,17 @@ public class TeacherP0P3Test {
             let outputCkb=teacherReadUtf8File("${options.outputRoot}/candidate-knowledge/ckb-benchmark-gap.jsonl").trimAscii()
             @Expect(p3CkbString(JsonValue.fromStr(outputCkb).asObject(),"candidateHash"),p3CkbCandidateHash(outputCkb))
             @Expect(outputCkb.contains("\\u0026\\u0026"),true)
+            let run=loadCompletedTeacherRuns("${root}/runs/teacher-r1/completed.manifest")[0]
+            let bindingPath=teacherCompletedAttemptBindingPath(root,run)
+            let bindingRaw=teacherReadUtf8File(bindingPath)
+            remove(Path(bindingPath))
+            let missingOptions=reexportOptions(root,source,"missing-attempt-binding")
+            @Expect(reexportTeacherCandidateBundle(missingOptions).diagnostic,
+                "complete_run_attempt_binding_invalid")
+            File.writeTo(Path(bindingPath),(bindingRaw+"tampered").toArray())
+            let tamperedOptions=reexportOptions(root,source,"tampered-attempt-binding")
+            @Expect(reexportTeacherCandidateBundle(tamperedOptions).diagnostic,
+                "complete_run_attempt_binding_invalid")
         } finally { try{remove(Path(root),recursive:true)}catch(_:Exception){} }
     }
 
