@@ -158,12 +158,15 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
             if (!options.repairUntilVerified) {
                 let solutionHash = teacherDirectoryHash("${workspace}/src")
                 if (solutionHash.isEmpty()) { throw IllegalArgumentException("teacher_attempt_solution_missing") }
+                let completedTransport = loadTeacherTransportEvidence(options.root, options.runId,
+                    caseValue, teacherAttempt)
                 let diagnostic = if (generated.timedOut) { "generation_timeout" }
                     else if (generated.exitCode != 0) { "generation_process_failed" } else { "generation_empty_output" }
                 let failed = TeacherAttemptEvidence(options.runId, caseValue.caseId, caseValue.promptHash, teacherAttempt,
                     "transport_failed", preHash, solutionHash, diagnostic, "",
                     teacherAttemptRepeatCount(history.toArray(), solutionHash), previousHash, "",
-                    transportCount: transport.size, transportRootHash: teacherTransportChainRootHash(transport))
+                    transportCount: completedTransport.size,
+                    transportRootHash: teacherTransportChainRootHash(completedTransport))
                 history.add(persistTeacherAttemptCompleted(options.root, caseValue, failed, workspace))
                 let exit = if (generated.timedOut) { 124 } else if (generated.exitCode != 0) { generated.exitCode } else { 3 }
                 return TeacherCaseExecution(buildTeacherRun(caseValue, options, "generation_failed", exit,

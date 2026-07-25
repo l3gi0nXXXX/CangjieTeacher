@@ -63,6 +63,14 @@ private class S5CrashTransportProcess <: TeacherProcess {
     }
 }
 
+private class S5FixedProcess <: TeacherProcess {
+    private let result: TeacherProcessResult
+    public init(result: TeacherProcessResult) { this.result = result }
+    public func generate(_: TeacherCaseManifest, _: String, _: String, _: String, _: String): TeacherProcessResult {
+        result
+    }
+}
+
 private class S5FixedVerifier <: TeacherVerifier {
     public func verify(_: TeacherCaseManifest, _: String): TeacherProcessResult {
         TeacherProcessResult(0, "passed")
@@ -84,6 +92,45 @@ private func s5PersistSuccessfulTransport(root: String, runId: String,
 
 @Test
 public class TeacherS5LoopTest {
+    // S5-NEG-02: non-repair transport failures persist the completed
+    // transport lineage and remain loadable as one failed business attempt.
+    @TestCase public func nonRepairTransportFailuresPersistLoadableLineage(): Unit {
+        for ((name, processResult, transportStatus, diagnostic, expectedExit) in [
+            ("timeout", TeacherProcessResult(124, "timeout", timedOut: true),
+                "timeout", "generation_timeout", Int64(124)),
+            ("process", TeacherProcessResult(7, "provider unavailable"),
+                "process_failed", "generation_process_failed", Int64(7)),
+            ("empty", TeacherProcessResult(0, ""),
+                "empty_output", "generation_empty_output", Int64(3))
+        ]) {
+            let root = s5Root("non-repair-${name}")
+            let runId = "teacher-non-repair-${name}"
+            try {
+                let caseValue = s5Case()
+                let workspace = TeacherPaths(root).workspace(runId, caseValue.caseId)
+                Directory.create(Path("${workspace}/src"), recursive: true)
+                File.writeTo(Path("${workspace}/src/solution.cj"), "starter 中文😀".toArray())
+                let run = runTeacherCase(caseValue, TeacherRunOptions(runId, root, "gpt-5.6-sol",
+                    S5FixedProcess(processResult), S5FixedVerifier(), S5Clock(),
+                    repairUntilVerified: false, persistAttemptProgress: true))
+                @Expect(run.status, "generation_failed")
+                @Expect(run.attempt, 1)
+                @Expect(run.exitCode, expectedExit)
+                let lineage = loadTeacherTransportEvidence(root, runId, caseValue, 1)
+                @Expect(lineage.size, 1)
+                @Expect(lineage[0].status, transportStatus)
+                let history = loadTeacherAttemptEvidence(root, runId, caseValue)
+                @Expect(history.size, 1)
+                @Expect(history[0].status, "transport_failed")
+                @Expect(history[0].generationDiagnostic, diagnostic)
+                @Expect(history[0].transportCount, lineage.size)
+                @Expect(history[0].transportCount >= 1, true)
+                @Expect(history[0].transportRootHash, teacherTransportChainRootHash(lineage))
+                @Expect(history[0].transportRootHash.startsWith("sha256:"), true)
+            } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+        }
+    }
+
     // S5-UT-01 / S5-POS-01: three transport failures consume no business attempt;
     // one verifier failure is fed to the next effective business attempt.
     @TestCase public func transportRetriesDoNotConsumeBusinessAttemptsAndRepairConverges(): Unit {
