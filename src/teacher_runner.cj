@@ -105,7 +105,8 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
         for (i in 0..history.size - 1) { prior.add(history[i]) }
         let interrupted = TeacherAttemptEvidence(started.runId, started.caseId, started.promptHash, started.attempt,
             "interrupted", started.preSolutionHash, currentHash, "generation_interrupted", "",
-            teacherAttemptRepeatCount(prior.toArray(), currentHash), started.previousEvidenceHash, "")
+            teacherAttemptRepeatCount(prior.toArray(), currentHash), started.previousEvidenceHash, "",
+            transportCount: started.transportCount, transportRootHash: started.transportRootHash)
         history[history.size - 1] = persistTeacherAttemptCompleted(options.root, caseValue, interrupted, workspace)
     }
     if (!history.isEmpty()) {
@@ -161,7 +162,8 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
                     else if (generated.exitCode != 0) { "generation_process_failed" } else { "generation_empty_output" }
                 let failed = TeacherAttemptEvidence(options.runId, caseValue.caseId, caseValue.promptHash, teacherAttempt,
                     "transport_failed", preHash, solutionHash, diagnostic, "",
-                    teacherAttemptRepeatCount(history.toArray(), solutionHash), previousHash, "")
+                    teacherAttemptRepeatCount(history.toArray(), solutionHash), previousHash, "",
+                    transportCount: transport.size, transportRootHash: teacherTransportChainRootHash(transport))
                 history.add(persistTeacherAttemptCompleted(options.root, caseValue, failed, workspace))
                 let exit = if (generated.timedOut) { 124 } else if (generated.exitCode != 0) { generated.exitCode } else { 3 }
                 return TeacherCaseExecution(buildTeacherRun(caseValue, options, "generation_failed", exit,
@@ -178,8 +180,10 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
         verifierEvidence += checked.output
         let safeVerifier = teacherAttemptSafeDiagnostic(checked.output)
         let status = if (checked.exitCode == 0) { "verified" } else { "verification_failed" }
+        let transport = loadTeacherTransportEvidence(options.root, options.runId, caseValue, teacherAttempt)
         let completed = TeacherAttemptEvidence(options.runId, caseValue.caseId, caseValue.promptHash, teacherAttempt,
-            status, preHash, solutionHash, "generation_ok", safeVerifier, repeatCount, previousHash, "")
+            status, preHash, solutionHash, "generation_ok", safeVerifier, repeatCount, previousHash, "",
+            transportCount: transport.size, transportRootHash: teacherTransportChainRootHash(transport))
         history.add(persistTeacherAttemptCompleted(options.root, caseValue, completed, workspace))
         if (checked.exitCode == 0) {
             let chain = teacherAttemptEvidenceChain(history)
@@ -237,5 +241,6 @@ public func teacherCompletedRunReusable(old: TeacherRunManifest, caseValue: Teac
     validateTeacherRunManifest(old) && old.runId == options.runId && old.caseId == caseValue.caseId &&
         old.status == "complete" && old.exitCode == 0 && old.datasetVersion == caseValue.datasetVersion &&
         old.modelId == options.modelId && old.promptHash == caseValue.promptHash &&
-        validateTeacherSolutionBinding(options.root, old)
+        validateTeacherSolutionBinding(options.root, old) &&
+        validateTeacherCompletedRunAttemptBinding(options.root, old, caseValue)
 }

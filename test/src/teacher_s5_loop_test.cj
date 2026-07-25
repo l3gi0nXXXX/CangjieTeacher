@@ -74,6 +74,14 @@ private func s5Options(root: String, runId: String, process: TeacherProcess): Te
         repairUntilVerified: true, persistAttemptProgress: true)
 }
 
+private func s5PersistSuccessfulTransport(root: String, runId: String,
+    caseValue: TeacherCaseManifest, businessAttempt: Int64): Unit {
+    _ = persistTeacherTransportStarted(root, runId, caseValue, businessAttempt, 1, "")
+    let started = parseTeacherTransportEvidence(teacherReadUtf8File(
+        teacherTransportManifestPath(root, runId, caseValue.caseId, businessAttempt, 1)))
+    _ = persistTeacherTransportCompleted(root, started, TeacherProcessResult(0, "replacement"))
+}
+
 @Test
 public class TeacherS5LoopTest {
     // S5-UT-01 / S5-POS-01: three transport failures consume no business attempt;
@@ -106,6 +114,8 @@ public class TeacherS5LoopTest {
             @Expect(transportText.contains("provider unavailable"), false)
             @Expect(transportText.toAsciiLower().contains("token="), false)
             @Expect(firstTransport[0].safeOutputHash.startsWith("sha256:"), true)
+            @Expect(history[0].transportCount, firstTransport.size)
+            @Expect(history[0].transportRootHash, teacherTransportChainRootHash(firstTransport))
             let timeoutPath = teacherTransportManifestPath(root, "teacher-s5", caseValue.caseId, 1, 1)
             let timeoutRaw = teacherReadUtf8File(timeoutPath)
             File.writeTo(Path(timeoutPath), timeoutRaw.replace("timeout", "succeeded").toArray())
@@ -173,6 +183,7 @@ public class TeacherS5LoopTest {
             let workspace = TeacherPaths(root).workspace("teacher-resume", caseValue.caseId)
             Directory.create(Path("${workspace}/src"), recursive: true)
             File.writeTo(Path("${workspace}/src/solution.cj"), "中断前😀".toArray())
+            s5PersistSuccessfulTransport(root, "teacher-resume", caseValue, 1)
             _ = persistTeacherAttemptStarted(root, "teacher-resume", caseValue, 1, "",
                 teacherDirectoryHash("${workspace}/src"))
             File.writeTo(Path("${workspace}/src/solution.cj"), "中断后😀".toArray())
@@ -195,14 +206,19 @@ public class TeacherS5LoopTest {
         let root = s5Root("completed-binding")
         let process = S5UnexpectedProcess()
         let options = TeacherRunOptions("teacher-s5", root, "gpt-5.6-sol", process,
-            S5FixedVerifier(), S5Clock())
-        let exact = TeacherRunManifest("teacher-s5", caseValue.caseId, caseValue.datasetVersion,
-            "gpt-5.6-sol", caseValue.promptHash, 3, "complete", 0, "sha256:evidence")
+            S5FixedVerifier(), S5Clock(), repairUntilVerified: true, persistAttemptProgress: true)
         try {
-            Directory.create(Path("${root}/teacher-solutions/${caseValue.caseId}/src"), recursive: true)
-            File.writeTo(Path("${root}/teacher-solutions/${caseValue.caseId}/src/solution.cj"), "bound solution".toArray())
+            let workspace = TeacherPaths(root).workspace("teacher-s5", caseValue.caseId)
+            Directory.create(Path("${workspace}/src"), recursive: true)
+            File.writeTo(Path("${workspace}/src/solution.cj"), "starter".toArray())
+            let producer = S5TransportThenRepairProcess()
+            let exact = finalizeTeacherRun(runTeacherCase(caseValue, TeacherRunOptions("teacher-s5", root,
+                "gpt-5.6-sol", producer, S5FixedVerifier(), S5Clock(),
+                repairUntilVerified: true, persistAttemptProgress: true)), true)
+            teacherCopyTree(workspace, TeacherPaths(root).solution(caseValue.caseId))
             _ = persistTeacherRunArtifacts(root, exact, "generation", "verification")
             _ = persistTeacherSolutionBinding(root, exact)
+            _ = persistTeacherCompletedAttemptBinding(root, exact, caseValue)
             @Expect(teacherCompletedRunReusable(exact, caseValue, options), true)
             @Expect(teacherCompletedRunReusable(TeacherRunManifest("other-run", exact.caseId, exact.datasetVersion,
                 exact.modelId, exact.promptHash, 3, "complete", 0, exact.evidenceHash), caseValue, options), false)
@@ -220,6 +236,34 @@ public class TeacherS5LoopTest {
             @Expect(teacherCompletedRunReusable(exact, caseValue, options), false)
             _ = persistTeacherSolutionBinding(root, exact)
             File.writeTo(Path("${root}/teacher-solutions/${caseValue.caseId}/src/solution.cj"), "tampered".toArray())
+            @Expect(teacherCompletedRunReusable(exact, caseValue, options), false)
+            teacherCopyTree(workspace, TeacherPaths(root).solution(caseValue.caseId))
+            _ = persistTeacherSolutionBinding(root, exact)
+
+            let lineage = loadTeacherTransportEvidence(root, exact.runId, caseValue, 1)
+            let raw = lineage.map({entry: TeacherTransportEvidence =>
+                renderTeacherTransportEvidence(entry) + "\n"})
+            let lastPath = teacherTransportManifestPath(root, exact.runId, caseValue.caseId, 1, lineage.size)
+            let lastRaw = raw[raw.size - 1]
+            File.writeTo(Path(lastPath), lastRaw.replace(lineage[lineage.size - 1].safeOutputHash,
+                "sha256:forged").toArray())
+            @Expect(teacherCompletedRunReusable(exact, caseValue, options), false)
+            File.writeTo(Path(lastPath), lastRaw.toArray())
+            remove(Path(lastPath))
+            @Expect(teacherCompletedRunReusable(exact, caseValue, options), false)
+            File.writeTo(Path(lastPath), lastRaw.toArray())
+
+            let transportRoot = Path("${root}/runs/${exact.runId}/transport/${caseValue.caseId}/business-1")
+            remove(transportRoot, recursive: true)
+            @Expect(teacherCompletedRunReusable(exact, caseValue, options), false)
+            Directory.create(transportRoot, recursive: true)
+            for (i in 0..raw.size) {
+                File.writeTo(Path(teacherTransportManifestPath(root, exact.runId, caseValue.caseId, 1, i + 1)),
+                    raw[i].toArray())
+            }
+            @Expect(teacherCompletedRunReusable(exact, caseValue, options), true)
+            remove(transportRoot, recursive: true)
+            s5PersistSuccessfulTransport(root, exact.runId, caseValue, 1)
             @Expect(teacherCompletedRunReusable(exact, caseValue, options), false)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
@@ -257,5 +301,47 @@ public class TeacherS5LoopTest {
         let shortCommon = TeacherObservation(caseValue.caseId, "algorithm_pattern", "Rune iteration",
             "1.0.0", "Iterate Rune values safely.", "", "teacher_empirical", empirical.evidenceHash)
         @Expect(validateObservationAgainstAuthority(shortCommon, caseValue, ["Rune"]), true)
+    }
+
+    // S5-NEG-01: adaptive similarity catches short, seven-token, and periodically
+    // edited authority material without rejecting short reusable vocabulary.
+    @TestCase public func adaptiveAuthoritySimilarityCoversEditsAndKeepsLegalControl(): Unit {
+        let shortArtifact = "sensitive boundary phrase"
+        @Expect(teacherProtectedArtifactSimilar("sensitive boundXry phrase", shortArtifact), true)
+        @Expect(teacherProtectedArtifactSimilar("secret key", "secret key"), true)
+
+        let sevenTokens = "alphaBravo charlieDelta echoFoxtrot golfHotel indiaJuliet kiloLima mikeNovember"
+        let sixOfSeven = "alphaBravo charlieDelta echoFoxtrot golfHotel indiaJuliet kiloLima changedToken"
+        @Expect(teacherProtectedArtifactSimilar(sixOfSeven, sevenTokens), true)
+
+        let longArtifact = "This authority material describes a private benchmark transformation with " +
+            "several distinctive clauses and a compiler-specific consequence for the generated answer."
+        let editedRunes = longArtifact.toRuneArray()
+        for (i in 15..editedRunes.size: 32) { editedRunes[i] = r'X' }
+        @Expect(teacherProtectedArtifactSimilar(String(editedRunes), longArtifact), true)
+        @Expect(teacherProtectedArtifactSimilar("Iterate Rune values safely.", "Rune"), false)
+    }
+
+    // S5-NEG-01: every Student-visible candidate field, including atom-test
+    // sources and serialized bundle metadata, is checked against authority.
+    @TestCase public func candidateAllStudentVisibleFieldsUseOneAuthorityGate(): Unit {
+        let caseValue = s5Case()
+        let tests = KnowledgeAtomTestBundle("positive independent", "negative independent", "boundary independent")
+        let base = TeacherCandidateExport("G-RUNE-COUNT", "algorithm_pattern", "Rune counting",
+            "1.0.0", "Count one value for each Rune.", "Use a generic Rune iterator.", "",
+            "teacher_empirical", "sha256:provenance", tests)
+        let protected = ["compiler diagnostic with seven distinctive reusable authority tokens"]
+        @Expect(validateTeacherCandidateAgainstAuthority(base, "{\"metadata\":\"independent\"}",
+            caseValue, protected), true)
+        let exampleLeak = TeacherCandidateExport(base.identity, base.knowledgeFamily, base.concept,
+            base.targetVersion, base.explanation, caseValue.prompt, base.citation, base.sourceClass,
+            base.provenanceHash, base.tests)
+        @Expect(validateTeacherCandidateAgainstAuthority(exampleLeak, "{}", caseValue, protected), false)
+        let positiveLeak = TeacherCandidateExport(base.identity, base.knowledgeFamily, base.concept,
+            base.targetVersion, base.explanation, base.example, base.citation, base.sourceClass,
+            base.provenanceHash, KnowledgeAtomTestBundle(caseValue.prompt, "negative", "boundary"))
+        @Expect(validateTeacherCandidateAgainstAuthority(positiveLeak, "{}", caseValue, protected), false)
+        @Expect(validateTeacherCandidateAgainstAuthority(base,
+            "{\"metadata\":\"${caseValue.prompt}\"}", caseValue, protected), false)
     }
 }

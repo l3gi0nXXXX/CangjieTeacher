@@ -4,7 +4,7 @@ import std.collection.*
 import std.convert.Parsable
 import std.fs.*
 
-private let TEACHER_ATTEMPT_SCHEMA = "teacher-attempt/v1"
+private let TEACHER_ATTEMPT_SCHEMA = "teacher-attempt/v2"
 private let TEACHER_TRANSPORT_SCHEMA = "teacher-transport/v1"
 
 public class TeacherAttemptEvidence {
@@ -20,14 +20,18 @@ public class TeacherAttemptEvidence {
     public let repeatCount: Int64
     public let previousEvidenceHash: String
     public let snapshotHash: String
+    public let transportCount: Int64
+    public let transportRootHash: String
     public init(runId: String, caseId: String, promptHash: String, attempt: Int64, status: String,
         preSolutionHash: String, solutionHash: String, generationDiagnostic: String,
-        verifierDiagnostic: String, repeatCount: Int64, previousEvidenceHash: String, snapshotHash: String) {
+        verifierDiagnostic: String, repeatCount: Int64, previousEvidenceHash: String, snapshotHash: String,
+        transportCount!: Int64 = 0, transportRootHash!: String = "") {
         this.runId = runId; this.caseId = caseId; this.promptHash = promptHash; this.attempt = attempt
         this.status = status; this.preSolutionHash = preSolutionHash; this.solutionHash = solutionHash
         this.generationDiagnostic = generationDiagnostic; this.verifierDiagnostic = verifierDiagnostic
         this.repeatCount = repeatCount; this.previousEvidenceHash = previousEvidenceHash
         this.snapshotHash = snapshotHash
+        this.transportCount = transportCount; this.transportRootHash = transportRootHash
     }
 }
 
@@ -65,23 +69,32 @@ private func teacherAttemptUnescape(value: String): String {
 public func renderTeacherAttemptEvidence(value: TeacherAttemptEvidence): String {
     teacherJoin([TEACHER_ATTEMPT_SCHEMA, value.runId, value.caseId, value.promptHash, value.attempt.toString(),
         value.status, value.preSolutionHash, value.solutionHash, value.generationDiagnostic,
-        value.verifierDiagnostic, value.repeatCount.toString(), value.previousEvidenceHash, value.snapshotHash]
+        value.verifierDiagnostic, value.repeatCount.toString(), value.previousEvidenceHash, value.snapshotHash,
+        value.transportCount.toString(), value.transportRootHash]
         .map({field: String => teacherAttemptEscape(field)}), "\t")
 }
 
 public func parseTeacherAttemptEvidence(raw: String): TeacherAttemptEvidence {
     let fields = raw.trimAscii().split("\t").map({field: String => teacherAttemptUnescape(field)}).toArray()
-    if (fields.size != 13 || fields[0] != TEACHER_ATTEMPT_SCHEMA) {
+    if (fields.size != 15 || fields[0] != TEACHER_ATTEMPT_SCHEMA) {
         throw IllegalArgumentException("teacher_attempt_evidence_invalid")
     }
     try {
         TeacherAttemptEvidence(fields[1], fields[2], fields[3], Int64.parse(fields[4]), fields[5], fields[6],
-            fields[7], fields[8], fields[9], Int64.parse(fields[10]), fields[11], fields[12])
+            fields[7], fields[8], fields[9], Int64.parse(fields[10]), fields[11], fields[12],
+            transportCount: Int64.parse(fields[13]), transportRootHash: fields[14])
     } catch (_: Exception) { throw IllegalArgumentException("teacher_attempt_evidence_invalid") }
 }
 
 public func teacherAttemptEvidenceHash(value: TeacherAttemptEvidence): String {
     "sha256:${teacherStableHash(renderTeacherAttemptEvidence(value))}"
+}
+
+public func teacherAttemptChainRootHash(values: Array<TeacherAttemptEvidence>): String {
+    if (values.isEmpty()) { return "" }
+    let canonical = teacherJoin(values.map({value: TeacherAttemptEvidence =>
+        renderTeacherAttemptEvidence(value)}), "\n")
+    "sha256:${teacherStableHash(canonical)}"
 }
 
 public func renderTeacherTransportEvidence(value: TeacherTransportEvidence): String {
@@ -106,6 +119,13 @@ public func parseTeacherTransportEvidence(raw: String): TeacherTransportEvidence
 
 public func teacherTransportEvidenceHash(value: TeacherTransportEvidence): String {
     "sha256:${teacherStableHash(renderTeacherTransportEvidence(value))}"
+}
+
+public func teacherTransportChainRootHash(values: Array<TeacherTransportEvidence>): String {
+    if (values.isEmpty()) { return "" }
+    let canonical = teacherJoin(values.map({value: TeacherTransportEvidence =>
+        renderTeacherTransportEvidence(value)}), "\n")
+    "sha256:${teacherStableHash(canonical)}"
 }
 
 public func teacherTransportManifestPath(root: String, runId: String, caseId: String,
@@ -226,6 +246,7 @@ private func validateTeacherAttemptEvidence(value: TeacherAttemptEvidence, runId
     value.runId == runId && value.caseId == caseValue.caseId && value.promptHash == caseValue.promptHash &&
         value.attempt == expectedAttempt && statuses.contains(value.status) && !value.preSolutionHash.isEmpty() &&
         !value.solutionHash.isEmpty() && value.repeatCount >= 0 && value.previousEvidenceHash == previousHash &&
+        value.transportCount >= 1 && value.transportRootHash.startsWith("sha256:") &&
         (value.status == "started" || !value.snapshotHash.isEmpty())
 }
 
@@ -241,6 +262,11 @@ public func loadTeacherAttemptEvidence(root: String, runId: String,
             if (FileInfo(Path(path)).isSymbolicLink()) { throw IllegalArgumentException("teacher_attempt_evidence_invalid") }
             let value = parseTeacherAttemptEvidence(teacherReadUtf8File(path))
             if (!validateTeacherAttemptEvidence(value, runId, caseValue, attempt, previousHash)) {
+                throw IllegalArgumentException("teacher_attempt_evidence_invalid")
+            }
+            let transport = loadTeacherTransportEvidence(root, runId, caseValue, attempt)
+            if (transport.size != value.transportCount ||
+                teacherTransportChainRootHash(transport) != value.transportRootHash) {
                 throw IllegalArgumentException("teacher_attempt_evidence_invalid")
             }
             if (value.status == "started" && exists(Path(teacherAttemptManifestPath(root, runId, caseValue.caseId, attempt + 1)))) {
@@ -271,8 +297,13 @@ public func hasTeacherAttemptEvidence(root: String, runId: String, caseId: Strin
 
 public func persistTeacherAttemptStarted(root: String, runId: String, caseValue: TeacherCaseManifest,
     attempt: Int64, previousEvidenceHash: String, preSolutionHash: String): String {
+    let transport = loadTeacherTransportEvidence(root, runId, caseValue, attempt)
+    if (transport.isEmpty() || transport[transport.size - 1].status != "succeeded") {
+        throw IllegalArgumentException("teacher_attempt_transport_binding_invalid")
+    }
     let value = TeacherAttemptEvidence(runId, caseValue.caseId, caseValue.promptHash, attempt, "started",
-        preSolutionHash, preSolutionHash, "", "", 0, previousEvidenceHash, "")
+        preSolutionHash, preSolutionHash, "", "", 0, previousEvidenceHash, "",
+        transportCount: transport.size, transportRootHash: teacherTransportChainRootHash(transport))
     teacherAtomicWrite(teacherAttemptManifestPath(root, runId, caseValue.caseId, attempt),
         renderTeacherAttemptEvidence(value) + "\n")
 }
@@ -321,10 +352,49 @@ public func persistTeacherAttemptCompleted(root: String, caseValue: TeacherCaseM
     if (snapshotHash != value.solutionHash) { throw IllegalArgumentException("teacher_attempt_snapshot_mismatch") }
     let completed = TeacherAttemptEvidence(value.runId, value.caseId, value.promptHash, value.attempt, value.status,
         value.preSolutionHash, value.solutionHash, value.generationDiagnostic, value.verifierDiagnostic,
-        value.repeatCount, value.previousEvidenceHash, snapshotHash)
+        value.repeatCount, value.previousEvidenceHash, snapshotHash,
+        transportCount: value.transportCount, transportRootHash: value.transportRootHash)
     _ = teacherAtomicWrite(teacherAttemptManifestPath(root, value.runId, caseValue.caseId, value.attempt),
         renderTeacherAttemptEvidence(completed) + "\n")
     completed
+}
+
+public func validateTeacherCompletedRunAttemptBinding(root: String, run: TeacherRunManifest,
+    caseValue: TeacherCaseManifest): Bool {
+    try {
+        let history = loadTeacherAttemptEvidence(root, run.runId, caseValue)
+        if (history.isEmpty()) { return false }
+        let last = history[history.size - 1]
+        if (!(last.status == "verified" && last.attempt == run.attempt &&
+            run.caseId == caseValue.caseId && run.promptHash == caseValue.promptHash &&
+            run.datasetVersion == caseValue.datasetVersion &&
+            teacherDirectoryHash("${TeacherPaths(root).solution(run.caseId)}/src") == last.solutionHash)) {
+            return false
+        }
+        let expected = teacherJoin(["teacher-attempt-binding/v1", run.runId, run.caseId, run.promptHash,
+            run.evidenceHash, run.attempt.toString(), teacherAttemptChainRootHash(history),
+            last.transportRootHash, last.transportCount.toString(), last.solutionHash], "\t")
+        teacherReadUtf8File(teacherCompletedAttemptBindingPath(root, run)).trimAscii() == expected
+    } catch (_: Exception) { false }
+}
+
+public func teacherCompletedAttemptBindingPath(root: String, run: TeacherRunManifest): String {
+    "${root}/runs/${run.runId}/evidence/${run.caseId}/attempt.binding"
+}
+
+public func persistTeacherCompletedAttemptBinding(root: String, run: TeacherRunManifest,
+    caseValue: TeacherCaseManifest): String {
+    let history = loadTeacherAttemptEvidence(root, run.runId, caseValue)
+    if (history.isEmpty()) { throw IllegalArgumentException("teacher_completed_attempt_binding_invalid") }
+    let last = history[history.size - 1]
+    if (last.status != "verified" || last.attempt != run.attempt ||
+        teacherDirectoryHash("${TeacherPaths(root).solution(run.caseId)}/src") != last.solutionHash) {
+        throw IllegalArgumentException("teacher_completed_attempt_binding_invalid")
+    }
+    let value = teacherJoin(["teacher-attempt-binding/v1", run.runId, run.caseId, run.promptHash,
+        run.evidenceHash, run.attempt.toString(), teacherAttemptChainRootHash(history),
+        last.transportRootHash, last.transportCount.toString(), last.solutionHash], "\t")
+    teacherAtomicWrite(teacherCompletedAttemptBindingPath(root, run), value + "\n")
 }
 
 private func teacherAttemptHasCycle(history: Array<TeacherAttemptEvidence>): Bool {

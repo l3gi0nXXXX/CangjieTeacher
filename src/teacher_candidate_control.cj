@@ -101,6 +101,7 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
             let solutionRoot = TeacherPaths(options.root).solution(row.caseId)
             if (!exists(Path(solutionRoot))||!validateTeacherSolutionBinding(options.root,run)) { result.diagnostic = "solution_evidence_binding_invalid"; return result }
             let protected = teacherPrivateArtifacts(solutionRoot)
+            let observationProtected=ArrayList<String>();for(value in [row.taskText,row.visibleTestExcerpt,row.compilerOutput]){observationProtected.add(value)};for(value in protected){observationProtected.add(value)}
             var atomFeedback="";var acceptedSpec:?TeacherAtomSpec=None;var acceptedObservation:?TeacherObservation=None;var identity="";var bundle=""
             while(true){
                 failureStage = "candidate_extractor_failed"
@@ -112,7 +113,6 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
                     boundaryDependencyProfile:currentSpec.boundaryDependencyProfile)
                 if(!relevance.ok){atomFeedback=relevance.feedback;continue}
                 let observation=deriveKnowledgeObservation(caseValue,currentSpec.family,currentSpec.concept,row.targetVersion,currentSpec.explanation,currentSpec.citation,currentSpec.sourceClass,row.evidence+currentSpec.transcriptHash)
-                let observationProtected=ArrayList<String>();for(value in [row.taskText,row.visibleTestExcerpt,row.compilerOutput]){observationProtected.add(value)};for(value in protected){observationProtected.add(value)}
                 if(!validateObservationAgainstAuthority(observation,caseValue,observationProtected.toArray())){result.diagnostic="observation_leakage";return result}
                 let normalized=normalizeObservation(observation);let currentIdentity=canonicalKnowledgeIdentity(normalized)
                 match(identities.get(currentIdentity)){case Some(existing)=>if(mergeKnowledgeObservations([existing,normalized]).reviewRequired){result.diagnostic="review_required";return result};case None=>()}
@@ -132,6 +132,9 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
             failureStage = "candidate_leakage_audit_failed"
             if (!auditCandidateAgainstSolutions(candidate, protected).passed || !auditCaseSpecificity(candidate, [caseValue.signature]).passed) {
                 result.diagnostic = "candidate_leakage"; return result
+            }
+            if(!validateTeacherCandidateAgainstAuthority(candidate,bundle,caseValue,observationProtected.toArray())){
+                result.diagnostic="candidate_leakage";return result
             }
             failureStage = "candidate_export_render_failed"
             let candidateText = renderTeacherCandidateExport(candidate)
@@ -211,7 +214,8 @@ public func reexportTeacherCandidateBundle(options:TeacherCliOptions,
         let candidate=try{parseTeacherCandidateExport(candidateRaw[0].trimAscii())}catch(_:Exception){result.diagnostic="malformed_teacher_candidate_export";return result}
         if(observation.caseId!=row.caseId||candidate.identity!=canonicalKnowledgeIdentity(observation)||candidate.knowledgeFamily!=observation.knowledgeFamily||candidate.concept!=observation.concept||candidate.targetVersion!=observation.targetVersion||candidate.explanation!=observation.explanation||candidate.citation!=observation.citation||candidate.sourceClass!=observation.sourceClass){result.diagnostic="source_export_identity_mismatch";return result}
         if(atomsRaw[0].trimAscii()!="${candidate.identity}\t${teacherEscapeField(candidate.explanation)}"){result.diagnostic="source_export_atoms_mismatch";return result}
-        if(!validateObservationNoSolutionLeak(observation)||!auditCandidateAgainstSolutions(candidate,teacherPrivateArtifacts(TeacherPaths(options.root).solution(row.caseId))).passed||!auditCaseSpecificity(candidate,[caseValue.signature]).passed||teacherReexportForbidden(candidateRaw[0]+"\n"+bundleRaw[0])){result.diagnostic="candidate_leakage";return result}
+        let reexportProtected=ArrayList<String>();for(value in [row.taskText,row.visibleTestExcerpt,row.compilerOutput]){reexportProtected.add(value)};for(value in teacherPrivateArtifacts(TeacherPaths(options.root).solution(row.caseId))){reexportProtected.add(value)}
+        if(!validateObservationAgainstAuthority(observation,caseValue,reexportProtected.toArray())||!validateTeacherCandidateAgainstAuthority(candidate,bundleRaw[0],caseValue,reexportProtected.toArray())||!auditCandidateAgainstSolutions(candidate,teacherPrivateArtifacts(TeacherPaths(options.root).solution(row.caseId))).passed||!auditCaseSpecificity(candidate,[caseValue.signature]).passed||teacherReexportForbidden(candidateRaw[0]+"\n"+bundleRaw[0])){result.diagnostic="candidate_leakage";return result}
         let sourceValidation=validateTeacherReexportBundle(bundleRaw[0].trimAscii(),candidate,row,options.root,run)
         if(sourceValidation[1]!="ok"){result.diagnostic=sourceValidation[1];return result};let transcriptHash=sourceValidation[0]
         let ckbValidation=validateTeacherReexportCkb(ckbRaw[0].trimAscii(),bundleRaw[0].trimAscii(),row,options.runId,transcriptHash)
@@ -219,6 +223,7 @@ public func reexportTeacherCandidateBundle(options:TeacherCliOptions,
         let replay=executeTeacherAtomTestBundle(bundleRaw[0].trimAscii(),"${options.root}/runs/${options.runId}/reexport-atom-workspaces/${candidate.identity}",executor:atomExecutor,timeoutMillis:options.timeoutMillis)
         if(!replay.ok){result.diagnostic=replay.diagnostic;return result}
         let newBundle=renderTeacherReexportBundle(bundleRaw[0].trimAscii(),replay.evidenceJson)
+        if(!validateTeacherCandidateAgainstAuthority(candidate,newBundle,caseValue,reexportProtected.toArray())){result.diagnostic="candidate_leakage";return result}
         let newCkb=renderTeacherCkbGap(row,options.runId,newBundle,transcriptHash)
         let base=options.outputRoot.trimEnd('/');let canonicalParent=canonicalize(Path(base).parent).toString()
         if(!canonicalParent.startsWith(canonicalRoot+"/")){result.diagnostic="output_path_forbidden";return result}

@@ -83,6 +83,14 @@ private func testCase(id!: String = "CJ-HUMANEVAL-000", version!: String = "data
         prompt: "Implement demo for 中文😀.", targetVersion: "1.0.0", requiredKnowledgeTags: ["Int64"])
 }
 
+private func p3PersistSuccessfulTransport(root: String, runId: String,
+    caseValue: TeacherCaseManifest, businessAttempt: Int64): Unit {
+    _ = persistTeacherTransportStarted(root, runId, caseValue, businessAttempt, 1, "")
+    let started = parseTeacherTransportEvidence(teacherReadUtf8File(
+        teacherTransportManifestPath(root, runId, caseValue.caseId, businessAttempt, 1)))
+    _ = persistTeacherTransportCompleted(root, started, TeacherProcessResult(0, "generated"))
+}
+
 private class RecordingExecutor <: TeacherCommandExecutor {
     public let specs = ArrayList<TeacherCommandSpec>()
     private let results: Array<TeacherProcessResult>
@@ -418,6 +426,7 @@ public class TeacherRuntimeTest {
             let workspace = TeacherPaths(root).workspace("resume-run", caseValue.caseId)
             Directory.create(Path("${workspace}/src"), recursive: true)
             File.writeTo(Path("${workspace}/src/solution.cj"), "crash-progress 中文😀".toArray())
+            p3PersistSuccessfulTransport(root, "resume-run", caseValue, 1)
             _ = persistTeacherAttemptStarted(root, "resume-run", caseValue, 1, "", teacherDirectoryHash("${workspace}/src"))
             File.writeTo(Path("${workspace}/src/solution.cj"), "crash-progress-updated 中文😀".toArray())
             let resumed = runTeacherCase(caseValue, TeacherRunOptions("resume-run", root, "gpt-5.6-sol",
@@ -663,15 +672,20 @@ public class TeacherP0P3Test {
         @Expect(runTeacherCase(testCase(), options(generate: TeacherProcessResult(0, ""))).status, "empty_output")
         let root = "/tmp/cangjie-teacher-bound-resume-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         try {
+            let workspace = TeacherPaths(root).workspace("run-1", testCase().caseId)
+            Directory.create(Path("${workspace}/src"), recursive: true)
+            File.writeTo(Path("${workspace}/src/solution.cj"), "bound 中文😀".toArray())
             let boundOptions = TeacherRunOptions("run-1", root, "gpt-fake",
-                FakeProcess(TeacherProcessResult(0, "中文😀")), FakeVerifier(TeacherProcessResult(0, "passed")), FakeClock())
+                FakeProcess(TeacherProcessResult(0, "中文😀")), FakeVerifier(TeacherProcessResult(0, "passed")), FakeClock(),
+                repairUntilVerified: true, persistAttemptProgress: true)
             let completed = finalizeTeacherRun(runTeacherCase(testCase(), boundOptions), true)
-            Directory.create(Path("${root}/teacher-solutions/${completed.caseId}/src"), recursive: true)
-            File.writeTo(Path("${root}/teacher-solutions/${completed.caseId}/src/solution.cj"), "bound 中文😀".toArray())
+            teacherCopyTree(workspace, TeacherPaths(root).solution(completed.caseId))
             _ = persistTeacherRunArtifacts(root, completed, "generation", "verification")
             _ = persistTeacherSolutionBinding(root, completed)
+            _ = persistTeacherCompletedAttemptBinding(root, completed, testCase())
             let noReplace = TeacherRunOptions("run-1", root, "gpt-fake",
-                FakeProcess(TeacherProcessResult(8, "must not replace")), FakeVerifier(TeacherProcessResult(0, "passed")), FakeClock())
+                FakeProcess(TeacherProcessResult(8, "must not replace")), FakeVerifier(TeacherProcessResult(0, "passed")), FakeClock(),
+                repairUntilVerified: true, persistAttemptProgress: true)
             let resumed = runTeacherBatch([testCase()], noReplace, [completed])
             @Expect(resumed[0].status, "complete")
             @Expect(resumed[0].evidenceHash, completed.evidenceHash)
@@ -1433,6 +1447,22 @@ public class TeacherP0P3Test {
                 atomExecutor:AtomRepairExecutor())
             @Expect(authorityRejected.diagnostic,"observation_leakage")
             @Expect(exists(Path(options.outputRoot)),false)
+            for((name,leak) in [
+                ("example",extractorJson.replace("for 中文😀 boundaries.","for 中文😀 boundaries. authority bound task")),
+                ("positive",extractorJson.replace("main() { let text: String = \\\"ok\\\" }",
+                    "main() { let text: String = \\\"ok\\\" }\\n// authority bound task")),
+                ("negative",extractorJson.replace("main() { let text: String = unknownName }",
+                    "main() { let text: String = unknownName }\\n// authority bound task")),
+                ("boundary",extractorJson.replace("main() { let text: String = \\\"中文😀\\\" }",
+                    "main() { let text: String = \\\"中文😀\\\" }\\n// authority bound task"))
+            ]) {
+                options.outputRoot="${root}/exports/authority-${name}"
+                let rejected=buildTeacherCandidates(options,
+                    extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(0,leak)]),
+                    atomExecutor:AtomRepairExecutor())
+                @Expect(rejected.diagnostic,"candidate_leakage")
+                @Expect(exists(Path(options.outputRoot)),false)
+            }
             let missingProfile=extractorJson.replace(",\"boundaryDependencyProfile\":\"none\"","")
             options.outputRoot="${root}/exports/fallback-missing"
             @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(
@@ -1513,6 +1543,23 @@ public class TeacherP0P3Test {
             let outputCkb=teacherReadUtf8File("${options.outputRoot}/candidate-knowledge/ckb-benchmark-gap.jsonl").trimAscii()
             @Expect(p3CkbString(JsonValue.fromStr(outputCkb).asObject(),"candidateHash"),p3CkbCandidateHash(outputCkb))
             @Expect(outputCkb.contains("\\u0026\\u0026"),true)
+        } finally { try{remove(Path(root),recursive:true)}catch(_:Exception){} }
+    }
+
+    @TestCase public func candidateReexportRejectsAuthorityPollutedStudentFields():Unit{
+        let root="/tmp/teacher-reexport-polluted-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            let source=buildCandidateFixture(root,"polluted-source")
+            let candidatePath="${source}/candidate-knowledge.tsv"
+            let original=parseTeacherCandidateExport(teacherReadUtf8File(candidatePath).trimAscii())
+            let polluted=TeacherCandidateExport(original.identity,original.knowledgeFamily,original.concept,
+                original.targetVersion,original.explanation,"authority bound task",original.citation,
+                original.sourceClass,original.provenanceHash,original.tests)
+            File.writeTo(Path(candidatePath),(renderTeacherCandidateExport(polluted)+"\n").toArray())
+            let options=reexportOptions(root,source,"polluted-output")
+            let result=reexportTeacherCandidateBundle(options,atomExecutor:RecordingExecutor())
+            @Expect(result.diagnostic,"candidate_leakage")
+            @Expect(exists(Path(options.outputRoot)),false)
         } finally { try{remove(Path(root),recursive:true)}catch(_:Exception){} }
     }
 

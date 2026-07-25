@@ -108,6 +108,7 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
                     teacherCopyTree(TeacherPaths(options.root).workspace(options.runId, caseValue.caseId),
                         TeacherPaths(options.root).solution(caseValue.caseId))
                     _ = persistTeacherSolutionBinding(options.root, run)
+                    _ = persistTeacherCompletedAttemptBinding(options.root, run, caseValue)
                 }
                 _ = persistTeacherRunArtifacts(options.root, run, teacherSanitizeEvidence(execution.generationEvidence),
                     teacherSanitizeEvidence(execution.verifierEvidence))
