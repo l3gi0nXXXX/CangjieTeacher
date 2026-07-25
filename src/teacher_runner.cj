@@ -58,7 +58,6 @@ private func executeTeacherCaseLegacy(caseValue: TeacherCaseManifest, options: T
     var verifierEvidence = ""
     var teacherAttempt: Int64 = 0
     while (true) {
-        teacherAttempt += 1
         let generated = options.process.generate(caseValue, paths.workspace(options.runId, caseValue.caseId),
             paths.session(options.runId, caseValue.caseId), paths.runtimeHome(options.runId, caseValue.caseId), feedback)
         generationEvidence += generated.output
@@ -68,10 +67,12 @@ private func executeTeacherCaseLegacy(caseValue: TeacherCaseManifest, options: T
                     "Continue from the current workspace and finish the implementation."
                 continue
             }
-            if (generated.timedOut) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "timeout", 124, "${started}:timeout", attempt: teacherAttempt), generationEvidence, verifierEvidence) }
-            if (generated.exitCode != 0) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "generation_failed", generated.exitCode, generationEvidence, attempt: teacherAttempt), generationEvidence, verifierEvidence) }
-            return TeacherCaseExecution(buildTeacherRun(caseValue, options, "empty_output", 3, "empty", attempt: teacherAttempt), "empty", verifierEvidence)
+            let failedAttempt = teacherAttempt + 1
+            if (generated.timedOut) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "timeout", 124, "${started}:timeout", attempt: failedAttempt), generationEvidence, verifierEvidence) }
+            if (generated.exitCode != 0) { return TeacherCaseExecution(buildTeacherRun(caseValue, options, "generation_failed", generated.exitCode, generationEvidence, attempt: failedAttempt), generationEvidence, verifierEvidence) }
+            return TeacherCaseExecution(buildTeacherRun(caseValue, options, "empty_output", 3, "empty", attempt: failedAttempt), "empty", verifierEvidence)
         }
+        teacherAttempt += 1
         let checked = options.verifier.verify(caseValue, paths.workspace(options.runId, caseValue.caseId))
         verifierEvidence += checked.output
         if (checked.exitCode == 0) {
@@ -132,27 +133,31 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
         let preHash = teacherDirectoryHash("${workspace}/src")
         if (preHash.isEmpty()) { throw IllegalArgumentException("teacher_attempt_workspace_missing") }
         _ = persistTeacherAttemptStarted(options.root, options.runId, caseValue, teacherAttempt, previousHash, preHash)
-        let guidance = teacherAttemptProgressGuidance(teacherAttempt, history.toArray(), feedback)
-        let generated = options.process.generate(caseValue, workspace, paths.session(options.runId, caseValue.caseId),
-            paths.runtimeHome(options.runId, caseValue.caseId), guidance)
-        generationEvidence += generated.output
-        let solutionHash = teacherDirectoryHash("${workspace}/src")
-        if (solutionHash.isEmpty()) { throw IllegalArgumentException("teacher_attempt_solution_missing") }
-        let repeatCount = teacherAttemptRepeatCount(history.toArray(), solutionHash)
-        if (generated.timedOut || generated.exitCode != 0 || generated.output.isEmpty()) {
-            let diagnostic = if (generated.timedOut) { "generation_timeout" }
-                else if (generated.exitCode != 0) { "generation_process_failed" } else { "generation_empty_output" }
-            let failed = TeacherAttemptEvidence(options.runId, caseValue.caseId, caseValue.promptHash, teacherAttempt,
-                "transport_failed", preHash, solutionHash, diagnostic, "", repeatCount, previousHash, "")
-            history.add(persistTeacherAttemptCompleted(options.root, caseValue, failed, workspace))
+        var generated = TeacherProcessResult(3, "")
+        while (true) {
+            let guidance = teacherAttemptProgressGuidance(teacherAttempt, history.toArray(), feedback)
+            generated = options.process.generate(caseValue, workspace, paths.session(options.runId, caseValue.caseId),
+                paths.runtimeHome(options.runId, caseValue.caseId), guidance)
+            generationEvidence += generated.output
+            if (!generated.timedOut && generated.exitCode == 0 && !generated.output.isEmpty()) { break }
             if (!options.repairUntilVerified) {
+                let solutionHash = teacherDirectoryHash("${workspace}/src")
+                if (solutionHash.isEmpty()) { throw IllegalArgumentException("teacher_attempt_solution_missing") }
+                let diagnostic = if (generated.timedOut) { "generation_timeout" }
+                    else if (generated.exitCode != 0) { "generation_process_failed" } else { "generation_empty_output" }
+                let failed = TeacherAttemptEvidence(options.runId, caseValue.caseId, caseValue.promptHash, teacherAttempt,
+                    "transport_failed", preHash, solutionHash, diagnostic, "",
+                    teacherAttemptRepeatCount(history.toArray(), solutionHash), previousHash, "")
+                history.add(persistTeacherAttemptCompleted(options.root, caseValue, failed, workspace))
                 let exit = if (generated.timedOut) { 124 } else if (generated.exitCode != 0) { generated.exitCode } else { 3 }
                 return TeacherCaseExecution(buildTeacherRun(caseValue, options, "generation_failed", exit,
                     generationEvidence, attempt: teacherAttempt), generationEvidence, verifierEvidence)
             }
             feedback = "The previous model transport attempt did not produce a valid terminal result."
-            continue
         }
+        let solutionHash = teacherDirectoryHash("${workspace}/src")
+        if (solutionHash.isEmpty()) { throw IllegalArgumentException("teacher_attempt_solution_missing") }
+        let repeatCount = teacherAttemptRepeatCount(history.toArray(), solutionHash)
 
         let checked = options.verifier.verify(caseValue, workspace)
         verifierEvidence += checked.output
@@ -205,9 +210,16 @@ public func runTeacherBatch(cases: Array<TeacherCaseManifest>, options: TeacherR
     for (caseValue in cases) {
         var reusable: ?TeacherRunManifest = None
         for (old in completed) {
-            if (old.caseId == caseValue.caseId && old.status == "complete" && old.datasetVersion == caseValue.datasetVersion && old.promptHash == caseValue.promptHash) { reusable = Some(old) }
+            if (teacherCompletedRunReusable(old, caseValue, options)) { reusable = Some(old) }
         }
         match (reusable) { case Some(old) => out.add(old); case None => out.add(finalizeTeacherRun(runTeacherCase(caseValue, options), true)) }
     }
     return out.toArray()
+}
+
+public func teacherCompletedRunReusable(old: TeacherRunManifest, caseValue: TeacherCaseManifest,
+    options: TeacherRunOptions): Bool {
+    validateTeacherRunManifest(old) && old.runId == options.runId && old.caseId == caseValue.caseId &&
+        old.status == "complete" && old.exitCode == 0 && old.datasetVersion == caseValue.datasetVersion &&
+        old.modelId == options.modelId && old.promptHash == caseValue.promptHash
 }

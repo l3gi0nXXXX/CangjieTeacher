@@ -93,7 +93,7 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
         if (!options.caseId.isEmpty() && caseValue.caseId != options.caseId) { continue }
         var reusable: ?TeacherRunManifest = None
         for (old in completed) {
-            if (old.caseId == caseValue.caseId && old.status == "complete" && old.datasetVersion == caseValue.datasetVersion && old.promptHash == caseValue.promptHash) { reusable = Some(old) }
+            if (teacherCompletedRunReusable(old, caseValue, runOptions)) { reusable = Some(old) }
         }
         match (reusable) {
             case Some(old) => out.add(old)

@@ -650,7 +650,7 @@ public class TeacherP0P3Test {
             "gpt-5.6-sol", process, FakeVerifier(TeacherProcessResult(0, "passed")), FakeClock(),
             repairUntilVerified: true))
         @Expect(run.status, "verified")
-        @Expect(run.attempt, 4)
+        @Expect(run.attempt, 1)
         @Expect(process.calls, 4)
         @Expect(process.feedback[0], "")
         @Expect(process.feedback[1].contains("transport attempt"), true)
