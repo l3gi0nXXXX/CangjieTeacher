@@ -114,7 +114,7 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
                     currentSpec.positiveSource,currentSpec.negativeSource,currentSpec.boundarySource,
                     positiveDependencyProfile:currentSpec.positiveDependencyProfile,negativeDependencyProfile:currentSpec.negativeDependencyProfile,
                     boundaryDependencyProfile:currentSpec.boundaryDependencyProfile)
-                if(!relevance.ok){atomFeedback=relevance.feedback;continue}
+                if(!relevance.ok){atomFeedback=teacherMergeCandidateRepairFeedback(atomFeedback,relevance.feedback,relevance.diagnostic);continue}
                 let observation=deriveKnowledgeObservation(caseValue,currentSpec.family,currentSpec.concept,row.targetVersion,currentSpec.explanation,currentSpec.citation,currentSpec.sourceClass,row.evidence+currentSpec.transcriptHash)
                 if(!validateObservationAgainstAuthority(observation,caseValue,observationProtected.toArray())){result.diagnostic="observation_leakage";return result}
                 let normalized=normalizeObservation(observation);let currentIdentity=canonicalKnowledgeIdentity(normalized)
@@ -122,7 +122,7 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
                 let currentBundle=teacherExecutableAtomBundle(currentIdentity,row,currentSpec,options.root,run)
                 failureStage = "candidate_atom_execution_failed"
                 let execution=executeTeacherAtomTestBundle(currentBundle,"${options.root}/runs/${options.runId}/atom-test-workspaces/${currentIdentity}",executor:atomExecutor,timeoutMillis:options.timeoutMillis)
-                if(!execution.ok){if(execution.diagnostic=="atom_test_timeout"){result.diagnostic=execution.diagnostic;return result};atomFeedback=execution.feedback;continue}
+                if(!execution.ok){if(execution.diagnostic=="atom_test_timeout"){result.diagnostic=execution.diagnostic;return result};atomFeedback=teacherMergeCandidateRepairFeedback(atomFeedback,execution.feedback,execution.diagnostic);continue}
                 acceptedSpec=Some(currentSpec);acceptedObservation=Some(normalized);identity=currentIdentity;bundle=recordTeacherAtomTestExecution(currentBundle,execution.evidenceJson);break
             }
             let spec=match(acceptedSpec){case Some(v)=>v;case None=>throw IllegalStateException("accepted_atom_missing")}
@@ -1058,6 +1058,23 @@ private func teacherAuthorityImportLineMatches(line:String,packageName:String):B
 
 private func teacherAuthorityBoundedFeedback(value:String):String{
     let sanitized=teacherSanitizeEvidence(value);let runes=sanitized.toRuneArray();if(runes.size<=800){sanitized}else{String(runes[..800])+"..."}
+}
+
+private func teacherMergeCandidateRepairFeedback(existing:String,next:String,diagnostic:String):String{
+    let safeDiagnostic=teacherSanitizeEvidence(diagnostic)
+    let value=if(next.trimAscii()==""){
+        "Candidate validation failed with diagnostic=${safeDiagnostic}. Preserve every earlier satisfied constraint, correct this failure, and return a complete replacement object."
+    }else if(safeDiagnostic==""){next}else{
+        "Candidate validation failed with diagnostic=${safeDiagnostic}. ${next}"
+    }
+    let bounded=teacherAuthorityBoundedFeedback(value)
+    if(bounded==""){return existing}
+    let marker="[repair-feedback sha256:${teacherStableHash(bounded)}]"
+    if(existing.contains(marker)){return existing}
+    let combined=if(existing==""){"${marker}\n${bounded}"}else{"${existing}\n${marker}\n${bounded}"}
+    let runes=combined.toRuneArray()
+    if(runes.size<=16384){return combined}
+    String(runes[..8192])+"\n[older repair feedback bounded]\n"+String(runes[(runes.size-8192)..runes.size])
 }
 
 private func parseTeacherAuthorityGapJsonl(text: String): (Array<TeacherGapRow>, String) {
