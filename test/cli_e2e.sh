@@ -4,7 +4,14 @@ repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 export DYLD_LIBRARY_PATH="${MAGIC_PATH}/libs/cangjie-stdx-mac-aarch64-1.0.0.1/darwin_aarch64_llvm/dynamic/stdx:${CANGJIE_HOME}/runtime/lib/darwin_aarch64_llvm:/opt/homebrew/opt/openssl@3/lib:${DYLD_LIBRARY_PATH:-}"
 cli="$repo_root/cli/target/release/bin/main"
 root=$(mktemp -d /tmp/cangjie-teacher-cli-e2e.XXXXXX)
-trap 'rm -rf "$root"' EXIT
+slow_cli_pid=
+slow_model_pid=
+cleanup() {
+  if test -n "$slow_cli_pid"; then kill -9 "$slow_cli_pid" 2>/dev/null || true; fi
+  if test -n "$slow_model_pid"; then kill -9 "$slow_model_pid" 2>/dev/null || true; fi
+  rm -rf "$root"
+}
+trap cleanup EXIT
 dataset="$root/dataset"
 artifacts="$root/教师🙂-artifacts"
 mkdir -p "$dataset/CJ-HUMANEVAL-000/starter/src" "$dataset/CJ-HUMANEVAL-000/tests"
@@ -31,6 +38,7 @@ package cangjie_humaneval_000
 main(): Int64 { if (addOne(1) == 2) { 0 } else { 1 } }
 EOF
 cp -R "$dataset/CJ-HUMANEVAL-000" "$dataset/CJ-HUMANEVAL-001"
+cp -R "$dataset/CJ-HUMANEVAL-000" "$dataset/CJ-HUMANEVAL-002"
 starter_hash=$($cli hash-directory --starter-root "$dataset/CJ-HUMANEVAL-000/starter")
 manifest="$root/model.jsonl"
 : > "$manifest"
@@ -41,7 +49,7 @@ while test "$i" -lt 164; do
   i=$((i + 1))
 done
 checksum=$(sed '${/^$/d;}' "$manifest" | awk 'BEGIN{first=1}{if(!first)printf "\n";printf "%s",$0;first=0}' | shasum -a 256 | awk '{print $1}')
-chmod +x "$repo_root/test/fixtures/fake_codex.sh"
+chmod +x "$repo_root/test/fixtures/fake_codex.sh" "$repo_root/test/fixtures/slow_fake_codex.sh"
 output=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$repo_root/test/fixtures/fake_codex.sh" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000)
 printf '%s\n' "$output"
 test "$output" = 'teacher runId=e2e total=1 complete=1'
@@ -73,7 +81,7 @@ cp "$completed" "$root/completed-good.manifest"
 reused=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000)
 test "$reused" = 'teacher runId=e2e total=1 complete=1'
 cmp "$completed" "$root/completed-good.manifest"
-test ! -e "$artifacts/runs/e2e/.batch.lock"
+test -f "$artifacts/runs/e2e/.batch.lock"
 
 awk -F '	' 'BEGIN{OFS="\t"} $2=="CJ-HUMANEVAL-000"{$6=2} {print}' "$completed" > "$root/completed-nonreusable.manifest"
 cp "$root/completed-nonreusable.manifest" "$completed"
@@ -85,23 +93,50 @@ test "$(sed -n '1p' "$completed" | cut -f2)" = 'CJ-HUMANEVAL-000'
 test "$(sed -n '2p' "$completed" | cut -f2)" = 'CJ-HUMANEVAL-001'
 cp "$completed" "$root/completed-good.manifest"
 
-mkdir "$artifacts/runs/e2e/.batch.lock"
-printf 'teacher-run-lock-v1\t%s\t%s\n' "$$" '2222222222222222222222222222222222222222222222222222222222222222' > "$artifacts/runs/e2e/.batch.lock/owner"
+printf '%s\n' 'ordinary residual 中文😀' > "$artifacts/runs/e2e/.batch.lock"
+residual=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000)
+test "$residual" = 'teacher runId=e2e total=1 complete=1'
+cmp "$completed" "$root/completed-good.manifest"
+test -f "$artifacts/runs/e2e/.batch.lock"
+
+cp "$completed" "$root/completed-before-kill.manifest"
+$cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$repo_root/test/fixtures/slow_fake_codex.sh" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-002 > "$root/slow-cli.out" 2>&1 &
+slow_cli_pid=$!
+wait_count=0
+while test ! -f "$artifacts/runs/e2e/sessions/CJ-HUMANEVAL-002/slow-model.started"; do
+  if ! kill -0 "$slow_cli_pid" 2>/dev/null; then
+    printf '%s\n' 'slow teacher exited before acquiring the run lock' >&2
+    exit 1
+  fi
+  wait_count=$((wait_count + 1))
+  if test "$wait_count" -ge 200; then
+    printf '%s\n' 'timed out waiting for the slow teacher to hold the run lock' >&2
+    exit 1
+  fi
+  sleep 0.1
+done
+slow_model_pid=$(cat "$artifacts/runs/e2e/sessions/CJ-HUMANEVAL-002/slow-model.pid")
 if locked=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000 2>&1); then
   printf '%s\n' 'expected concurrent teacher run to be rejected' >&2
   exit 1
 fi
 test "$locked" = 'teacher failed diagnostic=teacher_run_locked'
-cmp "$completed" "$root/completed-good.manifest"
-rm "$artifacts/runs/e2e/.batch.lock/owner"
-rmdir "$artifacts/runs/e2e/.batch.lock"
-
-mkdir "$artifacts/runs/e2e/.batch.lock"
-printf 'teacher-run-lock-v1\t2147483647\t%s\n' '3333333333333333333333333333333333333333333333333333333333333333' > "$artifacts/runs/e2e/.batch.lock/owner"
-reclaimed=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000)
-test "$reclaimed" = 'teacher runId=e2e total=1 complete=1'
-cmp "$completed" "$root/completed-good.manifest"
-test ! -e "$artifacts/runs/e2e/.batch.lock"
+cmp "$completed" "$root/completed-before-kill.manifest"
+kill -9 "$slow_cli_pid"
+wait "$slow_cli_pid" 2>/dev/null || true
+slow_cli_pid=
+cmp "$completed" "$root/completed-before-kill.manifest"
+reacquired=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000)
+test "$reacquired" = 'teacher runId=e2e total=1 complete=1'
+cmp "$completed" "$root/completed-before-kill.manifest"
+kill -9 "$slow_model_pid" 2>/dev/null || true
+slow_model_pid=
+recovered=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$repo_root/test/fixtures/fake_codex.sh" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-002)
+test "$recovered" = 'teacher runId=e2e total=1 complete=1'
+test "$(wc -l < "$completed" | tr -d ' ')" = '3'
+grep -q 'CJ-HUMANEVAL-002' "$completed"
+test -f "$artifacts/runs/e2e/.batch.lock"
+cp "$completed" "$root/completed-good.manifest"
 
 sed '1s/^e2e	/cross-run	/' "$root/completed-good.manifest" > "$completed"
 cp "$completed" "$root/completed-invalid.manifest"
@@ -111,7 +146,7 @@ if invalid=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$art
 fi
 test "$invalid" = 'teacher failed diagnostic=completed_run_identity_invalid'
 cmp "$completed" "$root/completed-invalid.manifest"
-test ! -e "$artifacts/runs/e2e/.batch.lock"
+test -f "$artifacts/runs/e2e/.batch.lock"
 cp "$root/completed-good.manifest" "$completed"
 
 inside_repo="$repo_root/test/.teacher-artifacts-must-not-exist"
