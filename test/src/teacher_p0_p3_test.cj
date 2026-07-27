@@ -60,6 +60,11 @@ private func buildCandidateFixture(root:String,name:String):String{
     Directory.create(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src"),recursive:true)
     File.writeTo(Path("${root}/teacher-solutions/CJ-HUMANEVAL-000/src/solution.cj"),"private opaque implementation 987654".toArray())
     _=p3PersistTrustedCompletedRun(root)
+    let completedPath="${root}/runs/teacher-r1/completed.manifest"
+    let extraRun=TeacherRunManifest("teacher-r1","CJ-HUMANEVAL-001","dataset-v1","gpt-5.6-sol",
+        "prompt-hash",1,"complete",0,"evidence-extra")
+    _=persistCompletedTeacherRuns(completedPath,
+        mergeCompletedTeacherRuns(loadCompletedTeacherRuns(completedPath),[extraRun]))
     let evidence="case=confirmed|taxonomy=knowledge_gap|independent=sha256:abc"
     let gap="{\"schemaVersion\":\"ckb-benchmark-gap-v1\",\"datasetVersion\":\"dataset-v1\",\"teacherRunId\":\"teacher-r1\",\"evidenceHash\":\"sha256:${teacherStableHash(evidence)}\",\"evidence\":\"${evidence}\",\"failureTaxonomy\":\"knowledge_gap\",\"knowledgeGapConfirmations\":2,\"caseId\":\"CJ-HUMANEVAL-000\",\"benchmark\":\"Cangjie-HumanEval\",\"taskText\":\"authority bound task\",\"visibleTestExcerpt\":\"\",\"compilerOutput\":\"knowledge gap\",\"missingKnowledge\":\"G-STRING\",\"interfaceId\":\"KI-02\",\"contentFamily\":\"KC-02\",\"updateMechanism\":\"KU-11\",\"targetVersion\":\"1.0.0\",\"officialCitation\":\"https://docs.cangjie-lang.cn/docs/1.0.0/\"}\n"
     File.writeTo(Path("${root}/gap.jsonl"),gap.toArray())
@@ -424,6 +429,50 @@ public class TeacherRuntimeTest {
             @Expect(renderTeacherRunManifest(completed[0]), renderTeacherRunManifest(run))
             @Expect(exists(Path(path + ".tmp")), false)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // CUM-LOCK-UT-01 / CUM-LOCK-NEG-01
+    @TestCase public func teacherRunLockRejectsSecondOwnerAndCanBeReacquiredAfterRelease(): Unit {
+        let root = tempRoot("completed-lock")
+        try {
+            let lock = acquireTeacherRunLock(root, "run-1")
+            @Expect(exists(Path(lock)), true)
+            var rejected = false
+            try { _ = acquireTeacherRunLock(root, "run-1") }
+            catch (e: Exception) { rejected = e.message == "teacher_run_locked" }
+            @Expect(rejected, true)
+            releaseTeacherRunLock(lock)
+            @Expect(exists(Path(lock)), false)
+            let reacquired = acquireTeacherRunLock(root, "run-1")
+            @Expect(reacquired, lock)
+            releaseTeacherRunLock(reacquired)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // CUM-ID-BND-01 / CUM-ID-NEG-01
+    @TestCase public func completedSnapshotRejectsEveryAuthorityIdentityDrift(): Unit {
+        let manifest = TeacherDatasetManifest("dataset-v1", validCases())
+        let good = TeacherRunManifest("run-1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol",
+            "prompt-hash", 1, "complete", 0, "evidence-good")
+        @Expect(validateCompletedTeacherRunSnapshot([good], manifest, "run-1", "gpt-5.6-sol").size, 1)
+        let drifts = [
+            TeacherRunManifest("other-run", good.caseId, good.datasetVersion, good.modelId,
+                good.promptHash, 1, "complete", 0, "cross-run"),
+            TeacherRunManifest(good.runId, good.caseId, "old-dataset", good.modelId,
+                good.promptHash, 1, "complete", 0, "old-dataset"),
+            TeacherRunManifest(good.runId, good.caseId, good.datasetVersion, "wrong-model",
+                good.promptHash, 1, "complete", 0, "wrong-model"),
+            TeacherRunManifest(good.runId, "CJ-HUMANEVAL-999", good.datasetVersion, good.modelId,
+                good.promptHash, 1, "complete", 0, "evil-case"),
+            TeacherRunManifest(good.runId, good.caseId, good.datasetVersion, good.modelId,
+                "old-prompt", 1, "complete", 0, "old-prompt")
+        ]
+        for (drift in drifts) {
+            var rejected = false
+            try { _ = validateCompletedTeacherRunSnapshot([drift], manifest, "run-1", "gpt-5.6-sol") }
+            catch (e: Exception) { rejected = e.message == "completed_run_identity_invalid" }
+            @Expect(rejected, true)
+        }
     }
 
     // TEPR-UT-01 / TEPR-BND-01 / TEPR-POS-01 / TEPR-NEG-01

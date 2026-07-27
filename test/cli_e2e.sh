@@ -30,6 +30,7 @@ cat > "$dataset/CJ-HUMANEVAL-000/tests/TestMain.cj" <<'EOF'
 package cangjie_humaneval_000
 main(): Int64 { if (addOne(1) == 2) { 0 } else { 1 } }
 EOF
+cp -R "$dataset/CJ-HUMANEVAL-000" "$dataset/CJ-HUMANEVAL-001"
 starter_hash=$($cli hash-directory --starter-root "$dataset/CJ-HUMANEVAL-000/starter")
 manifest="$root/model.jsonl"
 : > "$manifest"
@@ -59,6 +60,40 @@ test -f "$attempt_manifest"
 test -f "$attempt_snapshot"
 grep -q 'verified' "$attempt_manifest"
 grep -Fq 'value + 1' "$attempt_snapshot"
+
+completed="$artifacts/runs/e2e/completed.manifest"
+test "$(wc -l < "$completed" | tr -d ' ')" = '1'
+second=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$repo_root/test/fixtures/fake_codex.sh" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-001)
+test "$second" = 'teacher runId=e2e total=1 complete=1'
+test "$(wc -l < "$completed" | tr -d ' ')" = '2'
+grep -q 'CJ-HUMANEVAL-000' "$completed"
+grep -q 'CJ-HUMANEVAL-001' "$completed"
+
+cp "$completed" "$root/completed-good.manifest"
+reused=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000)
+test "$reused" = 'teacher runId=e2e total=1 complete=1'
+cmp "$completed" "$root/completed-good.manifest"
+test ! -e "$artifacts/runs/e2e/.batch.lock"
+
+mkdir "$artifacts/runs/e2e/.batch.lock"
+if locked=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000 2>&1); then
+  printf '%s\n' 'expected concurrent teacher run to be rejected' >&2
+  exit 1
+fi
+test "$locked" = 'teacher failed diagnostic=teacher_run_locked'
+cmp "$completed" "$root/completed-good.manifest"
+rmdir "$artifacts/runs/e2e/.batch.lock"
+
+sed '1s/^e2e	/cross-run	/' "$root/completed-good.manifest" > "$completed"
+cp "$completed" "$root/completed-invalid.manifest"
+if invalid=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000 2>&1); then
+  printf '%s\n' 'expected cross-run completed snapshot to be rejected' >&2
+  exit 1
+fi
+test "$invalid" = 'teacher failed diagnostic=completed_run_identity_invalid'
+cmp "$completed" "$root/completed-invalid.manifest"
+test ! -e "$artifacts/runs/e2e/.batch.lock"
+cp "$root/completed-good.manifest" "$completed"
 
 inside_repo="$repo_root/test/.teacher-artifacts-must-not-exist"
 rm -rf "$inside_repo"

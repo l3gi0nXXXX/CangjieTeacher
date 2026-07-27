@@ -73,6 +73,34 @@ private class SystemTeacherClock <: TeacherClock {
     public func nowMillis(): Int64 { DateTime.now().toUnixTimeStamp().toMilliseconds() }
 }
 
+public func acquireTeacherRunLock(root: String, runId: String): String {
+    if (root.isEmpty() || runId.isEmpty() || runId.contains("/") || runId.contains("\\") || runId.contains("..")) {
+        throw IllegalArgumentException("teacher_run_lock_identity_invalid")
+    }
+    let runRoot = Path("${root}/runs/${runId}")
+    try {
+        if (!exists(runRoot)) { Directory.create(runRoot, recursive: true) }
+    } catch (_: Exception) {
+        throw IllegalArgumentException("teacher_run_lock_unavailable")
+    }
+    let lock = runRoot.join(".batch.lock")
+    try {
+        Directory.create(lock, recursive: false)
+    } catch (_: Exception) {
+        if (exists(lock)) { throw IllegalArgumentException("teacher_run_locked") }
+        throw IllegalArgumentException("teacher_run_lock_unavailable")
+    }
+    lock.toString()
+}
+
+public func releaseTeacherRunLock(lock: String): Unit {
+    try {
+        if (exists(Path(lock))) { remove(Path(lock)) }
+    } catch (_: Exception) {
+        throw IllegalArgumentException("teacher_run_lock_release_failed")
+    }
+}
+
 public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRunManifest> {
     if (options.root.isEmpty() || options.manifest.isEmpty() || options.checksum.isEmpty() ||
         options.starterRoot.isEmpty() || options.testsRoot.isEmpty() || options.runId.isEmpty()) {
@@ -82,41 +110,51 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
     let privacyDiagnostic = prepareTeacherArtifactRoot(options.repositoryRoot, options.root, options.localOnly)
     if (!privacyDiagnostic.isEmpty()) { throw IllegalArgumentException(privacyDiagnostic) }
     let manifest = loadTeacherDatasetManifestFile(options.manifest, options.checksum)
-    let completedPath = "${options.root}/runs/${options.runId}/completed.manifest"
-    let completed = mergeCompletedTeacherRuns([], loadCompletedTeacherRuns(completedPath))
-    let process = CodexTeacherProcess(options.codex, options.model, timeoutMillis: options.timeoutMillis)
-    let verifier = CjpmTeacherVerifier(options.testsRoot, timeoutMillis: options.timeoutMillis)
-    let runOptions = TeacherRunOptions(options.runId, options.root, options.model, process, verifier, SystemTeacherClock(),
-        repairUntilVerified: true, persistAttemptProgress: true)
-    let out = ArrayList<TeacherRunManifest>()
-    for (caseValue in manifest.cases) {
-        if (!options.caseId.isEmpty() && caseValue.caseId != options.caseId) { continue }
-        var reusable: ?TeacherRunManifest = None
-        for (old in completed) {
-            if (teacherCompletedRunReusable(old, caseValue, runOptions)) { reusable = Some(old) }
+    let lock = acquireTeacherRunLock(options.root, options.runId)
+    try {
+        let completedPath = "${options.root}/runs/${options.runId}/completed.manifest"
+        let completed = validateCompletedTeacherRunSnapshot(
+            mergeCompletedTeacherRuns([], loadCompletedTeacherRuns(completedPath)),
+            manifest, options.runId, options.model)
+        let process = CodexTeacherProcess(options.codex, options.model, timeoutMillis: options.timeoutMillis)
+        let verifier = CjpmTeacherVerifier(options.testsRoot, timeoutMillis: options.timeoutMillis)
+        let runOptions = TeacherRunOptions(options.runId, options.root, options.model, process, verifier,
+            SystemTeacherClock(), repairUntilVerified: true, persistAttemptProgress: true)
+        let out = ArrayList<TeacherRunManifest>()
+        for (caseValue in manifest.cases) {
+            if (!options.caseId.isEmpty() && caseValue.caseId != options.caseId) { continue }
+            var reusable: ?TeacherRunManifest = None
+            for (old in completed) {
+                if (teacherCompletedRunReusable(old, caseValue, runOptions)) { reusable = Some(old) }
+            }
+            match (reusable) {
+                case Some(old) => out.add(old)
+                case None =>
+                    if (!hasTeacherAttemptEvidence(options.root, options.runId, caseValue.caseId)) {
+                        _ = createTeacherCaseWorkspace(options.root, options.runId, caseValue, options.starterRoot)
+                    }
+                    let execution = executeTeacherCase(caseValue, runOptions)
+                    let run = finalizeTeacherRun(execution.run, true)
+                    out.add(run)
+                    if (run.status == "complete") {
+                        teacherCopyTree(TeacherPaths(options.root).workspace(options.runId, caseValue.caseId),
+                            TeacherPaths(options.root).solution(caseValue.caseId))
+                        _ = persistTeacherSolutionBinding(options.root, run)
+                        _ = persistTeacherCompletedAttemptBinding(options.root, run, caseValue)
+                    }
+                    _ = persistTeacherRunArtifacts(options.root, run,
+                        teacherSanitizeEvidence(execution.generationEvidence),
+                        teacherSanitizeEvidence(execution.verifierEvidence))
+                    let snapshot = validateCompletedTeacherRunSnapshot(
+                        mergeCompletedTeacherRuns(completed, out.toArray()),
+                        manifest, options.runId, options.model)
+                    _ = persistCompletedTeacherRuns(completedPath, snapshot)
+            }
         }
-        match (reusable) {
-            case Some(old) => out.add(old)
-            case None =>
-                if (!hasTeacherAttemptEvidence(options.root, options.runId, caseValue.caseId)) {
-                    _ = createTeacherCaseWorkspace(options.root, options.runId, caseValue, options.starterRoot)
-                }
-                let execution = executeTeacherCase(caseValue, runOptions)
-                let run = finalizeTeacherRun(execution.run, true)
-                out.add(run)
-                if (run.status == "complete") {
-                    teacherCopyTree(TeacherPaths(options.root).workspace(options.runId, caseValue.caseId),
-                        TeacherPaths(options.root).solution(caseValue.caseId))
-                    _ = persistTeacherSolutionBinding(options.root, run)
-                    _ = persistTeacherCompletedAttemptBinding(options.root, run, caseValue)
-                }
-                _ = persistTeacherRunArtifacts(options.root, run, teacherSanitizeEvidence(execution.generationEvidence),
-                    teacherSanitizeEvidence(execution.verifierEvidence))
-                _ = persistCompletedTeacherRuns(completedPath,
-                    mergeCompletedTeacherRuns(completed, out.toArray()))
-        }
+        out.toArray()
+    } finally {
+        releaseTeacherRunLock(lock)
     }
-    out.toArray()
 }
 
 public func validateTeacherExecutionPrivacy(repositoryRoot: String, artifactRoot: String, localOnly: Bool): Bool {

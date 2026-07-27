@@ -157,6 +157,26 @@ public func mergeCompletedTeacherRuns(existing: Array<TeacherRunManifest>,
     merged.toArray()
 }
 
+public func validateCompletedTeacherRunSnapshot(runs: Array<TeacherRunManifest>,
+    manifest: TeacherDatasetManifest, runId: String, modelId: String): Array<TeacherRunManifest> {
+    if (!validateTeacherDatasetManifest(manifest) || runId.isEmpty() || modelId != "gpt-5.6-sol") {
+        throw IllegalArgumentException("completed_run_identity_invalid")
+    }
+    let authority = HashMap<String, TeacherCaseManifest>()
+    for (caseValue in manifest.cases) { authority.add(caseValue.caseId, caseValue) }
+    for (run in runs) {
+        let caseValue = match (authority.get(run.caseId)) {
+            case Some(value) => value
+            case None => throw IllegalArgumentException("completed_run_identity_invalid")
+        }
+        if (run.runId != runId || run.datasetVersion != manifest.datasetVersion ||
+            run.modelId != modelId || run.promptHash != caseValue.promptHash) {
+            throw IllegalArgumentException("completed_run_identity_invalid")
+        }
+    }
+    runs
+}
+
 public func persistCompletedTeacherRuns(path: String, runs: Array<TeacherRunManifest>): String {
     teacherAtomicWrite(path, teacherJoin(runs.map({r: TeacherRunManifest => renderTeacherRunManifest(r)}), "\n") + "\n")
 }
