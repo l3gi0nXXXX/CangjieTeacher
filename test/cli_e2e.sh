@@ -75,14 +75,33 @@ test "$reused" = 'teacher runId=e2e total=1 complete=1'
 cmp "$completed" "$root/completed-good.manifest"
 test ! -e "$artifacts/runs/e2e/.batch.lock"
 
+awk -F '	' 'BEGIN{OFS="\t"} $2=="CJ-HUMANEVAL-000"{$6=2} {print}' "$completed" > "$root/completed-nonreusable.manifest"
+cp "$root/completed-nonreusable.manifest" "$completed"
+replaced=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000)
+test "$replaced" = 'teacher runId=e2e total=1 complete=1'
+test "$(wc -l < "$completed" | tr -d ' ')" = '2'
+test "$(awk -F '	' '$2=="CJ-HUMANEVAL-000"{print $6}' "$completed")" = '1'
+test "$(sed -n '1p' "$completed" | cut -f2)" = 'CJ-HUMANEVAL-000'
+test "$(sed -n '2p' "$completed" | cut -f2)" = 'CJ-HUMANEVAL-001'
+cp "$completed" "$root/completed-good.manifest"
+
 mkdir "$artifacts/runs/e2e/.batch.lock"
+printf 'teacher-run-lock-v1\t%s\t%s\n' "$$" '2222222222222222222222222222222222222222222222222222222222222222' > "$artifacts/runs/e2e/.batch.lock/owner"
 if locked=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000 2>&1); then
   printf '%s\n' 'expected concurrent teacher run to be rejected' >&2
   exit 1
 fi
 test "$locked" = 'teacher failed diagnostic=teacher_run_locked'
 cmp "$completed" "$root/completed-good.manifest"
+rm "$artifacts/runs/e2e/.batch.lock/owner"
 rmdir "$artifacts/runs/e2e/.batch.lock"
+
+mkdir "$artifacts/runs/e2e/.batch.lock"
+printf 'teacher-run-lock-v1\t2147483647\t%s\n' '3333333333333333333333333333333333333333333333333333333333333333' > "$artifacts/runs/e2e/.batch.lock/owner"
+reclaimed=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000)
+test "$reclaimed" = 'teacher runId=e2e total=1 complete=1'
+cmp "$completed" "$root/completed-good.manifest"
+test ! -e "$artifacts/runs/e2e/.batch.lock"
 
 sed '1s/^e2e	/cross-run	/' "$root/completed-good.manifest" > "$completed"
 cp "$completed" "$root/completed-invalid.manifest"

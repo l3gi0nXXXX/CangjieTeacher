@@ -73,34 +73,6 @@ private class SystemTeacherClock <: TeacherClock {
     public func nowMillis(): Int64 { DateTime.now().toUnixTimeStamp().toMilliseconds() }
 }
 
-public func acquireTeacherRunLock(root: String, runId: String): String {
-    if (root.isEmpty() || runId.isEmpty() || runId.contains("/") || runId.contains("\\") || runId.contains("..")) {
-        throw IllegalArgumentException("teacher_run_lock_identity_invalid")
-    }
-    let runRoot = Path("${root}/runs/${runId}")
-    try {
-        if (!exists(runRoot)) { Directory.create(runRoot, recursive: true) }
-    } catch (_: Exception) {
-        throw IllegalArgumentException("teacher_run_lock_unavailable")
-    }
-    let lock = runRoot.join(".batch.lock")
-    try {
-        Directory.create(lock, recursive: false)
-    } catch (_: Exception) {
-        if (exists(lock)) { throw IllegalArgumentException("teacher_run_locked") }
-        throw IllegalArgumentException("teacher_run_lock_unavailable")
-    }
-    lock.toString()
-}
-
-public func releaseTeacherRunLock(lock: String): Unit {
-    try {
-        if (exists(Path(lock))) { remove(Path(lock)) }
-    } catch (_: Exception) {
-        throw IllegalArgumentException("teacher_run_lock_release_failed")
-    }
-}
-
 public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRunManifest> {
     if (options.root.isEmpty() || options.manifest.isEmpty() || options.checksum.isEmpty() ||
         options.starterRoot.isEmpty() || options.testsRoot.isEmpty() || options.runId.isEmpty()) {

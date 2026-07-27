@@ -431,21 +431,94 @@ public class TeacherRuntimeTest {
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
-    // CUM-LOCK-UT-01 / CUM-LOCK-NEG-01
-    @TestCase public func teacherRunLockRejectsSecondOwnerAndCanBeReacquiredAfterRelease(): Unit {
-        let root = tempRoot("completed-lock")
+    // CUM-LOCK-UT-01 / CUM-LOCK-POS-01
+    @TestCase public func teacherRunLockPublishesOwnerAndRejectsLiveOwner(): Unit {
+        let root = tempRoot("completed-lock-live")
         try {
             let lock = acquireTeacherRunLock(root, "run-1")
-            @Expect(exists(Path(lock)), true)
+            @Expect(exists(Path(lock.path)), true)
+            @Expect(lock.pid, teacherCurrentProcessId())
+            @Expect(lock.token.size, 64)
             var rejected = false
             try { _ = acquireTeacherRunLock(root, "run-1") }
             catch (e: Exception) { rejected = e.message == "teacher_run_locked" }
             @Expect(rejected, true)
             releaseTeacherRunLock(lock)
-            @Expect(exists(Path(lock)), false)
+            @Expect(exists(Path(lock.path)), false)
             let reacquired = acquireTeacherRunLock(root, "run-1")
-            @Expect(reacquired, lock)
+            @Expect(reacquired.path, lock.path)
+            @Expect(reacquired.token != lock.token, true)
             releaseTeacherRunLock(reacquired)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // CUM-LOCK-BND-01 / CUM-LOCK-NEG-01
+    @TestCase public func teacherRunLockFailsClosedForMalformedOwnerAndTokenMismatch(): Unit {
+        let root = tempRoot("completed-lock-invalid")
+        let path = teacherRunLockPath(root, "run-1")
+        try {
+            Directory.create(Path(path), recursive: true)
+            File.writeTo(Path("${path}/owner"), "malformed-中文😀\n".toArray())
+            var malformed = false
+            try { _ = acquireTeacherRunLock(root, "run-1") }
+            catch (e: Exception) { malformed = e.message == "teacher_run_lock_owner_invalid" }
+            @Expect(malformed, true)
+            @Expect(exists(Path(path)), true)
+
+            File.writeTo(Path("${path}/owner"), [UInt8(0xff), UInt8(0xfe)])
+            var invalidUtf8 = false
+            try { _ = acquireTeacherRunLock(root, "run-1") }
+            catch (e: Exception) { invalidUtf8 = e.message == "teacher_run_lock_owner_invalid" }
+            @Expect(invalidUtf8, true)
+            @Expect(exists(Path(path)), true)
+
+            remove(Path(path), recursive: true)
+            let lock = acquireTeacherRunLock(root, "run-1")
+            let wrong = TeacherRunLock(lock.path, lock.pid,
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+            var mismatch = false
+            try { releaseTeacherRunLock(wrong) }
+            catch (e: Exception) { mismatch = e.message == "teacher_run_lock_owner_mismatch" }
+            @Expect(mismatch, true)
+            @Expect(exists(Path(lock.path)), true)
+            releaseTeacherRunLock(lock)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // CUM-LOCK-POS-02 / CUM-LOCK-CONC-01
+    @TestCase public func teacherRunLockReclaimsDeadOwnerExactlyOnce(): Unit {
+        let root = tempRoot("completed-lock-reclaim")
+        let path = teacherRunLockPath(root, "run-1")
+        let staleToken = "1111111111111111111111111111111111111111111111111111111111111111"
+        try {
+            Directory.create(Path(path), recursive: true)
+            File.writeTo(Path("${path}/owner"),
+                renderTeacherRunLockOwner(2147483647, staleToken).toArray())
+            let first = spawn {
+                try { Some<TeacherRunLock>(acquireTeacherRunLock(root, "run-1")) }
+                catch (_: Exception) { None<TeacherRunLock> }
+            }
+            let second = spawn {
+                try { Some<TeacherRunLock>(acquireTeacherRunLock(root, "run-1")) }
+                catch (_: Exception) { None<TeacherRunLock> }
+            }
+            let acquired = [first.get(), second.get()]
+            var winners: Int64 = 0
+            var winner: ?TeacherRunLock = None
+            for (value in acquired) {
+                match (value) {
+                    case Some(lock) => winners += 1; winner = Some(lock)
+                    case None => ()
+                }
+            }
+            @Expect(winners, 1)
+            match (winner) {
+                case Some(lock) =>
+                    @Expect(lock.pid, teacherCurrentProcessId())
+                    @Expect(lock.token != staleToken, true)
+                    releaseTeacherRunLock(lock)
+                case None => throw IllegalStateException("teacher_run_lock_reclaim_missing")
+            }
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
