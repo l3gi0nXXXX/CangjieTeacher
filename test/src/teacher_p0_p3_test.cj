@@ -327,6 +327,105 @@ public class TeacherRuntimeTest {
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
+    // CUM-UT-01 / CUM-POS-01
+    @TestCase public func completedManifestAccumulatesDifferentCasesInStableOrder(): Unit {
+        let root = tempRoot("completed-cumulative")
+        let path = "${root}/runs/run-1/completed.manifest"
+        try {
+            let first = TeacherRunManifest("run-1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol",
+                "prompt-000", 1, "complete", 0, "evidence-中文😀-000")
+            let second = TeacherRunManifest("run-1", "CJ-HUMANEVAL-001", "dataset-v1", "gpt-5.6-sol",
+                "prompt-001", 1, "complete", 0, "evidence-中文😀-001")
+            _ = persistCompletedTeacherRuns(path, mergeCompletedTeacherRuns([], [first]))
+            _ = persistCompletedTeacherRuns(path,
+                mergeCompletedTeacherRuns(loadCompletedTeacherRuns(path), [second]))
+            let completed = loadCompletedTeacherRuns(path)
+            @Expect(completed.size, 2)
+            @Expect(completed[0].caseId, first.caseId)
+            @Expect(completed[1].caseId, second.caseId)
+            @Expect(completed[0].evidenceHash, first.evidenceHash)
+            @Expect(completed[1].evidenceHash, second.evidenceHash)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // CUM-BND-01
+    @TestCase public func completedManifestReplacesSameCaseWithoutDuplication(): Unit {
+        let root = tempRoot("completed-replace")
+        let path = "${root}/runs/run-1/completed.manifest"
+        try {
+            let first = TeacherRunManifest("run-1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol",
+                "prompt-000", 1, "complete", 0, "evidence-old")
+            let replacement = TeacherRunManifest("run-1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol",
+                "prompt-000", 2, "complete", 0, "evidence-new-中文😀")
+            _ = persistCompletedTeacherRuns(path, mergeCompletedTeacherRuns([], [first]))
+            _ = persistCompletedTeacherRuns(path,
+                mergeCompletedTeacherRuns(loadCompletedTeacherRuns(path), [replacement]))
+            let completed = loadCompletedTeacherRuns(path)
+            @Expect(completed.size, 1)
+            @Expect(completed[0].attempt, 2)
+            @Expect(completed[0].evidenceHash, replacement.evidenceHash)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // CUM-NEG-01
+    @TestCase public func completedManifestRejectsMalformedDuplicateAndInvalidUtf8History(): Unit {
+        let root = tempRoot("completed-invalid")
+        let path = "${root}/runs/run-1/completed.manifest"
+        let next = TeacherRunManifest("run-1", "CJ-HUMANEVAL-001", "dataset-v1", "gpt-5.6-sol",
+            "prompt-001", 1, "complete", 0, "evidence-next")
+        try {
+            Directory.create(Path("${root}/runs/run-1"), recursive: true)
+            File.writeTo(Path(path), "malformed\n".toArray())
+            var malformed = false
+            try { _ = mergeCompletedTeacherRuns([], loadCompletedTeacherRuns(path)) }
+            catch (e: Exception) { malformed = e.message == "malformed_teacher_run_manifest" }
+            @Expect(malformed, true)
+
+            let invalid = TeacherRunManifest("run-1", "not-a-case", "dataset-v1", "gpt-5.6-sol",
+                "prompt-000", 1, "complete", 0, "evidence-invalid")
+            File.writeTo(Path(path), (renderTeacherRunManifest(invalid) + "\n").toArray())
+            var invalidManifest = false
+            try { _ = mergeCompletedTeacherRuns([], loadCompletedTeacherRuns(path)) }
+            catch (e: Exception) { invalidManifest = e.message == "invalid_completed_run_manifest" }
+            @Expect(invalidManifest, true)
+
+            let duplicate = TeacherRunManifest("run-1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol",
+                "prompt-000", 1, "complete", 0, "evidence-duplicate")
+            let duplicateRows = renderTeacherRunManifest(duplicate) + "\n" + renderTeacherRunManifest(duplicate) + "\n"
+            File.writeTo(Path(path), duplicateRows.toArray())
+            var duplicated = false
+            try { _ = mergeCompletedTeacherRuns([], loadCompletedTeacherRuns(path)) }
+            catch (e: Exception) { duplicated = e.message == "duplicate_completed_case_id" }
+            @Expect(duplicated, true)
+
+            File.writeTo(Path(path), [UInt8(0xff), UInt8(0xfe)])
+            var invalidUtf8 = false
+            try { _ = loadCompletedTeacherRuns(path) }
+            catch (e: Exception) { invalidUtf8 = e.message == "invalid_response_encoding" }
+            @Expect(invalidUtf8, true)
+
+            var duplicateUpdate = false
+            try { _ = mergeCompletedTeacherRuns([], [next, next]) }
+            catch (e: Exception) { duplicateUpdate = e.message == "duplicate_completed_case_id" }
+            @Expect(duplicateUpdate, true)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // CUM-REG-01
+    @TestCase public func completedManifestSingleCasePersistenceRemainsAtomic(): Unit {
+        let root = tempRoot("completed-single")
+        let path = "${root}/runs/run-1/completed.manifest"
+        try {
+            let run = TeacherRunManifest("run-1", "CJ-HUMANEVAL-000", "dataset-v1", "gpt-5.6-sol",
+                "prompt-000", 1, "complete", 0, "evidence-single-中文😀")
+            _ = persistCompletedTeacherRuns(path, [run])
+            let completed = loadCompletedTeacherRuns(path)
+            @Expect(completed.size, 1)
+            @Expect(renderTeacherRunManifest(completed[0]), renderTeacherRunManifest(run))
+            @Expect(exists(Path(path + ".tmp")), false)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     // TEPR-UT-01 / TEPR-BND-01 / TEPR-POS-01 / TEPR-NEG-01
     @TestCase public func persistedEvidenceSanitizerIsRuneSafeAndFailsClosedAtSensitiveBoundaries(): Unit {
         let publicEvidence = "公开诊断中文😀: compiler exited with code 1."

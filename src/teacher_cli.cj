@@ -83,7 +83,7 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
     if (!privacyDiagnostic.isEmpty()) { throw IllegalArgumentException(privacyDiagnostic) }
     let manifest = loadTeacherDatasetManifestFile(options.manifest, options.checksum)
     let completedPath = "${options.root}/runs/${options.runId}/completed.manifest"
-    let completed = loadCompletedTeacherRuns(completedPath)
+    let completed = mergeCompletedTeacherRuns([], loadCompletedTeacherRuns(completedPath))
     let process = CodexTeacherProcess(options.codex, options.model, timeoutMillis: options.timeoutMillis)
     let verifier = CjpmTeacherVerifier(options.testsRoot, timeoutMillis: options.timeoutMillis)
     let runOptions = TeacherRunOptions(options.runId, options.root, options.model, process, verifier, SystemTeacherClock(),
@@ -112,7 +112,8 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
                 }
                 _ = persistTeacherRunArtifacts(options.root, run, teacherSanitizeEvidence(execution.generationEvidence),
                     teacherSanitizeEvidence(execution.verifierEvidence))
-                _ = persistCompletedTeacherRuns(completedPath, out.toArray())
+                _ = persistCompletedTeacherRuns(completedPath,
+                    mergeCompletedTeacherRuns(completed, out.toArray()))
         }
     }
     out.toArray()

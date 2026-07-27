@@ -126,6 +126,37 @@ public func loadCompletedTeacherRuns(path: String): Array<TeacherRunManifest> {
     out.toArray()
 }
 
+public func mergeCompletedTeacherRuns(existing: Array<TeacherRunManifest>,
+    updates: Array<TeacherRunManifest>): Array<TeacherRunManifest> {
+    let merged = ArrayList<TeacherRunManifest>()
+    let caseIds = HashSet<String>()
+    for (run in existing) {
+        if (!validateTeacherRunManifest(run)) { throw IllegalArgumentException("invalid_completed_run_manifest") }
+        if (caseIds.contains(run.caseId)) { throw IllegalArgumentException("duplicate_completed_case_id") }
+        caseIds.add(run.caseId)
+        merged.add(run)
+    }
+    let updateIds = HashSet<String>()
+    for (run in updates) {
+        if (!validateTeacherRunManifest(run)) { throw IllegalArgumentException("invalid_completed_run_manifest") }
+        if (updateIds.contains(run.caseId)) { throw IllegalArgumentException("duplicate_completed_case_id") }
+        updateIds.add(run.caseId)
+        var replaced = false
+        for (i in 0..merged.size) {
+            if (merged[i].caseId == run.caseId) {
+                merged[i] = run
+                replaced = true
+                break
+            }
+        }
+        if (!replaced) {
+            caseIds.add(run.caseId)
+            merged.add(run)
+        }
+    }
+    merged.toArray()
+}
+
 public func persistCompletedTeacherRuns(path: String, runs: Array<TeacherRunManifest>): String {
     teacherAtomicWrite(path, teacherJoin(runs.map({r: TeacherRunManifest => renderTeacherRunManifest(r)}), "\n") + "\n")
 }
