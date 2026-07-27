@@ -109,7 +109,15 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
             while(true){
                 failureStage = "candidate_extractor_failed"
                 let extraction=extractTeacherAtom(options,row,run,solutionRoot,atomFeedback,extractorExecutor)
-                if(extraction[1]!="ok"){result.diagnostic=extraction[1];return result};let currentSpec=extraction[0]
+                if(extraction[1]!="ok"){
+                    if(extraction[1]=="extractor_case_marker"){
+                        let feedback="Final candidate leakage audit rejected the replacement. Categories: case_marker. Generalize the explanation and examples without benchmark case identifiers, expected-output labels, or hidden-test markers. Preserve the validated reusable rule and executable behavior."
+                        let repaired=teacherMergeCandidateRepairFeedback(atomFeedback,feedback,"candidate_leakage")
+                        if(repaired==atomFeedback){result.diagnostic="candidate_leakage";return result}
+                        atomFeedback=repaired;continue
+                    }
+                    result.diagnostic=extraction[1];return result
+                };let currentSpec=extraction[0]
                 let relevance=validateTeacherAuthorityRelevance(row.compilerOutput,row.missingKnowledge,currentSpec.explanation,currentSpec.example,
                     currentSpec.positiveSource,currentSpec.negativeSource,currentSpec.boundarySource,
                     positiveDependencyProfile:currentSpec.positiveDependencyProfile,negativeDependencyProfile:currentSpec.negativeDependencyProfile,
@@ -123,7 +131,27 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
                 failureStage = "candidate_atom_execution_failed"
                 let execution=executeTeacherAtomTestBundle(currentBundle,"${options.root}/runs/${options.runId}/atom-test-workspaces/${currentIdentity}",executor:atomExecutor,timeoutMillis:options.timeoutMillis)
                 if(!execution.ok){if(execution.diagnostic=="atom_test_timeout"){result.diagnostic=execution.diagnostic;return result};atomFeedback=teacherMergeCandidateRepairFeedback(atomFeedback,execution.feedback,execution.diagnostic);continue}
-                acceptedSpec=Some(currentSpec);acceptedObservation=Some(normalized);identity=currentIdentity;bundle=recordTeacherAtomTestExecution(currentBundle,execution.evidenceJson);break
+                let currentBundleWithExecution=recordTeacherAtomTestExecution(currentBundle,execution.evidenceJson)
+                let currentCandidate=renderCandidateKnowledgeExport(normalized,currentSpec.example,
+                    buildKnowledgeAtomTestBundle(currentSpec.positiveSource,currentSpec.negativeSource,currentSpec.boundarySource))
+                failureStage = "candidate_leakage_audit_failed"
+                let solutionAudit=auditCandidateAgainstSolutions(currentCandidate,protected)
+                let specificityAudit=auditCaseSpecificity(currentCandidate,[caseValue.signature])
+                let authorityPassed=validateTeacherCandidateAgainstAuthority(currentCandidate,currentBundleWithExecution,
+                    caseValue,observationProtected.toArray())
+                if(!solutionAudit.passed||!specificityAudit.passed||!authorityPassed){
+                    let categories=ArrayList<String>()
+                    if(!solutionAudit.passed){categories.add("protected_artifact_similarity")}
+                    if(specificityAudit.violations.contains("case_marker")){categories.add("case_marker")}
+                    if(specificityAudit.violations.contains("case_signature")){categories.add("case_signature")}
+                    if(!authorityPassed){categories.add("authority_material_similarity")}
+                    let feedback="Final candidate leakage audit rejected the replacement. Categories: ${teacherJoin(categories.toArray(),", ")}. Generalize the explanation and example, change example identifiers and declaration structure, and do not reuse protected sequences, case markers, case signatures, or authority-derived text. Preserve the validated reusable rule and executable behavior."
+                    let repaired=teacherMergeCandidateRepairFeedback(atomFeedback,feedback,"candidate_leakage")
+                    if(repaired==atomFeedback){result.diagnostic="candidate_leakage";return result}
+                    atomFeedback=repaired;continue
+                }
+                acceptedSpec=Some(currentSpec);acceptedObservation=Some(normalized);identity=currentIdentity
+                bundle=currentBundleWithExecution;break
             }
             let spec=match(acceptedSpec){case Some(v)=>v;case None=>throw IllegalStateException("accepted_atom_missing")}
             let normalized=match(acceptedObservation){case Some(v)=>v;case None=>throw IllegalStateException("accepted_observation_missing")}
@@ -132,13 +160,6 @@ public func buildTeacherCandidates(options: TeacherCliOptions,
             let simpleTests = buildKnowledgeAtomTestBundle(spec.positiveSource, spec.negativeSource, spec.boundarySource)
             failureStage = "candidate_render_failed"
             let candidate = renderCandidateKnowledgeExport(normalized, spec.example, simpleTests)
-            failureStage = "candidate_leakage_audit_failed"
-            if (!auditCandidateAgainstSolutions(candidate, protected).passed || !auditCaseSpecificity(candidate, [caseValue.signature]).passed) {
-                result.diagnostic = "candidate_leakage"; return result
-            }
-            if(!validateTeacherCandidateAgainstAuthority(candidate,bundle,caseValue,observationProtected.toArray())){
-                result.diagnostic="candidate_leakage";return result
-            }
             failureStage = "candidate_export_render_failed"
             let candidateText = renderTeacherCandidateExport(candidate)
             if (candidateForbidden(candidateText + bundle)) { result.diagnostic = "candidate_contamination"; return result }
@@ -1115,7 +1136,7 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
     if(options.model!="gpt-5.6-sol"){return (emptyTeacherAtomSpec(),"extractor_model_identity_invalid")}
     let solutionHash=teacherDirectoryHash(solutionRoot)
     let allowedEvidence=teacherSanitizeEvidence(row.evidence+"\n"+row.compilerOutput)
-    let repair=if(atomFeedback==""){""}else{"\nA previous authority relevance or atom test failed. Correct the proposed knowledge explanation, example, test sources, or expected diagnostic using this sanitized compiler evidence, then return a complete replacement object:\n${atomFeedback}"}
+    let repair=if(atomFeedback==""){""}else{"\nA previous candidate validation failed. Correct the proposed knowledge explanation, example, test sources, or expected diagnostic using this sanitized feedback, then return a complete replacement object:\n${atomFeedback}"}
     let exactGapInstruction=if(row.missingKnowledge.toAsciiLower()=="g-logical-or-condition"){
         " For this exact gap, explain that Cangjie requires Bool || Bool inside one complete parenthesized if or while condition. Positive and boundary sources must explicitly declare two Bool operands and use main() without func in a compilable form such as if (left || right) { ... }. The negative source must use the same Bool types and the exact placement if (left) || (right) { ... }, with negativeDiagnostic set to expected '{', found '||'. Do not use Int operands, the nonexistent or keyword, func main, comments, or string labels as substitutes."
     }else if(row.missingKnowledge.toAsciiLower()=="g-control-flow-parentheses"){
@@ -1159,7 +1180,11 @@ private func extractTeacherAtom(options:TeacherCliOptions,row:TeacherGapRow,run:
         let spec=TeacherAtomSpec(candidateString(o,"knowledgeFamily"),candidateString(o,"concept"),candidateString(o,"explanation"),candidateString(o,"example"),candidateString(o,"citation"),candidateString(o,"sourceClass"),candidateString(o,"positiveSource"),candidateString(o,"negativeSource"),candidateString(o,"boundarySource"),candidateString(o,"negativeDiagnostic"),candidateString(o,"positiveDependencyProfile"),candidateString(o,"negativeDependencyProfile"),candidateString(o,"boundaryDependencyProfile"),"sha256:${teacherStableHash(raw)}",provider,model)
         if(!teacherK4Family(spec.family)||spec.concept==""||spec.explanation==""||spec.example==""||spec.positiveSource==""||spec.negativeSource==""||spec.boundarySource==""||spec.negativeDiagnostic==""){return(emptyTeacherAtomSpec(),"extractor_contract_invalid")}
         if(spec.sourceClass!=row.sourceClass||spec.citation!=row.citation||(row.sourceClass=="official"&&!spec.citation.startsWith("https://docs.cangjie-lang.cn/"))){return(emptyTeacherAtomSpec(),"extractor_source_invalid")}
-        if(candidateForbidden(spec.concept+spec.explanation+spec.example+spec.positiveSource+spec.negativeSource+spec.boundarySource)){return(emptyTeacherAtomSpec(),"extractor_contamination")}
+        let visible=spec.concept+spec.explanation+spec.example+spec.positiveSource+spec.negativeSource+spec.boundarySource
+        let visibleLower=visible.toAsciiLower()
+        if(visibleLower.contains("cj-humaneval-")||visibleLower.contains("expectedoutput")||
+            visibleLower.contains("hidden_test")){return(emptyTeacherAtomSpec(),"extractor_case_marker")}
+        if(candidateForbidden(visible)){return(emptyTeacherAtomSpec(),"extractor_contamination")}
         (spec,"ok")
     }catch(_:Exception){(emptyTeacherAtomSpec(),"malformed_extractor_json")}
 }

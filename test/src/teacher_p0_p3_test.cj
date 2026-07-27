@@ -1651,6 +1651,21 @@ public class TeacherP0P3Test {
                 atomExecutor:AtomRepairExecutor())
             @Expect(authorityRejected.diagnostic,"observation_leakage")
             @Expect(exists(Path(options.outputRoot)),false)
+            let solutionLeak=extractorJson.replace("for 中文😀 boundaries.",
+                "for 中文😀 boundaries. private opaque implementation 987654")
+            options.outputRoot="${root}/exports/solution-repaired"
+            let solutionRepairExecutor=RecordingExecutor(results:[
+                TeacherProcessResult(0,solutionLeak),TeacherProcessResult(0,extractorJson)])
+            let solutionRepaired=buildTeacherCandidates(options,
+                extractorExecutor:solutionRepairExecutor,atomExecutor:AtomRepairExecutor())
+            @Expect(solutionRepaired.ok,true);@Expect(solutionRepaired.accepted,1)
+            @Expect(solutionRepairExecutor.specs.size,2)
+            let solutionRepairPrompt=solutionRepairExecutor.specs[1].args[
+                solutionRepairExecutor.specs[1].args.size-1]
+            @Expect(solutionRepairPrompt.contains("candidate_leakage"),true)
+            @Expect(solutionRepairPrompt.contains("protected_artifact_similarity"),true)
+            @Expect(solutionRepairPrompt.contains("private opaque implementation 987654"),false)
+            @Expect(exists(Path(options.outputRoot)),true)
             for((name,leak) in [
                 ("example",extractorJson.replace("for 中文😀 boundaries.","for 中文😀 boundaries. authority bound task")),
                 ("positive",extractorJson.replace("main() { let text: String = \\\"ok\\\" }",
@@ -1658,15 +1673,57 @@ public class TeacherP0P3Test {
                 ("negative",extractorJson.replace("main() { let text: String = unknownName }",
                     "main() { let text: String = unknownName }\\n// authority bound task")),
                 ("boundary",extractorJson.replace("main() { let text: String = \\\"中文😀\\\" }",
-                    "main() { let text: String = \\\"中文😀\\\" }\\n// authority bound task"))
+                    "main() { let text: String = \\\"中文😀\\\" }\\n// authority bound task")),
+                ("signature",extractorJson.replace("for 中文😀 boundaries.",
+                    "for 中文😀 boundaries. func demo(x: Int64): Int64"))
             ]) {
                 options.outputRoot="${root}/exports/authority-${name}"
-                let rejected=buildTeacherCandidates(options,
-                    extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(0,leak)]),
+                let repairExecutor=RecordingExecutor(results:[
+                    TeacherProcessResult(0,leak),TeacherProcessResult(0,extractorJson)])
+                let repaired=buildTeacherCandidates(options,
+                    extractorExecutor:repairExecutor,
                     atomExecutor:AtomRepairExecutor())
-                @Expect(rejected.diagnostic,"candidate_leakage")
-                @Expect(exists(Path(options.outputRoot)),false)
+                @Expect(repaired.ok,true);@Expect(repaired.accepted,1)
+                @Expect(repairExecutor.specs.size,2)
+                let repairPrompt=repairExecutor.specs[1].args[repairExecutor.specs[1].args.size-1]
+                @Expect(repairPrompt.contains("candidate_leakage"),true)
+                if(name=="signature"){@Expect(repairPrompt.contains("case_signature"),true)}
+                else{@Expect(repairPrompt.contains("authority_material_similarity"),true)}
+                @Expect(repairPrompt.contains("authority bound task"),false)
+                @Expect(repairPrompt.contains("func demo(x: Int64): Int64"),false)
+                @Expect(exists(Path(options.outputRoot)),true)
             }
+            options.outputRoot="${root}/exports/persistent-leak"
+            let persistentLeakExecutor=RecordingExecutor(results:[
+                TeacherProcessResult(0,solutionLeak),TeacherProcessResult(0,solutionLeak)])
+            let persistentLeak=buildTeacherCandidates(options,
+                extractorExecutor:persistentLeakExecutor,atomExecutor:AtomRepairExecutor())
+            @Expect(persistentLeak.diagnostic,"candidate_leakage")
+            @Expect(persistentLeakExecutor.specs.size,2)
+            @Expect(exists(Path(options.outputRoot)),false)
+            let markerLeak=extractorJson.replace("for 中文😀 boundaries.",
+                "for 中文😀 boundaries. CJ-HUMANEVAL-777")
+            options.outputRoot="${root}/exports/marker-repaired"
+            let markerRepairExecutor=RecordingExecutor(results:[
+                TeacherProcessResult(0,markerLeak),TeacherProcessResult(0,extractorJson)])
+            let markerRepaired=buildTeacherCandidates(options,
+                extractorExecutor:markerRepairExecutor,atomExecutor:AtomRepairExecutor())
+            @Expect(markerRepaired.ok,true);@Expect(markerRepaired.accepted,1)
+            @Expect(markerRepairExecutor.specs.size,2)
+            let markerRepairPrompt=markerRepairExecutor.specs[1].args[
+                markerRepairExecutor.specs[1].args.size-1]
+            @Expect(markerRepairPrompt.contains("candidate_leakage"),true)
+            @Expect(markerRepairPrompt.contains("case_marker"),true)
+            @Expect(markerRepairPrompt.toAsciiLower().contains("cj-humaneval-"),false)
+            @Expect(exists(Path(options.outputRoot)),true)
+            options.outputRoot="${root}/exports/persistent-marker"
+            let persistentMarkerExecutor=RecordingExecutor(results:[
+                TeacherProcessResult(0,markerLeak),TeacherProcessResult(0,markerLeak)])
+            let persistentMarker=buildTeacherCandidates(options,
+                extractorExecutor:persistentMarkerExecutor,atomExecutor:AtomRepairExecutor())
+            @Expect(persistentMarker.diagnostic,"candidate_leakage")
+            @Expect(persistentMarkerExecutor.specs.size,2)
+            @Expect(exists(Path(options.outputRoot)),false)
             let missingProfile=extractorJson.replace(",\"boundaryDependencyProfile\":\"none\"","")
             options.outputRoot="${root}/exports/fallback-missing"
             @Expect(buildTeacherCandidates(options,extractorExecutor:RecordingExecutor(
@@ -1682,10 +1739,12 @@ public class TeacherP0P3Test {
             // Multiple cases share one private exports parent. Publishing a
             // second candidate must not try to recreate that existing parent.
             options.outputRoot="${root}/exports/r2"
+            let normalExecutor=RecordingExecutor(results:[TeacherProcessResult(0,extractorJson)])
             let second = buildTeacherCandidates(options,
-                extractorExecutor:RecordingExecutor(results:[TeacherProcessResult(0,extractorJson)]),
+                extractorExecutor:normalExecutor,
                 atomExecutor:AtomRepairExecutor())
             @Expect(second.ok,true);@Expect(second.accepted,1)
+            @Expect(normalExecutor.specs.size,1)
             @Expect(teacherReadUtf8File("${root}/exports/r2/candidate-knowledge/ckb-benchmark-gap.jsonl").contains("中文😀"),true)
             options.outputRoot="${root}/exports/throwing"
             let throwing=buildTeacherCandidates(options,extractorExecutor:ThrowingCandidateExecutor())
