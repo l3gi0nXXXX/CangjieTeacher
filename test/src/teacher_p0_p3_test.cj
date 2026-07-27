@@ -254,6 +254,7 @@ public class TeacherRuntimeTest {
             @Expect(recorder.specs[0].args.contains("-C"), true)
             @Expect(recorder.specs[0].args.contains("--ephemeral"), true)
             @Expect(recorder.specs[0].timeoutMillis, 1234)
+            @Expect(recorder.specs[0].transportLeasePath, "${root}/session/transport.lock")
             var hasHome = false
             for (entry in recorder.specs[0].env) { if (entry[0] == "CODEX_HOME") { hasHome = true } }
             @Expect(hasHome, false)
@@ -460,6 +461,28 @@ public class TeacherRuntimeTest {
             catch (e: Exception) { mismatch = e.message == "teacher_run_lock_owner_mismatch" }
             @Expect(mismatch, true)
             @Expect(exists(Path(path)), true)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // CUM-TRANSPORT-LEASE-UT-01 / POS-01 / NEG-01 / BND-01
+    @TestCase public func teacherTransportLeaseRejectsLiveHolderAndAllowsResidualReacquire(): Unit {
+        let root = tempRoot("transport-lease-中文😀")
+        let path = "${root}/session/transport.lock"
+        try {
+            Directory.create(Path("${root}/session"), recursive: true)
+            File.writeTo(Path(path), "residual 中文😀\n".toArray())
+            let lease = acquireTeacherTransportLease(path)
+            var rejected = false
+            try { probeTeacherTransportLease(path) }
+            catch (e: Exception) { rejected = e.message == "teacher_transport_still_running" }
+            @Expect(rejected, true)
+            releaseTeacherTransportLease(lease)
+            probeTeacherTransportLease(path)
+            @Expect(exists(Path(path)), true)
+            var doubleRelease = false
+            try { releaseTeacherTransportLease(lease) }
+            catch (e: Exception) { doubleRelease = e.message == "teacher_transport_lease_owner_mismatch" }
+            @Expect(doubleRelease, true)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 

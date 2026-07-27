@@ -7,6 +7,9 @@ public class TeacherPaths {
     public func observation(caseId: String): String { "${root}/observations/${caseId}" }
     public func workspace(runId: String, caseId: String): String { "${root}/runs/${runId}/workspaces/${caseId}" }
     public func session(runId: String, caseId: String): String { "${root}/runs/${runId}/sessions/${caseId}" }
+    public func transportLease(runId: String, caseId: String): String {
+        "${session(runId, caseId)}/transport.lock"
+    }
     public func runtimeHome(runId: String, caseId: String): String { "${root}/runs/${runId}/runtime-home/${caseId}" }
     public func candidateExport(): String { "${root}/candidate-knowledge" }
 }

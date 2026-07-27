@@ -58,8 +58,10 @@ private func executeTeacherCaseLegacy(caseValue: TeacherCaseManifest, options: T
     var verifierEvidence = ""
     var teacherAttempt: Int64 = 0
     while (true) {
+        probeTeacherTransportLease(paths.transportLease(options.runId, caseValue.caseId))
         let generated = options.process.generate(caseValue, paths.workspace(options.runId, caseValue.caseId),
             paths.session(options.runId, caseValue.caseId), paths.runtimeHome(options.runId, caseValue.caseId), feedback)
+        probeTeacherTransportLease(paths.transportLease(options.runId, caseValue.caseId))
         generationEvidence += generated.output
         if (generated.timedOut || generated.exitCode != 0 || generated.output.isEmpty()) {
             if (options.repairUntilVerified) {
@@ -92,6 +94,7 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
     options: TeacherRunOptions): TeacherCaseExecution {
     let paths = TeacherPaths(options.root)
     let workspace = paths.workspace(options.runId, caseValue.caseId)
+    probeTeacherTransportLease(paths.transportLease(options.runId, caseValue.caseId))
     if (!exists(Path("${workspace}/src"))) { throw IllegalArgumentException("teacher_attempt_workspace_missing") }
     let loaded = loadTeacherAttemptEvidence(options.root, options.runId, caseValue)
     let history = ArrayList<TeacherAttemptEvidence>()
@@ -135,6 +138,7 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
         if (preHash.isEmpty()) { throw IllegalArgumentException("teacher_attempt_workspace_missing") }
         var generated = TeacherProcessResult(3, "")
         while (true) {
+            probeTeacherTransportLease(paths.transportLease(options.runId, caseValue.caseId))
             var transport = loadTeacherTransportEvidence(options.root, options.runId, caseValue, teacherAttempt)
             if (!transport.isEmpty() && transport[transport.size - 1].status == "started") {
                 _ = persistTeacherTransportInterrupted(options.root, transport[transport.size - 1])
@@ -149,6 +153,7 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
             let guidance = teacherAttemptProgressGuidance(teacherAttempt, history.toArray(), feedback)
             generated = options.process.generate(caseValue, workspace, paths.session(options.runId, caseValue.caseId),
                 paths.runtimeHome(options.runId, caseValue.caseId), guidance)
+            probeTeacherTransportLease(paths.transportLease(options.runId, caseValue.caseId))
             generationEvidence += generated.output
             let startedTransport = parseTeacherTransportEvidence(teacherReadUtf8File(
                 teacherTransportManifestPath(options.root, options.runId, caseValue.caseId,

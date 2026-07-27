@@ -12,6 +12,15 @@ cleanup() {
   rm -rf "$root"
 }
 trap cleanup EXIT
+path_hash() {
+  if test -d "$1"; then
+    "$cli" hash-directory --starter-root "$1"
+  elif test -f "$1"; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    printf '%s\n' 'missing'
+  fi
+}
 dataset="$root/dataset"
 artifacts="$root/教师🙂-artifacts"
 mkdir -p "$dataset/CJ-HUMANEVAL-000/starter/src" "$dataset/CJ-HUMANEVAL-000/tests"
@@ -116,6 +125,13 @@ while test ! -f "$artifacts/runs/e2e/sessions/CJ-HUMANEVAL-002/slow-model.starte
   sleep 0.1
 done
 slow_model_pid=$(cat "$artifacts/runs/e2e/sessions/CJ-HUMANEVAL-002/slow-model.pid")
+case_workspace="$artifacts/runs/e2e/workspaces/CJ-HUMANEVAL-002"
+case_transport="$artifacts/runs/e2e/transport/CJ-HUMANEVAL-002"
+case_attempts="$artifacts/runs/e2e/attempts/CJ-HUMANEVAL-002"
+workspace_before=$(path_hash "$case_workspace")
+completed_before=$(path_hash "$completed")
+transport_before=$(path_hash "$case_transport")
+attempts_before=$(path_hash "$case_attempts")
 if locked=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000 2>&1); then
   printf '%s\n' 'expected concurrent teacher run to be rejected' >&2
   exit 1
@@ -129,6 +145,15 @@ cmp "$completed" "$root/completed-before-kill.manifest"
 reacquired=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$root/must-not-run" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-000)
 test "$reacquired" = 'teacher runId=e2e total=1 complete=1'
 cmp "$completed" "$root/completed-before-kill.manifest"
+if child_held=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$repo_root/test/fixtures/fake_codex.sh" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-002 2>&1); then
+  printf '%s\n' 'expected the active child transport lease to reject same-case recovery' >&2
+  exit 1
+fi
+test "$child_held" = 'teacher failed diagnostic=teacher_transport_still_running'
+test "$(path_hash "$case_workspace")" = "$workspace_before"
+test "$(path_hash "$completed")" = "$completed_before"
+test "$(path_hash "$case_transport")" = "$transport_before"
+test "$(path_hash "$case_attempts")" = "$attempts_before"
 kill -9 "$slow_model_pid" 2>/dev/null || true
 slow_model_pid=
 recovered=$($cli run --manifest "$manifest" --checksum "$checksum" --root "$artifacts" --repo-root "$repo_root" --local-only --starter-root "$dataset" --tests-root "$dataset" --codex "$repo_root/test/fixtures/fake_codex.sh" --model gpt-5.6-sol --run-id e2e --case-id CJ-HUMANEVAL-002)
@@ -136,6 +161,13 @@ test "$recovered" = 'teacher runId=e2e total=1 complete=1'
 test "$(wc -l < "$completed" | tr -d ' ')" = '3'
 grep -q 'CJ-HUMANEVAL-002' "$completed"
 test -f "$artifacts/runs/e2e/.batch.lock"
+test "$(awk -F '	' '{print $7}' "$case_transport/business-1/transport-1.manifest")" = 'interrupted'
+test "$(awk -F '	' '{print $7}' "$case_transport/business-1/transport-2.manifest")" = 'succeeded'
+workspace_solution_hash=$($cli hash-directory --starter-root "$case_workspace/src")
+test "$($cli hash-directory --starter-root "$artifacts/teacher-solutions/CJ-HUMANEVAL-002/src")" = "$workspace_solution_hash"
+test "$($cli hash-directory --starter-root "$case_attempts/attempt-1/src")" = "$workspace_solution_hash"
+solution_root_hash=$($cli hash-directory --starter-root "$artifacts/teacher-solutions/CJ-HUMANEVAL-002")
+test "$(cut -f1 "$artifacts/runs/e2e/evidence/CJ-HUMANEVAL-002/solution.binding")" = "$solution_root_hash"
 cp "$completed" "$root/completed-good.manifest"
 
 sed '1s/^e2e	/cross-run	/' "$root/completed-good.manifest" > "$completed"

@@ -222,6 +222,37 @@ public class TeacherS5LoopTest {
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
+    // S5-TRANSPORT-LEASE-NEG-01: an active child lease blocks every recovery write.
+    @TestCase public func activeTransportLeaseBlocksResumeWithoutMutatingEvidenceOrWorkspace(): Unit {
+        let root = s5Root("transport-child-lease")
+        try {
+            let caseValue = s5Case()
+            let runId = "teacher-child-lease"
+            let workspace = TeacherPaths(root).workspace(runId, caseValue.caseId)
+            let session = TeacherPaths(root).session(runId, caseValue.caseId)
+            Directory.create(Path("${workspace}/src"), recursive: true)
+            Directory.create(Path(session), recursive: true)
+            File.writeTo(Path("${workspace}/src/solution.cj"), "child still writing 中文😀".toArray())
+            _ = persistTeacherTransportStarted(root, runId, caseValue, 1, 1, "")
+            let workspaceHash = teacherDirectoryHash(workspace)
+            let transportPath = teacherTransportManifestPath(root, runId, caseValue.caseId, 1, 1)
+            let transportText = teacherReadUtf8File(transportPath)
+            let lease = acquireTeacherTransportLease("${session}/transport.lock")
+            try {
+                var rejected = false
+                try {
+                    _ = runTeacherCase(caseValue, TeacherRunOptions(runId, root, "gpt-5.6-sol",
+                        S5TransportThenRepairProcess(), S5FixedVerifier(), S5Clock(),
+                        repairUntilVerified: true, persistAttemptProgress: true))
+                } catch (e: Exception) { rejected = e.message == "teacher_transport_still_running" }
+                @Expect(rejected, true)
+                @Expect(teacherDirectoryHash(workspace), workspaceHash)
+                @Expect(teacherReadUtf8File(transportPath), transportText)
+                @Expect(loadTeacherAttemptEvidence(root, runId, caseValue).size, 0)
+            } finally { releaseTeacherTransportLease(lease) }
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     // S5-BND-01: an interrupted UTF-8 workspace resumes, while malformed UTF-8 evidence fails closed.
     @TestCase public func interruptedUtf8ResumeAndMalformedLedgerFailClosed(): Unit {
         let root = s5Root("resume-utf8")

@@ -102,6 +102,8 @@ public func runTeacherBatchFromCli(options: TeacherCliOptions): Array<TeacherRun
             match (reusable) {
                 case Some(old) => out.add(old)
                 case None =>
+                    probeTeacherTransportLease(TeacherPaths(options.root).transportLease(
+                        options.runId, caseValue.caseId))
                     if (!hasTeacherAttemptEvidence(options.root, options.runId, caseValue.caseId)) {
                         _ = createTeacherCaseWorkspace(options.root, options.runId, caseValue, options.starterRoot)
                     }

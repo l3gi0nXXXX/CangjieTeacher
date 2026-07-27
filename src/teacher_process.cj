@@ -13,9 +13,12 @@ public class TeacherCommandSpec {
     public let cwd: String
     public let env: Array<(String, String)>
     public let timeoutMillis: Int64
+    public let transportLeasePath: String
     public init(executable: String, args: Array<String>, cwd: String,
-        env!: Array<(String, String)> = [], timeoutMillis!: Int64 = 600000) {
+        env!: Array<(String, String)> = [], timeoutMillis!: Int64 = 600000,
+        transportLeasePath!: String = "") {
         this.executable = executable; this.args = args; this.cwd = cwd; this.env = env; this.timeoutMillis = timeoutMillis
+        this.transportLeasePath = transportLeasePath
     }
 }
 
@@ -27,6 +30,11 @@ public class NativeTeacherCommandExecutor <: TeacherCommandExecutor {
         let environment = HashMap<String, String>()
         for ((key, value) in getVariables()) { environment[key] = value }
         for (entry in spec.env) { environment[entry[0]] = entry[1] }
+        let lease: ?TeacherTransportLease = if (spec.transportLeasePath.isEmpty()) {
+            None<TeacherTransportLease>
+        } else {
+            Some(acquireTeacherTransportLease(spec.transportLeasePath))
+        }
         try {
             let process = launch(spec.executable, spec.args, stdOut: ProcessRedirect.Pipe,
                 stdErr: ProcessRedirect.Pipe, workingDirectory: Some(Path(spec.cwd)), environment: Some(environment))
@@ -40,7 +48,14 @@ public class NativeTeacherCommandExecutor <: TeacherCommandExecutor {
                 try { _ = stdout.get(); _ = stderr.get() } catch (_: Exception) {}
                 TeacherProcessResult(124, "timeout", timedOut: true)
             }
-        } catch (_: Exception) { TeacherProcessResult(127, "process_launch_failed") }
+        } catch (_: Exception) {
+            TeacherProcessResult(127, "process_launch_failed")
+        } finally {
+            match (lease) {
+                case Some(value) => releaseTeacherTransportLease(value)
+                case None => ()
+            }
+        }
     }
 }
 
@@ -70,7 +85,8 @@ public class CodexTeacherProcess <: TeacherProcess {
         let args = ["exec", "--model", this.model, "--sandbox", "workspace-write", "--skip-git-repo-check",
             "--ephemeral", "--ignore-user-config", "--ignore-rules", "-C", workspace, prompt]
         return this.executor.execute(TeacherCommandSpec(this.executable, args, workspace,
-            env: [("CANGJIE_TEACHER_SESSION", session)], timeoutMillis: this.timeoutMillis))
+            env: [("CANGJIE_TEACHER_SESSION", session)], timeoutMillis: this.timeoutMillis,
+            transportLeasePath: "${session}/transport.lock"))
     }
 }
 
