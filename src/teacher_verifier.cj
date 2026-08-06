@@ -17,22 +17,27 @@ public class CjpmTeacherVerifier <: TeacherVerifier {
         let originalProject = try { teacherReadUtf8File(projectPath) }
             catch (_: Exception) { return TeacherProcessResult(65, "infra_error") }
         try {
-            teacherCopyFile("${testSource}/cjpm.executable.toml", projectPath)
-            teacherCopyFile("${testSource}/TestMain.cj", injectedTestPath)
+            try {
+                teacherCopyFile("${testSource}/cjpm.executable.toml", projectPath)
+                teacherCopyFile("${testSource}/TestMain.cj", injectedTestPath)
+            } catch (_: Exception) { return TeacherProcessResult(4, "infra_error") }
             let commands: Array<Array<String>> = [["clean"], ["build", "-i"], ["test", "-j", "1"], ["run"]]
             for (args in commands) {
                 let result = try {
                     this.executor.execute(TeacherCommandSpec("cjpm", args, solutionRoot, timeoutMillis: this.timeoutMillis))
                 } catch (_: Exception) { return TeacherProcessResult(127, "infra_error") }
                 if (result.timedOut) { return TeacherProcessResult(124, "timeout", timedOut: true) }
-                if (result.exitCode != 0) { return TeacherProcessResult(result.exitCode, "infra_error") }
+                if (result.exitCode != 0) {
+                    let diagnostic = if (["build", "test", "run"].contains(args[0])) { "failed" } else { "infra_error" }
+                    return TeacherProcessResult(result.exitCode, diagnostic)
+                }
                 if (args[0] == "run" && teacherVerifierRunOutputFailed(result.output)) {
                     return TeacherProcessResult(teacherVerifierRunFailureCode(result.output), teacherVerifierRunFailureDiagnostic(result.output))
                 }
             }
             TeacherProcessResult(0, "passed")
         } finally {
-            _ = teacherAtomicWrite(projectPath, originalProject)
+            try { _ = teacherAtomicWrite(projectPath, originalProject) } catch (_: Exception) {}
             try { remove(Path(injectedTestPath)) } catch (_: Exception) {}
         }
     }

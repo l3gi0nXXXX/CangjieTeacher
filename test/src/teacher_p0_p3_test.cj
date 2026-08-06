@@ -276,6 +276,7 @@ public class TeacherRuntimeTest {
             @Expect(recorder.observedInjectedTests, true)
             @Expect(exists(Path("${root}/solution/src/TestMain.cj")), false)
             @Expect(result.exitCode, 7)
+            @Expect(result.output, "failed")
             @Expect(recorder.specs.size, 2)
             @Expect(recorder.specs[0].args, ["clean"])
             @Expect(recorder.specs[1].args, ["build", "-i"])

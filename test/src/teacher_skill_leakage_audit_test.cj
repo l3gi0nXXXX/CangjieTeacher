@@ -40,6 +40,19 @@ private class VerifierExecutor <: TeacherCommandExecutor {
         if (spec.args[0] == "run") { TeacherProcessResult(0, finalOutput) } else { TeacherProcessResult(0, "internal detail") }
     }
 }
+private class StageFailureExecutor <: TeacherCommandExecutor {
+    private let stage: String
+    public init(stage: String) { this.stage = stage }
+    public func execute(spec: TeacherCommandSpec): TeacherProcessResult {
+        if (spec.args[0] == stage) { TeacherProcessResult(9, "protected detail") }
+        else { TeacherProcessResult(0, "passed") }
+    }
+}
+private class ThrowingVerifierExecutor <: TeacherCommandExecutor {
+    public func execute(_: TeacherCommandSpec): TeacherProcessResult {
+        throw IllegalStateException("/Users/private token=secret")
+    }
+}
 
 @Test
 public class TeacherSkillLeakageAuditTest {
@@ -93,6 +106,32 @@ public class TeacherSkillLeakageAuditTest {
                 .verify(caseValue, "${root}/solution")
             @Expect(invalid.exitCode, 65)
             @Expect(invalid.output, "infra_error")
+
+            for (stage in ["build", "test", "run"]) {
+                let business = CjpmTeacherVerifier("${root}/tests", executor: StageFailureExecutor(stage))
+                    .verify(caseValue, "${root}/solution")
+                @Expect(business.exitCode, 9)
+                @Expect(business.output, "failed")
+                @Expect(business.output.contains("protected detail"), false)
+            }
+            let executionFailure = CjpmTeacherVerifier("${root}/tests", executor: ThrowingVerifierExecutor())
+                .verify(caseValue, "${root}/solution")
+            @Expect(executionFailure.exitCode, 127)
+            @Expect(executionFailure.output, "infra_error")
+            let missingFixtureCase = TeacherCaseManifest("CJ-HUMANEVAL-008", "dataset", "prompt", "starter",
+                "func generic(): Unit", "verifier")
+            let missingFixture = CjpmTeacherVerifier("${root}/tests", executor: VerifierExecutor("passed"))
+                .verify(missingFixtureCase, "${root}/solution")
+            @Expect(missingFixture.exitCode, 4)
+            @Expect(missingFixture.output, "infra_error")
+            Directory.create(Path("${root}/tests/CJ-HUMANEVAL-009/tests"), recursive: true)
+            let unreadableFixtureCase = TeacherCaseManifest("CJ-HUMANEVAL-009", "dataset", "prompt", "starter",
+                "func generic(): Unit", "verifier")
+            let unreadableFixture = CjpmTeacherVerifier("${root}/tests", executor: VerifierExecutor("passed"))
+                .verify(unreadableFixtureCase, "${root}/solution")
+            @Expect(unreadableFixture.exitCode, 4)
+            @Expect(unreadableFixture.output, "infra_error")
+
             File.writeTo(Path("${root}/solution/cjpm.toml"), [UInt8(0xff), UInt8(0xfe)])
             let invalidProject = CjpmTeacherVerifier("${root}/tests", executor: VerifierExecutor("passed"))
                 .verify(caseValue, "${root}/solution")
