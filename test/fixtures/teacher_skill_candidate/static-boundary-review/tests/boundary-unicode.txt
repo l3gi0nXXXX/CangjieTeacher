@@ -1,0 +1,1 @@
+{"schemaVersion":"cangjie-teacher-skill-fixture-v1","task":"Review 中文😀 Rune boundaries.","resultEvidence":"boundary_passed"}

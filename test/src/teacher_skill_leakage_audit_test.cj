@@ -10,9 +10,13 @@ private let LEAK_FAILURE = "{\"schemaVersion\":\"ckb-completion-failure-v1\",\"r
 private let LEAK_CLASSIFICATION = "{\"schemaVersion\":\"ckb-completion-failure-classification-v1\",\"failureEvidenceHash\":\"f08453591302a46c4acc04c43d9bdf456679fae27b354bbca7ebecb194c1e773\",\"gapKind\":\"mixed_gap\",\"knowledgeEligible\":true,\"skillEligible\":true,\"classificationEvidenceHash\":\"1ff85ffec78c69504a2f98146daebb75557d340b6366e92875c4c1acd4b44a16\"}"
 
 private func leakFixtures(): Array<TeacherSkillFixture> {
-    [TeacherSkillFixture("tree-walk", "Review a generic tree walk.", "Tracks a visit invariant."),
-        TeacherSkillFixture("queue-drain", "Review a generic queue drain.", "Checks the empty boundary."),
-        TeacherSkillFixture("text-scan", "Review a generic Unicode scan.", "Uses Rune-safe iteration 中文😀.")]
+    [TeacherSkillFixture("positive-basic", "Review a typed accumulator.", "positive_passed", kind: "positive"),
+        TeacherSkillFixture("negative-unsafe", "Reject an unchecked index.", "negative_rejected", kind: "negative"),
+        TeacherSkillFixture("boundary-unicode", "Review 中文😀 Rune boundaries.", "boundary_passed", kind: "boundary"),
+        TeacherSkillFixture("tree-walk", "Review a generic tree walk.", "generalization_passed",
+            fixturePath: "tests/generalization/tree-walk.json"),
+        TeacherSkillFixture("queue-drain", "Review a generic queue drain.", "generalization_passed"),
+        TeacherSkillFixture("text-scan", "Review a generic Unicode scan.", "generalization_passed")]
 }
 
 private func leakCandidate(procedure!: String = "Choose a Rune boundary before each static text operation."): TeacherSkillCandidate {

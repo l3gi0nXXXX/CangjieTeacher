@@ -1,0 +1,1 @@
+{"schemaVersion":"cangjie-teacher-skill-fixture-v1","task":"Review a typed accumulator.","resultEvidence":"positive_passed"}

@@ -36,16 +36,20 @@ public func auditSkillCombinationLeakage(value: TeacherSkillCandidate, knowledge
 public func validateSkillGeneralizationEvidence(value: TeacherSkillCandidate): Bool {
     if (value.tests.fixtures.size < 3) { return false }
     let ids = HashSet<String>()
+    var generalizationCount: Int64 = 0
     for (fixture in value.tests.fixtures) {
         let body = "${fixture.fixtureId}\n${fixture.task}\n${fixture.expectedEvidence}".toAsciiLower()
-        if (fixture.sourceClass != "non_humaneval" || fixture.fixtureId.isEmpty() ||
+        if (fixture.fixtureId.isEmpty() ||
             fixture.task.isEmpty() || fixture.expectedEvidence.isEmpty() || ids.contains(fixture.fixtureId) ||
             body.contains("humaneval") || body.contains("hidden_test") || body.contains("expectedoutput")) {
             return false
         }
+        if (fixture.kind == "generalization") {
+            if (fixture.sourceClass != "non_humaneval_experiment") { return false }
+            generalizationCount += 1
+        }
         ids.add(fixture.fixtureId)
     }
-    let canonical = teacherJoin(value.tests.fixtures.map({fixture: TeacherSkillFixture =>
-        teacherJoin([fixture.fixtureId, fixture.task, fixture.expectedEvidence, fixture.sourceClass], "\u{1f}")}), "\n")
-    value.tests.evidenceHash == "sha256:${teacherStableHash(canonical)}"
+    generalizationCount >= 3 &&
+        value.tests.evidenceHash == "sha256:${teacherStableHash(renderTeacherSkillTestEvidence(value))}"
 }

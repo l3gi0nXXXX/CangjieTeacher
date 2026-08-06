@@ -1,6 +1,8 @@
 package cangjie_teacher
 
 import std.collection.*
+import std.fs.*
+import std.sort.*
 import stdx.encoding.json.*
 
 public class TeacherCompletionFailureInput {
@@ -45,10 +47,20 @@ public class TeacherSkillFixture {
     public let task: String
     public let expectedEvidence: String
     public let sourceClass: String
+    public let kind: String
+    public let fixturePath: String
+    public let targetVersion: String
+    public let benchmarkDerived: Bool
+    public let passed: Bool
     public init(fixtureId: String, task: String, expectedEvidence: String,
-        sourceClass!: String = "non_humaneval") {
+        sourceClass!: String = "non_humaneval_experiment", kind!: String = "generalization",
+        fixturePath!: String = "", targetVersion!: String = "1.0.0",
+        benchmarkDerived!: Bool = false, passed!: Bool = true) {
         this.fixtureId = fixtureId; this.task = task; this.expectedEvidence = expectedEvidence
         this.sourceClass = sourceClass
+        this.kind = kind
+        this.fixturePath = if (fixturePath.isEmpty()) { "tests/${fixtureId}.txt" } else { fixturePath }
+        this.targetVersion = targetVersion; this.benchmarkDerived = benchmarkDerived; this.passed = passed
     }
 }
 
@@ -219,18 +231,25 @@ public func classifyTeacherOutputKind(input: TeacherCompletionFailureInput,
 }
 
 private func teacherSkillFixtureCanonical(value: TeacherSkillFixture): String {
-    teacherJoin([value.fixtureId, value.task, value.expectedEvidence, value.sourceClass], "\u{1f}")
+    teacherJoin([value.fixtureId, value.kind, value.fixturePath, value.task, value.expectedEvidence,
+        value.targetVersion, value.sourceClass, value.benchmarkDerived.toString(), value.passed.toString()], "\u{1f}")
 }
 
 public func buildTeacherSkillTestBundle(fixtures: Array<TeacherSkillFixture>): TeacherSkillTestBundle {
     if (fixtures.size < 3) { throw IllegalArgumentException("skill_generalization_evidence_insufficient") }
     let ids = HashSet<String>()
+    let paths = HashSet<String>()
     for (fixture in fixtures) {
         if (fixture.fixtureId.isEmpty() || fixture.task.isEmpty() || fixture.expectedEvidence.isEmpty() ||
-            fixture.sourceClass != "non_humaneval" || ids.contains(fixture.fixtureId)) {
+            !["official", "community", "non_humaneval_experiment"].contains(fixture.sourceClass) ||
+            !["positive", "negative", "boundary", "generalization"].contains(fixture.kind) ||
+            !teacherSkillFixturePathSafe(fixture.fixturePath) || fixture.targetVersion.isEmpty() ||
+            fixture.benchmarkDerived || !fixture.passed || ids.contains(fixture.fixtureId) ||
+            paths.contains(fixture.fixturePath)) {
             throw IllegalArgumentException("invalid_skill_generalization_fixture")
         }
         ids.add(fixture.fixtureId)
+        paths.add(fixture.fixturePath)
     }
     let canonical = teacherJoin(fixtures.map({fixture: TeacherSkillFixture =>
         teacherSkillFixtureCanonical(fixture)}), "\n")
@@ -255,10 +274,14 @@ public func buildTeacherSkillCandidate(input: TeacherCompletionFailureInput,
     let candidateLineage = if (candidateOrigin == "p6_failure_derived") {
         "humaneval_164_derived"
     } else { "independent" }
+    let provisional = TeacherSkillCandidate(skillId, version, title, procedure, sourceCategory,
+        applicability, candidateLineage, "", tests)
+    let artifactEvidenceHash = "sha256:${teacherStableHash(renderTeacherSkillTestEvidence(provisional))}"
+    let boundTests = TeacherSkillTestBundle(tests.fixtures, artifactEvidenceHash)
     let canonical = teacherJoin([skillId, version, title, procedure, sourceCategory, applicability,
-        candidateLineage, tests.evidenceHash], "\u{1f}")
+        candidateLineage, artifactEvidenceHash].map({field: String => teacherSkillLengthPart(field)}), "")
     TeacherSkillCandidate(skillId, version, title, procedure, sourceCategory, applicability,
-        candidateLineage, "sha256:${teacherStableHash(canonical)}", tests)
+        candidateLineage, "sha256:${teacherStableHash(canonical)}", boundTests)
 }
 
 public func renderCandidateSkillExport(value: TeacherSkillCandidate): String {
@@ -267,11 +290,201 @@ public func renderCandidateSkillExport(value: TeacherSkillCandidate): String {
     }
     let expected = teacherStableHash(teacherJoin([value.skillId, value.version, value.title,
         value.procedure, value.sourceCategory, value.applicability, value.lineage,
-        value.tests.evidenceHash], "\u{1f}"))
+        value.tests.evidenceHash].map({field: String => teacherSkillLengthPart(field)}), ""))
     if (value.contentHash != "sha256:${expected}") { throw IllegalArgumentException("skill_content_hash_mismatch") }
     "---\nname: ${value.skillId}\nversion: ${value.version}\nsource: ${value.sourceCategory}\n" +
         "lineage: ${value.lineage}\ncontent-hash: ${value.contentHash}\n---\n\n" +
         "# ${value.title}\n\nApplicability: ${value.applicability}\n\n${value.procedure}\n"
+}
+
+private func teacherSkillLengthPart(value: String): String { "${value.toArray().size}:${value}" }
+
+private func teacherSkillFixturePathSafe(value: String): Bool {
+    if (!value.startsWith("tests/") || value.startsWith("/") || value.contains("\\") ||
+        value.endsWith("/") || value.toRuneArray().size > 256) { return false }
+    for (part in value.split("/")) { if (part.isEmpty() || part == "." || part == "..") { return false } }
+    true
+}
+
+private func teacherSkillNormalizedText(value: String): String {
+    value.replace("\r\n", "\n").replace("\r", "\n")
+}
+
+private func teacherSkillFixtureBytes(value: TeacherSkillFixture): String {
+    "{\"schemaVersion\":\"cangjie-teacher-skill-fixture-v1\",\"task\":\"${teacherFailureEscape(teacherSkillNormalizedText(value.task))}\"," +
+        "\"resultEvidence\":\"${teacherFailureEscape(value.expectedEvidence)}\"}\n"
+}
+
+private func teacherSkillFixtureResultSafe(value: String): Bool {
+    if (value.isEmpty() || value.toRuneArray().size > 512) { return false }
+    let lower = value.toAsciiLower()
+    for (marker in ["/users/", "/home/", "/private/", "authorization", "token", "password", "secret",
+        "hidden_test", "reference solution"]) { if (lower.contains(marker)) { return false } }
+    true
+}
+
+private func teacherSkillSortedFixtures(value: TeacherSkillCandidate): Array<TeacherSkillFixture> {
+    let paths = value.tests.fixtures.map({fixture: TeacherSkillFixture => fixture.fixturePath})
+    sort(paths)
+    let out = ArrayList<TeacherSkillFixture>()
+    for (path in paths) {
+        for (fixture in value.tests.fixtures) { if (fixture.fixturePath == path) { out.add(fixture); break } }
+    }
+    out.toArray()
+}
+
+private func teacherSkillTestRow(value: TeacherSkillFixture): String {
+    if (!teacherSkillFixtureResultSafe(value.expectedEvidence)) {
+        throw IllegalArgumentException("skill_test_result_not_exportable")
+    }
+    let fixtureHash = "sha256:${teacherStableHash(teacherSkillFixtureBytes(value))}"
+    let resultHash = "sha256:${teacherStableHash(value.expectedEvidence)}"
+    "{\"testId\":\"${teacherFailureEscape(value.fixtureId)}\",\"kind\":\"${value.kind}\"," +
+        "\"fixturePath\":\"${teacherFailureEscape(value.fixturePath)}\",\"fixtureHash\":\"${fixtureHash}\"," +
+        "\"targetVersion\":\"${teacherFailureEscape(value.targetVersion)}\",\"sourceClass\":\"${value.sourceClass}\"," +
+        "\"benchmarkDerived\":false,\"passed\":true,\"resultHash\":\"${resultHash}\"}"
+}
+
+private func teacherSkillTestsTreeHash(value: TeacherSkillCandidate): String {
+    let parts = ArrayList<String>()
+    for (fixture in teacherSkillSortedFixtures(value)) {
+        let fileHash = "sha256:${teacherStableHash(teacherSkillFixtureBytes(fixture))}"
+        parts.add(teacherSkillLengthPart(fixture.fixturePath) + teacherSkillLengthPart(fileHash))
+    }
+    "sha256:${teacherStableHash(teacherJoin(parts.toArray(), ""))}"
+}
+
+public func renderTeacherSkillTestEvidence(value: TeacherSkillCandidate): String {
+    let fixtures = teacherSkillSortedFixtures(value)
+    var positive: Int64 = 0; var negative: Int64 = 0; var boundary: Int64 = 0; var generalization: Int64 = 0
+    let rows = ArrayList<String>()
+    let ids = HashSet<String>()
+    for (fixture in fixtures) {
+        if (ids.contains(fixture.fixtureId)) { throw IllegalArgumentException("duplicate_skill_test_id") }
+        ids.add(fixture.fixtureId); rows.add(teacherSkillTestRow(fixture))
+        if (fixture.kind == "positive") { positive += 1 } else if (fixture.kind == "negative") { negative += 1 }
+        else if (fixture.kind == "boundary") { boundary += 1 } else if (fixture.kind == "generalization") { generalization += 1 }
+    }
+    if (positive < 1 || negative < 1 || boundary < 1 || generalization < 3) {
+        throw IllegalArgumentException("skill_test_category_count_invalid")
+    }
+    let rowsText = teacherJoin(rows.toArray(), ",")
+    "{\"schemaVersion\":\"cangjie-teacher-skill-test-bundle-v1\",\"candidateId\":\"${teacherFailureEscape(value.skillId)}\"," +
+        "\"candidateVersion\":\"${teacherFailureEscape(value.version)}\",\"lineage\":\"${value.lineage}\",\"testsRoot\":\"tests\"," +
+        "\"testsTreeHash\":\"${teacherSkillTestsTreeHash(value)}\",\"positiveCount\":${positive},\"negativeCount\":${negative}," +
+        "\"boundaryCount\":${boundary},\"generalizationCount\":${generalization},\"tests\":[${rowsText}]}"
+}
+
+public func renderTeacherSkillTestBundle(value: TeacherSkillCandidate): String {
+    let evidence = renderTeacherSkillTestEvidence(value)
+    let hash = "sha256:${teacherStableHash(evidence)}"
+    String(evidence.toRuneArray()[..evidence.toRuneArray().size - 1]) + ",\"evidenceHash\":\"${hash}\"}"
+}
+
+private func renderTeacherSkillCandidateEvidence(value: TeacherSkillCandidate): String {
+    let skill = teacherSkillNormalizedText(renderCandidateSkillExport(value))
+    let bundle = renderTeacherSkillTestBundle(value)
+    let testEvidenceHash = "sha256:${teacherStableHash(renderTeacherSkillTestEvidence(value))}"
+    "{\"schemaVersion\":\"cangjie-teacher-skill-candidate-v1\",\"id\":\"${teacherFailureEscape(value.skillId)}\"," +
+        "\"version\":\"${teacherFailureEscape(value.version)}\",\"title\":\"${teacherFailureEscape(value.title)}\"," +
+        "\"procedure\":\"${teacherFailureEscape(value.procedure)}\",\"sourceCategory\":\"${value.sourceCategory}\"," +
+        "\"applicability\":\"${teacherFailureEscape(value.applicability)}\",\"lineage\":\"${value.lineage}\"," +
+        "\"skillPath\":\"SKILL.md\",\"skillContentHash\":\"sha256:${teacherStableHash(skill)}\"," +
+        "\"testBundlePath\":\"test-bundle.json\",\"testBundleHash\":\"sha256:${teacherStableHash(bundle)}\"," +
+        "\"testEvidenceHash\":\"${testEvidenceHash}\",\"candidateContentHash\":\"${value.contentHash}\"}"
+}
+
+public func renderTeacherSkillCandidateManifest(value: TeacherSkillCandidate): String {
+    if (!((value.sourceCategory == "general_engineering" && value.lineage == "independent") ||
+        (value.sourceCategory == "teacher_derived" && value.lineage == "humaneval_164_derived"))) {
+        throw IllegalArgumentException("skill_source_lineage_invalid")
+    }
+    if (!teacherSkillCandidateExportSafe(value)) { throw IllegalArgumentException("skill_candidate_not_exportable") }
+    let evidence = renderTeacherSkillCandidateEvidence(value)
+    let artifactHash = "sha256:${teacherStableHash(evidence)}"
+    String(evidence.toRuneArray()[..evidence.toRuneArray().size - 1]) + ",\"artifactHash\":\"${artifactHash}\"}"
+}
+
+private func teacherSkillCandidateExportSafe(value: TeacherSkillCandidate): Bool {
+    var body = teacherJoin([value.skillId, value.version, value.title, value.procedure,
+        value.sourceCategory, value.applicability, value.lineage], "\n")
+    for (fixture in value.tests.fixtures) {
+        body += "\n${fixture.fixtureId}\n${fixture.fixturePath}\n${fixture.task}\n${fixture.expectedEvidence}"
+    }
+    let lower = body.toAsciiLower()
+    for (marker in ["cj-humaneval-", "hidden_test", "expectedoutput", "reference solution",
+        "/users/", "/home/", "/private/", "authorization", "token=", "password", "secret"] ) {
+        if (lower.contains(marker)) { return false }
+    }
+    true
+}
+
+private func teacherSkillCandidateDirectoryValid(path: String, value: TeacherSkillCandidate): Bool {
+    let root = Path(path)
+    if (!exists(root) || FileInfo(root).isSymbolicLink() || !FileInfo(root).isDirectory()) { return false }
+    let expected = HashSet<String>(["SKILL.md", "candidate-manifest.json", "test-bundle.json", "tests"])
+    for (entry in Directory.readFrom(root)) {
+        if (!expected.contains(entry.name) || entry.isSymbolicLink()) { return false }
+        expected.remove(entry.name)
+    }
+    if (!expected.isEmpty()) { return false }
+    let expectedFixtures = HashSet<String>()
+    for (fixture in value.tests.fixtures) { expectedFixtures.add(fixture.fixturePath) }
+    let actualFixtures = ArrayList<String>()
+    if (!teacherSkillCollectRegularFiles(root.join("tests"), "tests", actualFixtures)) { return false }
+    for (fixturePath in actualFixtures) {
+        if (!expectedFixtures.contains(fixturePath)) { return false }
+        expectedFixtures.remove(fixturePath)
+    }
+    expectedFixtures.isEmpty()
+}
+
+private func teacherSkillCollectRegularFiles(current: Path, relative: String,
+    files: ArrayList<String>): Bool {
+    if (!exists(current) || FileInfo(current).isSymbolicLink() || !FileInfo(current).isDirectory()) { return false }
+    for (entry in Directory.readFrom(current)) {
+        if (entry.isSymbolicLink()) { return false }
+        let child = "${relative}/${entry.name}"
+        if (entry.isDirectory()) {
+            if (!teacherSkillCollectRegularFiles(entry.path, child, files)) { return false }
+        } else if (entry.isRegular()) { files.add(child) } else { return false }
+    }
+    true
+}
+
+public func exportTeacherSkillCandidateDirectory(value: TeacherSkillCandidate, candidateRoot: String): String {
+    if (!candidateRoot.startsWith("/") || value.skillId.isEmpty() || value.skillId.contains("/") ||
+        value.skillId.contains("..") || value.skillId.contains("\\")) {
+        throw IllegalArgumentException("skill_candidate_path_invalid")
+    }
+    let root = Path(candidateRoot)
+    if (exists(root) && (FileInfo(root).isSymbolicLink() || !FileInfo(root).isDirectory())) {
+        throw IllegalArgumentException("skill_candidate_root_invalid")
+    }
+    if (!exists(root)) { Directory.create(root, recursive: true) }
+    let target = root.join(value.skillId).toString()
+    let stage = root.join(".${value.skillId}.tmp-${value.contentHash.replace("sha256:", "")}").toString()
+    try {
+        if (exists(Path(stage))) { remove(Path(stage), recursive: true) }
+        Directory.create(Path("${stage}/tests"), recursive: true)
+        _ = teacherAtomicWrite("${stage}/SKILL.md", teacherSkillNormalizedText(renderCandidateSkillExport(value)))
+        _ = teacherAtomicWrite("${stage}/test-bundle.json", renderTeacherSkillTestBundle(value) + "\n")
+        _ = teacherAtomicWrite("${stage}/candidate-manifest.json", renderTeacherSkillCandidateManifest(value) + "\n")
+        for (fixture in value.tests.fixtures) {
+            _ = teacherAtomicWrite("${stage}/${fixture.fixturePath}", teacherSkillFixtureBytes(fixture))
+        }
+        if (!teacherSkillCandidateDirectoryValid(stage, value)) { throw IllegalArgumentException("skill_candidate_directory_invalid") }
+        if (exists(Path(target))) {
+            if (!teacherSkillCandidateDirectoryValid(target, value) || teacherDirectoryHash(target) != teacherDirectoryHash(stage)) {
+                throw IllegalArgumentException("skill_candidate_immutable_conflict")
+            }
+            remove(Path(stage), recursive: true)
+        } else { rename(Path(stage), to: Path(target), overwrite: false) }
+        renderTeacherSkillCandidateManifest(value)
+    } catch (e: Exception) {
+        try { if (exists(Path(stage))) { remove(Path(stage), recursive: true) } } catch (_: Exception) {}
+        throw e
+    }
 }
 
 public func renderTeacherFailureObservationForModel(input: TeacherCompletionFailureInput,
