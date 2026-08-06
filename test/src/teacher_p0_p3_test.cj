@@ -295,17 +295,17 @@ public class TeacherRuntimeTest {
             let failedRecorder=RecordingExecutor(results:[TeacherProcessResult(0,"clean"),TeacherProcessResult(0,"build"),TeacherProcessResult(0,"test"),TeacherProcessResult(0,business)])
             let failed=CjpmTeacherVerifier("${root}/tests",executor:failedRecorder).verify(testCase(),"${root}/solution")
             @Expect(failed.exitCode,5);@Expect(failedRecorder.specs.size,4)
-            @Expect(failed.output.contains("verifier_business_assertion_failed"),true)
-            @Expect(failed.output.contains("中文😀 expected false, actual true"),true)
+            @Expect(failed.output,"failed")
+            @Expect(failed.output.contains("中文😀 expected false, actual true"),false)
             @Expect(failed.output.contains("/Users"),false);@Expect(failed.output.toAsciiLower().contains("token"),false)
             @Expect(failed.output.contains("Authorization"),false);@Expect(failed.output.toRuneArray().size<512,true)
             let ordinary="CJ-HUMANEVAL-000 ok\nA guide may mention Exception handling and expected/actual values without a benchmark marker."
             let successRecorder=RecordingExecutor(results:[TeacherProcessResult(0,"clean"),TeacherProcessResult(0,"build"),TeacherProcessResult(0,"test"),TeacherProcessResult(0,ordinary)])
             let success=CjpmTeacherVerifier("${root}/tests",executor:successRecorder).verify(testCase(),"${root}/solution")
-            @Expect(success.exitCode,0);@Expect(success.output.contains(ordinary),true)
+            @Expect(success.exitCode,0);@Expect(success.output,"passed")
             let encodingRecorder=RecordingExecutor(results:[TeacherProcessResult(0,"clean"),TeacherProcessResult(0,"build"),TeacherProcessResult(0,"test"),TeacherProcessResult(0,"invalid_response_encoding")])
             let encoding=CjpmTeacherVerifier("${root}/tests",executor:encodingRecorder).verify(testCase(),"${root}/solution")
-            @Expect(encoding.exitCode,65);@Expect(encoding.output.contains("verifier_invalid_response_encoding"),true)
+            @Expect(encoding.exitCode,65);@Expect(encoding.output,"infra_error")
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 

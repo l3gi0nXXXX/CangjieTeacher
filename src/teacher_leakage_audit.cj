@@ -92,7 +92,9 @@ public func auditCandidateAgainstSolutions(candidate: TeacherCandidateExport, pr
 public func auditCaseSpecificity(candidate: TeacherCandidateExport, signatures: Array<String>): LeakageAuditResult {
     let body = "${candidate.concept}\n${candidate.explanation}\n${candidate.example}\n${candidate.tests.positive}\n${candidate.tests.negative}\n${candidate.tests.boundary}".toAsciiLower()
     let violations = ArrayList<String>()
-    if (body.contains("cj-humaneval-") || body.contains("expectedoutput") || body.contains("hidden_test")) { violations.add("case_marker") }
+    if (body.contains("cj-humaneval-") || body.contains("expectedoutput") || body.contains("hidden_test") ||
+        body.contains("reference solution") || body.contains("assertion line") ||
+        body.contains("rerun the test") || body.contains("compiler repair")) { violations.add("case_marker") }
     for (signature in signatures) { if (!signature.isEmpty() && body.contains(signature.toAsciiLower())) { violations.add("case_signature") } }
     return LeakageAuditResult(violations.isEmpty(), violations.toArray())
 }

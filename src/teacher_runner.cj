@@ -33,11 +33,16 @@ public class TeacherRunOptions {
     public let clock: TeacherClock
     public let repairUntilVerified: Bool
     public let persistAttemptProgress: Bool
+    public let failureInput: ?TeacherCompletionFailureInput
+    public let failureClassification: ?TeacherFailureClassification
     public init(runId: String, root: String, modelId: String, process: TeacherProcess, verifier: TeacherVerifier,
-        clock: TeacherClock, repairUntilVerified!: Bool = false, persistAttemptProgress!: Bool = false) {
+        clock: TeacherClock, repairUntilVerified!: Bool = false, persistAttemptProgress!: Bool = false,
+        failureInput!: ?TeacherCompletionFailureInput = None,
+        failureClassification!: ?TeacherFailureClassification = None) {
         this.runId = runId; this.root = root; this.modelId = modelId; this.process = process; this.verifier = verifier; this.clock = clock
         this.repairUntilVerified = repairUntilVerified
         this.persistAttemptProgress = persistAttemptProgress
+        this.failureInput = failureInput; this.failureClassification = failureClassification
     }
 }
 
@@ -46,6 +51,7 @@ public func runTeacherCase(caseValue: TeacherCaseManifest, options: TeacherRunOp
 }
 
 public func executeTeacherCase(caseValue: TeacherCaseManifest, options: TeacherRunOptions): TeacherCaseExecution {
+    validateTeacherFailureBinding(caseValue, options)
     if (options.persistAttemptProgress) { return executeTeacherCaseWithProgress(caseValue, options) }
     executeTeacherCaseLegacy(caseValue, options)
 }
@@ -53,7 +59,7 @@ public func executeTeacherCase(caseValue: TeacherCaseManifest, options: TeacherR
 private func executeTeacherCaseLegacy(caseValue: TeacherCaseManifest, options: TeacherRunOptions): TeacherCaseExecution {
     let paths = TeacherPaths(options.root)
     let started = options.clock.nowMillis()
-    var feedback = ""
+    var feedback = teacherInitialFailureFeedback(options)
     var generationEvidence = ""
     var verifierEvidence = ""
     var teacherAttempt: Int64 = 0
@@ -124,7 +130,7 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
         }
     }
 
-    var feedback = if (history.isEmpty()) { "" } else {
+    var feedback = if (history.isEmpty()) { teacherInitialFailureFeedback(options) } else {
         let last = history[history.size - 1]
         if (last.status == "verification_failed") { last.verifierDiagnostic }
         else { "The previous model transport attempt did not produce a valid terminal result." }
@@ -205,6 +211,24 @@ private func executeTeacherCaseWithProgress(caseValue: TeacherCaseManifest,
         feedback = safeVerifier
     }
     throw IllegalStateException("teacher_repair_progress_loop_unreachable")
+}
+
+private func validateTeacherFailureBinding(caseValue: TeacherCaseManifest, options: TeacherRunOptions): Unit {
+    match ((options.failureInput, options.failureClassification)) {
+        case (Some(input), Some(classification)) =>
+            if (input.caseId != caseValue.caseId) { throw IllegalArgumentException("failure_case_binding_mismatch") }
+            _ = classifyTeacherOutputKind(input, classification)
+        case (None, None) => ()
+        case _ => throw IllegalArgumentException("incomplete_teacher_failure_binding")
+    }
+}
+
+private func teacherInitialFailureFeedback(options: TeacherRunOptions): String {
+    match ((options.failureInput, options.failureClassification)) {
+        case (Some(input), Some(classification)) =>
+            renderTeacherFailureObservationForModel(input, classification)
+        case _ => ""
+    }
 }
 
 private func teacherAttemptEvidenceChain(history: ArrayList<TeacherAttemptEvidence>): String {

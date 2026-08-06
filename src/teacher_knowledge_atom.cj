@@ -30,7 +30,9 @@ public func buildKnowledgeAtomTestBundle(positive: String, negative: String, bou
 }
 public func renderCandidateKnowledgeExport(observation: TeacherObservation, example: String,
     tests: KnowledgeAtomTestBundle): TeacherCandidateExport {
-    if (!validateObservationNoSolutionLeak(observation) || !tests.isComplete()) { throw IllegalArgumentException("candidate_not_exportable") }
+    if (!validateObservationNoSolutionLeak(observation) || !tests.isComplete() ||
+        !auditTextAgainstProtectedArtifacts("${observation.concept}\n${observation.explanation}\n${example}\n${tests.positive}\n${tests.negative}\n${tests.boundary}",
+            [observation.caseId]).passed) { throw IllegalArgumentException("candidate_not_exportable") }
     return TeacherCandidateExport(canonicalKnowledgeIdentity(observation), observation.knowledgeFamily, observation.concept,
         observation.targetVersion, observation.explanation, example, observation.citation, observation.sourceClass,
         teacherStableHash(renderTeacherObservation(observation)), tests)
