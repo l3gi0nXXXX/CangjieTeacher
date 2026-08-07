@@ -162,13 +162,11 @@ private func teacherV2ManifestEvidence(value: TeacherContextCandidateSetV2): Str
 
 private func teacherV2CombinationHash(rules: TeacherContextLaneV2, skills: TeacherContextLaneV2,
     knowledge: TeacherContextLaneV2, sourceClosureHash: String, protectedClosureHash: String): String {
-    let rulesBinding = if (rules.eligible) { rules.visibleContent } else { rules.hash }
-    let skillsBinding = if (skills.eligible) { skills.visibleContent } else { skills.hash }
-    let knowledgeBinding = if (knowledge.eligible) { knowledge.visibleContent } else { knowledge.hash }
-    let evidence = "${rulesBinding.toArray().size}:${rulesBinding}" +
-        "${skillsBinding.toArray().size}:${skillsBinding}" +
-        "${knowledgeBinding.toArray().size}:${knowledgeBinding}" +
-        "${sourceClosureHash}${protectedClosureHash}"
+    let knowledgeContentHash = if (knowledge.eligible) {
+        parseTeacherFrozenKnowledgeReference(knowledge.visibleContent.trimAscii()).knowledgeContentHash
+    } else { knowledge.hash }
+    let values = [rules.hash, skills.hash, knowledgeContentHash, sourceClosureHash, protectedClosureHash]
+    let evidence = teacherJoin(values.map({value: String => "${value.toArray().size}:${value}"}), "")
     "sha256:${teacherStableHash(evidence)}"
 }
 
@@ -263,6 +261,31 @@ private func teacherV2HashArrayJson(values: Array<String>): String {
     teacherJoin(values.map({value: String => "\"${value}\""}), ",")
 }
 
+private func teacherV2SourceInventory(object: JsonObject): Array<String> {
+    let out = ArrayList<String>()
+    match (object.get("sourceInventory")) {
+        case Some(value) => for (item in value.asArray().getItems()) {
+            out.add(item.asString().getValue())
+        }
+        case None => throw IllegalArgumentException("candidate_set_schema_invalid")
+    }
+    let rows = out.toArray()
+    if (rows.isEmpty()) { throw IllegalArgumentException("candidate_set_schema_invalid") }
+    let paths = ArrayList<String>(); let seen = HashSet<String>()
+    for (row in rows) {
+        let parts = row.split("  ")
+        if (parts.size != 2 || parts[0].toRuneArray().size != 64 ||
+            !teacherV2Hash("sha256:${parts[0]}") || !teacherV2RelativePath(parts[1]) ||
+            seen.contains(parts[1])) {
+            throw IllegalArgumentException("candidate_set_schema_invalid")
+        }
+        seen.add(parts[1]); paths.add(parts[1])
+    }
+    let sortedPaths = paths.toArray().clone(); sort(sortedPaths)
+    if (paths.toArray() != sortedPaths) { throw IllegalArgumentException("candidate_set_schema_invalid") }
+    rows
+}
+
 private func teacherV2ValidateAudit(files: Array<TeacherArtifactFile>, sourceManifestHash: String,
     sourceClosureHash: String, protectedClosureHash: String): Unit {
     if (files.size != 2 || files[0].path != "protected-closure.json" ||
@@ -272,15 +295,14 @@ private func teacherV2ValidateAudit(files: Array<TeacherArtifactFile>, sourceMan
     try {
         let sourceRaw = files[1].content.trimAscii(); let source = JsonValue.fromStr(sourceRaw).asObject()
         if (source.getFields().size != 4 || teacherV2String(source, "schemaVersion") !=
-            "teacher-context-source-closure-v1") { throw IllegalArgumentException("candidate_set_schema_invalid") }
-        let sourceHashes = teacherV2HashArray(source, "sourceHashes")
-        let sourceEvidence = "{\"schemaVersion\":\"teacher-context-source-closure-v1\"," +
-            "\"sourceEvidenceManifestHash\":\"${sourceManifestHash}\",\"sourceHashes\":[${teacherV2HashArrayJson(sourceHashes)}]}"
+            "teacher-context-source-closure-v2") { throw IllegalArgumentException("candidate_set_schema_invalid") }
+        let sourceInventory = teacherV2SourceInventory(source)
+        let sourceEvidence = "{\"schemaVersion\":\"teacher-context-source-closure-v2\"," +
+            "\"sourceEvidenceManifestHash\":\"${sourceManifestHash}\",\"sourceInventory\":[${teacherV2HashArrayJson(sourceInventory)}]"
         if (teacherV2String(source, "sourceEvidenceManifestHash") != sourceManifestHash ||
             teacherV2String(source, "sourceClosureHash") != sourceClosureHash ||
-            sourceClosureHash != "sha256:${teacherStableHash(sourceEvidence)}" ||
-            sourceRaw != String(sourceEvidence.toRuneArray()[..sourceEvidence.toRuneArray().size - 1]) +
-                ",\"sourceClosureHash\":\"${sourceClosureHash}\"}") {
+            sourceClosureHash != "sha256:${teacherStableHash(sourceEvidence + "}")}" ||
+            sourceRaw != sourceEvidence + ",\"sourceClosureHash\":\"${sourceClosureHash}\"}") {
             throw IllegalArgumentException("candidate_set_hash_mismatch")
         }
         let protectedRaw = files[0].content.trimAscii()
@@ -379,14 +401,30 @@ private func teacherV2ValidateExecution(files: Array<TeacherArtifactFile>, prefi
 }
 
 private func teacherV2DeriveLane(name: String, files: Array<TeacherArtifactFile>,
-    manifest: JsonObject, baseCompositeHash: String, classificationHash: String): TeacherContextLaneV2 {
+    manifest: JsonObject, baseCompositeHash: String, classificationHash: String,
+    base: ?TeacherContextBaseStateV2): TeacherContextLaneV2 {
     let eligible = !files.isEmpty()
     if (eligible != teacherV2Bool(manifest, "${name}Eligible")) {
         throw IllegalArgumentException("candidate_lane_hash_mismatch")
     }
     if (!eligible) {
         if (baseCompositeHash == "none") { throw IllegalArgumentException("candidate_base_composite_mismatch") }
-        return teacherV2LaneFromManifest(manifest, name, files, "")
+        let inherited = match (base) {
+            case Some(value) => if (name == "rules") {
+                TeacherContextLaneV2(false, value.rulesHash, teacherContextLaneTreeHashV2([]),
+                    value.rulesCount, value.rulesLineage, value.rulesVisible, [])
+            } else {
+                TeacherContextLaneV2(false, value.skillsHash, teacherContextLaneTreeHashV2([]),
+                    value.skillsCount, value.skillsLineage, value.skillsVisible, [])
+            }
+            case None => throw IllegalArgumentException("candidate_base_composite_mismatch")
+        }
+        let declared = teacherV2LaneFromManifest(manifest, name, files, inherited.visibleContent)
+        if (declared.hash != inherited.hash || declared.count != inherited.count ||
+            declared.lineage != inherited.lineage) {
+            throw IllegalArgumentException("candidate_base_composite_mismatch")
+        }
+        return inherited
     }
     let lineage = if (baseCompositeHash == "none") { "independent" } else {
         if (classificationHash.isEmpty()) { throw IllegalArgumentException("candidate_lane_lineage_invalid") }
@@ -394,6 +432,10 @@ private func teacherV2DeriveLane(name: String, files: Array<TeacherArtifactFile>
     }
     let visibleName = if (name == "rules") { "/AGENTS.md" } else { "/SKILL.md" }
     let ids = HashSet<String>(); var visible = ""; let categories = HashMap<String, String>()
+    var projectionAssets = match (base) {
+        case Some(value) => if (name == "rules") { value.rulesAssets } else { value.skillsAssets }
+        case None => Array<TeacherContextBaseAssetIdentity>()
+    }
     var generalizationCount: Int64 = 0
     for (file in files) {
         let parts = file.path.split("/")
@@ -429,6 +471,14 @@ private func teacherV2DeriveLane(name: String, files: Array<TeacherArtifactFile>
                 !teacherV2String(operation, "expectedOldHash").isEmpty()))) {
             throw IllegalArgumentException("candidate_operation_invalid")
         }
+        let baseAssets = match (base) {
+            case Some(value) => if (name == "rules") { value.rulesAssets } else { value.skillsAssets }
+            case None => Array<TeacherContextBaseAssetIdentity>()
+        }
+        _ = buildTeacherContextAssetOperation(name, id, teacherV2String(operation, "operation"),
+            teacherV2String(operation, "expectedOldHash"), teacherV2String(operation, "newHash"),
+            baseAssets)
+        var assetContent = ""
         if (name == "rules") {
             let candidateRaw = teacherV2File(files, "${id}/candidate-manifest.json").trimAscii()
             let candidate = JsonValue.fromStr(candidateRaw).asObject()
@@ -456,7 +506,15 @@ private func teacherV2DeriveLane(name: String, files: Array<TeacherArtifactFile>
                 teacherV2String(operation, "newHash") != canonicalHash) {
                 throw IllegalArgumentException("candidate_lane_hash_mismatch")
             }
+            let candidateProjection = "# Student Rules\n\n## ${teacherV2String(candidate, "title")}\n\n" +
+                "${teacherV2String(candidate, "body")}\n\nTrigger: ${teacherV2String(candidate, "trigger")}\n" +
+                "Scope: ${teacherV2String(candidate, "scope")}\n"
+            if (teacherV2File(files, "${id}/AGENTS.md") != candidateProjection) {
+                throw IllegalArgumentException("candidate_lane_hash_mismatch")
+            }
+            assetContent = String(candidateProjection.toRuneArray()["# Student Rules\n".toRuneArray().size..])
         } else {
+            assetContent = teacherV2File(files, "${id}/SKILL.md")
             let candidateRaw = teacherV2File(files, "${id}/candidate-manifest.json").trimAscii()
             let candidate = JsonValue.fromStr(candidateRaw).asObject()
             let bundle = teacherV2File(files, "${id}/test-bundle.json").trimAscii()
@@ -491,27 +549,51 @@ private func teacherV2DeriveLane(name: String, files: Array<TeacherArtifactFile>
                 throw IllegalArgumentException("candidate_lane_hash_mismatch")
             }
         }
+        projectionAssets = applyTeacherContextAssetOperation(projectionAssets,
+            TeacherContextAssetOperation(name, id, teacherV2String(operation, "operation"),
+                teacherV2String(operation, "expectedOldHash"), teacherV2String(operation, "newHash")),
+            assetContent, priority: if (name == "rules") {
+                let candidate = JsonValue.fromStr(teacherV2File(files, "${id}/candidate-manifest.json").trimAscii()).asObject()
+                teacherV2Int(candidate, "priority")
+            } else { 0 })
     }
+    visible = teacherContextAssetProjection(name, projectionAssets)
     let hash = "sha256:${teacherStableHash(visible)}"
     if (teacherV2String(manifest, "${name}Hash") != hash ||
-        teacherV2Int(manifest, "${name}Count") != ids.size ||
+        teacherV2Int(manifest, "${name}Count") != projectionAssets.size ||
         teacherV2String(manifest, if (name == "skills") { "skillAssetLineage" } else {
             "rulesAssetLineage" }) != lineage) {
         throw IllegalArgumentException("candidate_lane_hash_mismatch")
     }
-    TeacherContextLaneV2(true, hash, teacherContextLaneTreeHashV2(files), ids.size,
+    TeacherContextLaneV2(true, hash, teacherContextLaneTreeHashV2(files), projectionAssets.size,
         lineage, visible, files)
 }
 
 private func teacherV2DeriveKnowledge(files: Array<TeacherArtifactFile>, manifest: JsonObject,
-    baseCompositeHash: String, classificationHash: String): TeacherContextLaneV2 {
+    baseCompositeHash: String, classificationHash: String,
+    base: ?TeacherContextBaseStateV2): TeacherContextLaneV2 {
     let eligible = !files.isEmpty()
     if (eligible != teacherV2Bool(manifest, "knowledgeEligible")) {
         throw IllegalArgumentException("candidate_lane_hash_mismatch")
     }
     if (!eligible) {
         if (baseCompositeHash == "none") { throw IllegalArgumentException("candidate_base_composite_mismatch") }
-        return teacherV2LaneFromManifest(manifest, "knowledge", files, "")
+        let inherited = match (base) {
+            case Some(value) => TeacherContextLaneV2(false, value.knowledgeHash,
+                teacherContextLaneTreeHashV2([]), 1, value.knowledgeLineage,
+                value.knowledgeVisible, [])
+            case None => throw IllegalArgumentException("candidate_base_composite_mismatch")
+        }
+        let declared = teacherV2LaneFromManifest(manifest, "knowledge", files,
+            inherited.visibleContent)
+        if (declared.hash != inherited.hash || declared.lineage != inherited.lineage ||
+            teacherV2String(manifest, "knowledgeTargetVersion") != match (base) {
+                case Some(value) => value.knowledgeVersion
+                case None => ""
+            }) {
+            throw IllegalArgumentException("candidate_base_composite_mismatch")
+        }
+        return inherited
     }
     if (files.size != 1 || files[0].path != "knowledge-candidate-reference.json") {
         throw IllegalArgumentException("candidate_lane_hash_mismatch")
@@ -531,7 +613,7 @@ private func teacherV2DeriveKnowledge(files: Array<TeacherArtifactFile>, manifes
 }
 
 public func parseTeacherContextCandidateSetDirectoryV2(allowedRoot: String,
-    path: String): TeacherContextCandidateSetV2 {
+    path: String, baseContextRoot!: String = "none"): TeacherContextCandidateSetV2 {
     let root = Path(teacherResolveArtifactInput(allowedRoot, path, directory: true))
     try {
         if (!exists(root) || FileInfo(root).isSymbolicLink() || !FileInfo(root).isDirectory()) {
@@ -561,10 +643,19 @@ public func parseTeacherContextCandidateSetDirectoryV2(allowedRoot: String,
             if (file.path == "knowledge-candidate-reference.json") { knowledgeVisible = file.content }
         }
         let baseHash = teacherV2String(object, "baseCompositeHash")
+        let base: ?TeacherContextBaseStateV2 = if (baseHash == "none") {
+            if (baseContextRoot != "none") { throw IllegalArgumentException("candidate_base_composite_mismatch") }
+            None<TeacherContextBaseStateV2>
+        } else {
+            if (baseContextRoot == "none") { throw IllegalArgumentException("candidate_base_composite_mismatch") }
+            let loaded = loadTeacherContextBaseStateV2(allowedRoot, baseContextRoot)
+            if (loaded.compositeHash != baseHash) { throw IllegalArgumentException("candidate_base_composite_mismatch") }
+            Some<TeacherContextBaseStateV2>(loaded)
+        }
         let classificationHash = teacherV2String(object, "classificationManifestHash")
-        let rules = teacherV2DeriveLane("rules", rulesFiles, object, baseHash, classificationHash)
-        let skills = teacherV2DeriveLane("skills", skillsFiles, object, baseHash, classificationHash)
-        let knowledge = teacherV2DeriveKnowledge(knowledgeFiles, object, baseHash, classificationHash)
+        let rules = teacherV2DeriveLane("rules", rulesFiles, object, baseHash, classificationHash, base)
+        let skills = teacherV2DeriveLane("skills", skillsFiles, object, baseHash, classificationHash, base)
+        let knowledge = teacherV2DeriveKnowledge(knowledgeFiles, object, baseHash, classificationHash, base)
         let sealed = teacherSealContextCandidateSetV2(teacherV2String(object, "candidateSetId"),
             teacherV2String(object, "baseCompositeHash"), teacherV2String(object, "validationLevel"),
             teacherV2String(object, "sourceEvidenceManifestHash"),
@@ -591,16 +682,22 @@ private func teacherV2WriteFiles(root: String, prefix: String, files: Array<Teac
 }
 
 public func exportTeacherContextCandidateSetV2(value: TeacherContextCandidateSetV2,
-    allowedRoot: String, outputRoot: String): String {
+    allowedRoot: String, outputRoot: String, baseContextRoot!: String = "none"): String {
     let canonicalAllowed = teacherCanonicalArtifactRoot(allowedRoot)
     let output = teacherResolveArtifactInput(allowedRoot, outputRoot, directory: true)
+    // Revalidate the preserved caller path through the original lexical gate, then use
+    // canonical path pairs for internal stage parsing.
+    let canonicalBase = if (baseContextRoot == "none") { "none" } else {
+        teacherResolveArtifactInput(allowedRoot, baseContextRoot, directory: true)
+    }
     if (!teacherArtifactSafeComponent(value.candidateSetId)) {
         throw IllegalArgumentException("candidate_set_id_invalid")
     }
     let manifest = renderTeacherContextCandidateSetManifestV2(value)
     let target = "${output}/${value.candidateSetId}"
     if (exists(Path(target))) {
-        let parsed = parseTeacherContextCandidateSetDirectoryV2(canonicalAllowed, target)
+        let parsed = parseTeacherContextCandidateSetDirectoryV2(canonicalAllowed, target,
+            baseContextRoot: canonicalBase)
         if (parsed.candidateSetHash != value.candidateSetHash) {
             throw IllegalArgumentException("candidate_set_hash_mismatch")
         }
@@ -620,7 +717,8 @@ public func exportTeacherContextCandidateSetV2(value: TeacherContextCandidateSet
         teacherV2WriteFiles(stage, "knowledge", value.knowledge.files)
         teacherV2WriteFiles(stage, "audit", value.auditFiles)
         _ = teacherAtomicWrite("${stage}/candidate-set-manifest.json", manifest + "\n")
-        _ = parseTeacherContextCandidateSetDirectoryV2(canonicalAllowed, stage)
+        _ = parseTeacherContextCandidateSetDirectoryV2(canonicalAllowed, stage,
+            baseContextRoot: canonicalBase)
         rename(Path(stage), to: Path(target), overwrite: false); created = false
     } catch (e: Exception) {
         if (created) { try { teacherRemoveCreatedArtifactStage(output, stage) } catch (_: Exception) {} }
@@ -650,10 +748,16 @@ private func teacherRenderContextApprovalV2(candidate: TeacherContextCandidateSe
 }
 
 public func approveTeacherContextCandidateSetV2(allowedRoot: String, candidatePath: String,
-    sourceRoot: String, protectedRoot: String, decision: String, reviewer: String,
+    sourceRoot: String, protectedRoot: String, baseContextRoot: String,
+    decision: String, reviewer: String,
     reason: String, approvedAtUtc: String): String {
-    let candidate = parseTeacherContextCandidateSetDirectoryV2(allowedRoot, candidatePath)
-    let closure = loadTeacherContextSourceClosure(allowedRoot, sourceRoot, protectedRoot)
+    let candidate = parseTeacherContextCandidateSetDirectoryV2(allowedRoot, candidatePath,
+        baseContextRoot: baseContextRoot)
+    let loadedClosure = loadTeacherContextSourceClosure(allowedRoot, sourceRoot, protectedRoot)
+    let closure = if (baseContextRoot == "none") { loadedClosure } else {
+        bindTeacherContextSourceClosureToBase(loadedClosure,
+            loadTeacherContextBaseStateV2(allowedRoot, baseContextRoot).closureBindings)
+    }
     if (closure.manifest.sourceManifestHash != candidate.sourceEvidenceManifestHash ||
         closure.sourceClosureHash != candidate.sourceClosureHash ||
         closure.protectedClosureHash != candidate.protectedClosureHash) {

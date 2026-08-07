@@ -1,11 +1,68 @@
 package cangjie_teacher
 
 import std.collection.*
+import std.sort.*
 
 public class TeacherContextBaseAssetIdentity {
     public let assetId: String
     public let hash: String
-    public init(assetId: String, hash: String) { this.assetId = assetId; this.hash = hash }
+    public let content: String
+    public let priority: Int64
+    public init(assetId: String, hash: String, content!: String = "", priority!: Int64 = 0) {
+        this.assetId = assetId; this.hash = hash; this.content = content; this.priority = priority
+    }
+}
+
+public func applyTeacherContextAssetOperation(baseAssets: Array<TeacherContextBaseAssetIdentity>,
+    operation: TeacherContextAssetOperation, content: String, priority!: Int64 = 0): Array<TeacherContextBaseAssetIdentity> {
+    _ = buildTeacherContextAssetOperation(operation.assetRole, operation.assetId,
+        operation.operation, operation.expectedOldHash, operation.newHash, baseAssets)
+    if (content.isEmpty()) { throw IllegalArgumentException("candidate_lane_hash_mismatch") }
+    let out = ArrayList<TeacherContextBaseAssetIdentity>()
+    for (asset in baseAssets) {
+        if (asset.assetId != operation.assetId) { out.add(asset) }
+    }
+    out.add(TeacherContextBaseAssetIdentity(operation.assetId, operation.newHash,
+        content: content, priority: priority))
+    let ids = out.toArray().map({asset: TeacherContextBaseAssetIdentity => asset.assetId}); sort(ids)
+    let sorted = ArrayList<TeacherContextBaseAssetIdentity>()
+    for (id in ids) { for (asset in out) { if (asset.assetId == id) { sorted.add(asset); break } } }
+    sorted.toArray()
+}
+
+public func teacherContextAssetProjection(assetRole: String,
+    assets: Array<TeacherContextBaseAssetIdentity>): String {
+    if (!["rules", "skills"].contains(assetRole)) { throw IllegalArgumentException("candidate_lane_hash_mismatch") }
+    var out = if (assetRole == "rules") { "# Student Rules\n" } else { "" }
+    if (assetRole == "rules") {
+        var priority: Int64 = 1000
+        while (priority >= 0) {
+            let ids = ArrayList<String>()
+            for (asset in assets) {
+                if (asset.priority < 0 || asset.priority > 1000) {
+                    throw IllegalArgumentException("candidate_base_composite_mismatch")
+                }
+                if (asset.priority == priority) { ids.add(asset.assetId) }
+            }
+            let sortedIds = ids.toArray(); sort(sortedIds)
+            for (id in sortedIds) { for (asset in assets) { if (asset.assetId == id) {
+                if (asset.content.isEmpty()) { throw IllegalArgumentException("candidate_base_composite_mismatch") }
+                out += asset.content; break
+            } } }
+            priority -= 1
+        }
+    } else {
+        let ids = assets.map({asset: TeacherContextBaseAssetIdentity => asset.assetId}); sort(ids)
+        for (id in ids) {
+            for (asset in assets) {
+                if (asset.assetId == id) {
+                    if (asset.content.isEmpty()) { throw IllegalArgumentException("candidate_base_composite_mismatch") }
+                    out += asset.content; break
+                }
+            }
+        }
+    }
+    out
 }
 
 public class TeacherContextAssetOperation {

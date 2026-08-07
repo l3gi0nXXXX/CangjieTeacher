@@ -3,6 +3,10 @@ package cangjie_teacher
 import std.collection.*
 
 public class TeacherContextBaseStateV2 {
+    // Preserve the caller path that passed the strict lexical gate separately from
+    // the canonical path used for reads (notably /tmp versus /private/tmp on macOS).
+    public let baseInputRoot: String
+    public let baseRoot: String
     public let compositeHash: String
     public let rulesHash: String; public let rulesCount: Int64; public let rulesLineage: String
     public let rulesVisible: String; public let rulesAssets: Array<TeacherContextBaseAssetIdentity>
@@ -11,12 +15,15 @@ public class TeacherContextBaseStateV2 {
     public let knowledgeHash: String; public let knowledgeVersion: String
     public let knowledgeLineage: String; public let knowledgeVisible: String
     public let closureBindings: Array<String>; public let protectedArtifacts: Array<String>
-    public init(compositeHash: String, rulesHash: String, rulesCount: Int64, rulesLineage: String,
+    init(compositeHash: String, rulesHash: String, rulesCount: Int64, rulesLineage: String,
         rulesVisible: String, rulesAssets: Array<TeacherContextBaseAssetIdentity>,
         skillsHash: String, skillsCount: Int64, skillsLineage: String, skillsVisible: String,
         skillsAssets: Array<TeacherContextBaseAssetIdentity>, knowledgeHash: String,
         knowledgeVersion: String, knowledgeLineage: String, knowledgeVisible: String,
-        closureBindings!: Array<String> = [], protectedArtifacts!: Array<String> = []) {
+        closureBindings!: Array<String> = [], protectedArtifacts!: Array<String> = [],
+        baseInputRoot!: String = "", baseRoot!: String = "") {
+        this.baseInputRoot = baseInputRoot
+        this.baseRoot = baseRoot
         this.compositeHash = compositeHash; this.rulesHash = rulesHash; this.rulesCount = rulesCount
         this.rulesLineage = rulesLineage; this.rulesVisible = rulesVisible; this.rulesAssets = rulesAssets
         this.skillsHash = skillsHash; this.skillsCount = skillsCount; this.skillsLineage = skillsLineage
@@ -135,13 +142,16 @@ private func teacherPipelineClassificationHash(first: TeacherFailureAssetClassif
 
 public func buildTeacherFailureAssets(request: TeacherFailureAssetBuildRequestV2): TeacherFailureAssetsBuildResult {
     if (request.base.compositeHash == "none" || !teacherArtifactSafeComponent(request.candidateSetId) ||
+        request.base.baseInputRoot.isEmpty() || request.base.baseRoot.isEmpty() ||
         renderTeacherCompletionFailureInput(request.failure).isEmpty()) {
         throw IllegalArgumentException("candidate_base_composite_mismatch")
     }
+    let sourceClosure = bindTeacherContextSourceClosureToBase(request.sourceClosure,
+        request.base.closureBindings)
     let classification = reconcileTeacherFailureAssetClassifications(request.firstClassification,
         request.secondClassification)
     if (classification.failureEvidenceHash != request.failure.evidenceHash ||
-        request.sourceClosure.manifest.sourceKind != "completion_failures") {
+        sourceClosure.manifest.sourceKind != "completion_failures") {
         throw IllegalArgumentException("failure_classification_binding_mismatch")
     }
     let proposals = generateTeacherFailureAssetProposals(classification, request.gapDescription,
@@ -161,9 +171,12 @@ public func buildTeacherFailureAssets(request: TeacherFailureAssetBuildRequestV2
         request.base.skillsLineage, request.base.skillsVisible)
     var knowledge = teacherPipelineInheritedLane(request.base.knowledgeHash, 1,
         request.base.knowledgeLineage, request.base.knowledgeVisible)
+    // Rules and skills are reconstructable from actual base rows plus the candidate operation,
+    // so audit their final student-visible projections. An inherited frozen knowledge reference
+    // is only a content-hash binding here; active knowledge supplies its new actual audit material.
     var rulesAudit = request.base.rulesVisible
     var skillsAudit = request.base.skillsVisible
-    var knowledgeAudit = request.base.knowledgeVisible
+    var knowledgeAudit = ""
 
     if (classification.rulesEligible) {
         let executions = executeTeacherAssetFixtureBundle(request.ruleFixtures, request.fixtureExecutor)
@@ -178,10 +191,15 @@ public func buildTeacherFailureAssets(request: TeacherFailureAssetBuildRequestV2
             request.ruleOperation, request.ruleExpectedOldHash, candidate.canonicalHash,
             request.base.rulesAssets)
         let files = teacherRuleCandidateArtifactFiles(candidate, operation)
-        let visible = renderTeacherAgentsMarkdown([candidate])
+        let single = renderTeacherAgentsMarkdown([candidate])
+        let fragment = String(single.toRuneArray()["# Student Rules\n".toRuneArray().size..])
+        let visible = teacherContextAssetProjection("rules", applyTeacherContextAssetOperation(
+            request.base.rulesAssets, operation, fragment, priority: candidate.priority))
         rules = TeacherContextLaneV2(true, "sha256:${teacherStableHash(visible)}",
-            teacherContextLaneTreeHashV2(files), 1, "humaneval_164_derived", visible, files)
-        rulesAudit = proposal.content
+            teacherContextLaneTreeHashV2(files), request.base.rulesAssets.size +
+                if (request.ruleOperation == "add") { 1 } else { 0 },
+            "humaneval_164_derived", visible, files)
+        rulesAudit = visible
     }
     if (classification.skillEligible) {
         let executions = executeTeacherAssetFixtureBundle(request.skillFixtures, request.fixtureExecutor)
@@ -194,10 +212,13 @@ public func buildTeacherFailureAssets(request: TeacherFailureAssetBuildRequestV2
             request.skillOperation, request.skillExpectedOldHash, candidate.contentHash,
             request.base.skillsAssets)
         let files = teacherSkillCandidateArtifactFiles(candidate, operation, executions: executions)
-        let visible = renderCandidateSkillExport(candidate)
+        let visible = teacherContextAssetProjection("skills", applyTeacherContextAssetOperation(
+            request.base.skillsAssets, operation, renderCandidateSkillExport(candidate)))
         skills = TeacherContextLaneV2(true, "sha256:${teacherStableHash(visible)}",
-            teacherContextLaneTreeHashV2(files), 1, "humaneval_164_derived", visible, files)
-        skillsAudit = teacherPipelineProposal(proposals, "skill").content
+            teacherContextLaneTreeHashV2(files), request.base.skillsAssets.size +
+                if (request.skillOperation == "add") { 1 } else { 0 },
+            "humaneval_164_derived", visible, files)
+        skillsAudit = visible
     }
     if (classification.knowledgeEligible) {
         let proposal = teacherPipelineProposal(proposals, "knowledge")
@@ -220,7 +241,7 @@ public func buildTeacherFailureAssets(request: TeacherFailureAssetBuildRequestV2
         throw IllegalArgumentException("candidate_generation_invalid")
     }
     let auditProtected = ArrayList<String>()
-    for (value in request.sourceClosure.protectedArtifacts) { auditProtected.add(value) }
+    for (value in sourceClosure.protectedArtifacts) { auditProtected.add(value) }
     for (value in request.base.protectedArtifacts) { auditProtected.add(value) }
     let audit = auditTeacherAssetCombinationLeakage(rulesAudit, skillsAudit, knowledgeAudit,
         auditProtected.toArray())
@@ -229,10 +250,11 @@ public func buildTeacherFailureAssets(request: TeacherFailureAssetBuildRequestV2
     let candidate = sealTeacherContextCandidateSetV2(request.candidateSetId,
         request.base.compositeHash, validation,
         teacherPipelineClassificationHash(request.firstClassification, request.secondClassification),
-        request.sourceClosure, rules, skills, knowledge, if (knowledge.eligible) {
+        sourceClosure, rules, skills, knowledge, if (knowledge.eligible) {
             parseTeacherFrozenKnowledgeReference(request.knowledgeRequest.frozenReference).knowledgeVersion
         } else { request.base.knowledgeVersion })
-    _ = exportTeacherContextCandidateSetV2(candidate, request.allowedRoot, request.outputRoot)
+    _ = exportTeacherContextCandidateSetV2(candidate, request.allowedRoot, request.outputRoot,
+        baseContextRoot: request.base.baseInputRoot)
     TeacherFailureAssetsBuildResult(classification, proposals, candidateSetV2: Some(candidate))
 }
 

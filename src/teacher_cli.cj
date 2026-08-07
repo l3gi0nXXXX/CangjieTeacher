@@ -4,6 +4,7 @@ import std.fs.*
 import std.posix.*
 import std.time.*
 import std.collection.*
+import std.sort.*
 import std.convert.Parsable
 import stdx.encoding.json.*
 
@@ -29,6 +30,7 @@ public class TeacherCliOptions {
     public var failurePath = ""
     public var expectedHash = ""
     public var baseContextManifest = ""
+    public var baseContextRoot = ""
     public var output = ""
     public var candidateSetHash = ""
     public var decision = ""
@@ -42,7 +44,11 @@ public class TeacherCliOptions {
     public var json = false
     public var scaffoldContract = false
     public var fixtureRoot = ""
+    public var fixtureRootHash = ""
     public var baseContextHash = ""
+    public var allowedRoot = ""
+    public var sourceRoot = ""
+    public var protectedRoot = ""
     public init() {}
 }
 
@@ -80,6 +86,7 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
             case "--failure" => out.failurePath = value
             case "--expected-hash" => out.expectedHash = value
             case "--base-context-manifest" => out.baseContextManifest = value
+            case "--base-context-root" => out.baseContextRoot = value
             case "--output" => out.output = value
             case "--candidate-set-hash" => out.candidateSetHash = value
             case "--decision" => out.decision = value
@@ -91,7 +98,12 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
             case "--knowledge-content" => out.knowledgeContent = value
             case "--knowledge-version" => out.knowledgeVersion = value
             case "--fixture-root" => out.fixtureRoot = value
+            case "--scaffold-fixture-root" => out.fixtureRoot = value
+            case "--fixture-root-hash" => out.fixtureRootHash = value
             case "--base-context-hash" => out.baseContextHash = value
+            case "--allowed-root" => out.allowedRoot = value
+            case "--source-root" => out.sourceRoot = value
+            case "--protected-root" => out.protectedRoot = value
             case _ => throw IllegalArgumentException("unknown_cli_option")
         }
         i += 2
@@ -134,32 +146,29 @@ private func runTeacherContextSeedBuild(options: TeacherCliOptions): Int64 {
 
 private func runTeacherFailureAssetsApprove(options: TeacherCliOptions): Int64 {
     if (options.sourceExport.isEmpty() || options.output.isEmpty() || options.candidateSetHash.isEmpty() ||
+        options.allowedRoot.isEmpty() || options.sourceRoot.isEmpty() || options.protectedRoot.isEmpty() ||
+        options.baseContextRoot.isEmpty() ||
         !["approve", "reject"].contains(options.decision) || !teacherCliSafeReviewText(options.reviewer) ||
         !teacherCliSafeReviewText(options.reason) || options.approvedAtUtc.isEmpty()) {
         throw IllegalArgumentException("missing_required_cli_option")
     }
-    let manifestPath = Path(options.sourceExport).join("candidate-set-manifest.json")
-    let raw = teacherReadUtf8File(manifestPath.toString()).trimAscii()
-    let object = try { JsonValue.fromStr(raw).asObject() } catch (_: Exception) {
-        throw IllegalArgumentException("candidate_set_schema_invalid")
-    }
-    let actual = teacherCliJsonString(object, "candidateSetHash")
-    let marker = ",\"candidateSetHash\":\""
-    let parts = raw.split(marker)
-    if (object.getFields().size != 20 || parts.size != 2 || !parts[1].endsWith("\"}") ||
-        actual != options.candidateSetHash ||
-        actual != "sha256:${teacherStableHash(parts[0] + "}")}" ||
-        raw != parts[0] + marker + actual + "\"}") {
+    let candidate = parseTeacherContextCandidateSetDirectoryV2(options.allowedRoot,
+        options.sourceExport, baseContextRoot: options.baseContextRoot)
+    if (candidate.candidateSetHash != options.candidateSetHash) {
         throw IllegalArgumentException("candidate_approval_hash_mismatch")
     }
-    let approval = "{\"schemaVersion\":\"teacher-student-context-approval-v1\"," +
-        "\"candidateSetHash\":\"${actual}\",\"rulesHash\":\"${teacherCliJsonString(object, "rulesHash")}\"," +
-        "\"skillsHash\":\"${teacherCliJsonString(object, "skillsHash")}\"," +
-        "\"knowledgeCandidateHash\":\"${teacherCliJsonString(object, "knowledgeCandidateHash")}\"," +
-        "\"decision\":\"${options.decision}\",\"reviewer\":\"${teacherCliJsonEscape(options.reviewer)}\"," +
-        "\"reason\":\"${teacherCliJsonEscape(options.reason)}\",\"approvedAtUtc\":\"${teacherCliJsonEscape(options.approvedAtUtc)}\"}"
+    let approval = approveTeacherContextCandidateSetV2(options.allowedRoot, options.sourceExport,
+        options.sourceRoot, options.protectedRoot, options.baseContextRoot, options.decision,
+        options.reviewer, options.reason, options.approvedAtUtc)
     if (exists(Path(options.output))) { throw IllegalArgumentException("candidate_approval_hash_mismatch") }
-    _ = teacherAtomicWrite(options.output, approval + "\n")
+    let outputPath = Path(options.output)
+    if (!outputPath.isAbsolute() || outputPath.fileName.isEmpty() ||
+        outputPath.fileName.contains("/") || outputPath.fileName.contains("\\")) {
+        throw IllegalArgumentException("artifact_output_invalid")
+    }
+    let outputParent = teacherResolveArtifactInput(options.allowedRoot,
+        outputPath.parent.toString(), directory: true)
+    _ = teacherAtomicWrite(Path(outputParent).join(outputPath.fileName).toString(), approval + "\n")
     if (options.json) { println("{\"ok\":true,\"decision\":\"${options.decision}\"}") }
     else { println("candidate review recorded decision=${options.decision}") }
     0
@@ -177,25 +186,6 @@ private class TeacherCliScaffoldGenerator <: TeacherFailureAssetGenerator {
     }
 }
 
-private class TeacherCliBaseContext {
-    let compositeHash: String; let skillsHash: String; let skillCount: Int64; let skillLineage: String
-    let knowledgeHash: String; let knowledgeVersion: String; let knowledgeLineage: String
-    init(compositeHash: String, skillsHash: String, skillCount: Int64, skillLineage: String,
-        knowledgeHash: String, knowledgeVersion: String, knowledgeLineage: String) {
-        this.compositeHash = compositeHash; this.skillsHash = skillsHash; this.skillCount = skillCount
-        this.skillLineage = skillLineage; this.knowledgeHash = knowledgeHash
-        this.knowledgeVersion = knowledgeVersion; this.knowledgeLineage = knowledgeLineage
-    }
-}
-
-private func teacherCliJsonInt(object: JsonObject, name: String): Int64 {
-    match (object.get(name)) { case Some(value) => value.asInt().getValue(); case None => Int64(-1) }
-}
-
-private func teacherCliJsonBool(object: JsonObject, name: String): Bool {
-    match (object.get(name)) { case Some(value) => value.asBool().getValue(); case None => false }
-}
-
 private func teacherCliSha(value: String): Bool {
     if (!value.startsWith("sha256:") || value.toRuneArray().size != 71) { return false }
     for (rune in value.toRuneArray()[7..71]) {
@@ -207,47 +197,11 @@ private func teacherCliSha(value: String): Bool {
 private func teacherCliScaffoldSafe(value: String): Bool {
     if (value.isEmpty() || value.toArray().size > 262144) { return false }
     let lower = value.toAsciiLower()
-    for (marker in ["cj-humaneval-", "humaneval_164_derived", "/users/", "/home/", "/private/",
+    for (marker in ["humaneval_164_derived", "/users/", "/home/", "/private/",
         "authorization", "token=", "password=", "hidden_test", "reference solution", "expectedoutput"]) {
         if (lower.contains(marker)) { return false }
     }
     true
-}
-
-private func teacherCliLoadBaseContext(path: String, expectedHash: String): TeacherCliBaseContext {
-    let rawFile = teacherReadUtf8File(path)
-    if (!teacherCliSha(expectedHash) || "sha256:${teacherStableHash(rawFile)}" != expectedHash) {
-        throw IllegalArgumentException("candidate_base_composite_mismatch")
-    }
-    try {
-        let raw = rawFile.trimAscii(); let object = JsonValue.fromStr(raw).asObject()
-        if (teacherCliJsonString(object, "schemaVersion") != "ckb-student-context-bundle-v1" ||
-            teacherCliJsonString(object, "aggregateAssetLineage") != "independent") {
-            throw IllegalArgumentException("candidate_base_composite_mismatch")
-        }
-        let value = TeacherCliBaseContext(teacherCliJsonString(object, "compositeHash"),
-            teacherCliJsonString(object, "skillBundleHash"), teacherCliJsonInt(object, "skillCount"),
-            teacherCliJsonString(object, "skillAssetLineage"),
-            teacherCliJsonString(object, "knowledgeContentHash"), teacherCliJsonString(object, "knowledgeVersion"),
-            teacherCliJsonString(object, "knowledgeAssetLineage"))
-        if (!teacherCliSha(value.compositeHash) || !teacherCliSha(value.skillsHash) || value.skillCount < 0 ||
-            !teacherCliSha(value.knowledgeHash) || value.knowledgeVersion.isEmpty() ||
-            value.skillLineage != "independent" || value.knowledgeLineage != "independent") {
-            throw IllegalArgumentException("candidate_base_composite_mismatch")
-        }
-        value
-    } catch (e: IllegalArgumentException) { throw e }
-    catch (_: Exception) { throw IllegalArgumentException("candidate_base_composite_mismatch") }
-}
-
-private func teacherCliFixtureExecutionCanonical(object: JsonObject): String {
-    "{\"schemaVersion\":\"${teacherCliJsonString(object, "schemaVersion")}\"," +
-        "\"fixtureId\":\"${teacherCliJsonString(object, "fixtureId")}\",\"kind\":\"${teacherCliJsonString(object, "kind")}\"," +
-        "\"sourceClass\":\"${teacherCliJsonString(object, "sourceClass")}\",\"fixtureHash\":\"${teacherCliJsonString(object, "fixtureHash")}\"," +
-        "\"executorKind\":\"${teacherCliJsonString(object, "executorKind")}\",\"providerIdentityHash\":\"${teacherCliJsonString(object, "providerIdentityHash")}\"," +
-        "\"modelVersion\":\"${teacherCliJsonString(object, "modelVersion")}\",\"expectedEvidenceHash\":\"${teacherCliJsonString(object, "expectedEvidenceHash")}\"," +
-        "\"actualEvidenceHash\":\"${teacherCliJsonString(object, "actualEvidenceHash")}\",\"transcriptHash\":\"${teacherCliJsonString(object, "transcriptHash")}\"," +
-        "\"exitCode\":${teacherCliJsonInt(object, "exitCode")},\"passed\":${teacherCliJsonBool(object, "passed")}}"
 }
 
 public func renderTeacherFailureAssetsBuildOutput(candidateSetId: String,
@@ -256,98 +210,143 @@ public func renderTeacherFailureAssetsBuildOutput(candidateSetId: String,
     "failure assets built candidateSet=${candidateSetId} validation=scaffold_contract changedLane=rules"
 }
 
-private func teacherCliLoadScaffoldFixtureExecutions(path: String): TeacherRuleTestBundle {
-    let executions = ArrayList<TeacherAssetFixtureExecution>(); let kinds = HashSet<String>()
-    for (line in teacherReadUtf8File(path).split("\n")) {
-        if (line.isEmpty()) { continue }
-        try {
-            let object = JsonValue.fromStr(line).asObject(); let kind = teacherCliJsonString(object, "kind")
-            let expected = teacherCliJsonString(object, "expectedEvidenceHash")
-            if (object.getFields().size != 13 || line != teacherCliFixtureExecutionCanonical(object) ||
-                teacherCliJsonString(object, "schemaVersion") != "teacher-candidate-fixture-execution-v1" ||
-                !["positive", "negative", "boundary", "generalization"].contains(kind) || kinds.contains(kind) ||
-                teacherCliJsonString(object, "sourceClass") != "non_humaneval_experiment" ||
-                teacherCliJsonString(object, "executorKind") != "fake_contract" ||
-                teacherCliJsonString(object, "modelVersion") != "fake-scaffold-v1" ||
-                teacherCliJsonInt(object, "exitCode") != 0 || !teacherCliJsonBool(object, "passed") ||
-                expected != teacherCliJsonString(object, "actualEvidenceHash") ||
-                !teacherCliSha(teacherCliJsonString(object, "fixtureHash")) || !teacherCliSha(expected) ||
-                !teacherCliSha(teacherCliJsonString(object, "providerIdentityHash")) ||
-                !teacherCliSha(teacherCliJsonString(object, "transcriptHash"))) {
+private class TeacherCliFixtureExecutor <: TeacherAssetFixtureExecutor {
+    let root: String
+    init(root: String) { this.root = root }
+    public func executorKind(): String { "fake_contract" }
+    public func providerIdentityHash(): String { "sha256:${teacherStableHash("scaffold-fixture-provider-v2")}" }
+    public func modelVersion(): String { "fake-scaffold-v2" }
+    public func execute(fixture: TeacherAssetFixture): (Int64, String, String) {
+        let fixtureRoot = "${root}/fixtures/${fixture.fixtureId}"
+        let exitCode = try { Int64.parse(teacherReadUtf8File("${fixtureRoot}/exit-code.txt").trimAscii()) }
+        catch (_: Exception) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+        (exitCode, teacherReadUtf8File("${fixtureRoot}/actual.txt").trimAscii(),
+            teacherReadUtf8File("${fixtureRoot}/transcript.txt").trimAscii())
+    }
+}
+
+private func teacherCliLoadRawFixtures(allowedRoot: String, fixtureRoot: String,
+    expectedRootHash: String): Array<TeacherAssetFixture> {
+    let root = teacherResolveArtifactInput(allowedRoot, fixtureRoot, directory: true)
+    let canonicalAllowed = teacherCanonicalArtifactRoot(allowedRoot)
+    if (!teacherCliSha(expectedRootHash) || teacherDirectoryHash(root) != expectedRootHash) {
+        throw IllegalArgumentException("candidate_test_evidence_invalid")
+    }
+    let fixturesRoot = Path(teacherResolveArtifactInput(canonicalAllowed,
+        "${root}/fixtures", directory: true))
+    let out = ArrayList<TeacherAssetFixture>(); let ids = HashSet<String>()
+    let entryNames = ArrayList<String>()
+    for (entry in Directory.readFrom(fixturesRoot)) {
+        if (entry.isSymbolicLink() || !entry.isDirectory() || !teacherArtifactSafeComponent(entry.name)) {
+            throw IllegalArgumentException("candidate_test_evidence_invalid")
+        }
+        entryNames.add(entry.name)
+    }
+    let sortedEntryNames = entryNames.toArray(); sort(sortedEntryNames)
+    for (entryName in sortedEntryNames) {
+        let entryPath = fixturesRoot.join(entryName); let entryInfo = FileInfo(entryPath)
+        if (entryInfo.isSymbolicLink() || !entryInfo.isDirectory()) {
+            throw IllegalArgumentException("candidate_test_evidence_invalid")
+        }
+        let expected = HashSet<String>(["fixture.json", "input.txt", "expected.txt", "actual.txt",
+            "transcript.txt", "exit-code.txt"])
+        for (file in Directory.readFrom(entryPath)) {
+            if (file.isSymbolicLink() || !file.isRegular() || !expected.contains(file.name)) {
                 throw IllegalArgumentException("candidate_test_evidence_invalid")
             }
-            kinds.add(kind)
-            let fixture = TeacherAssetFixture(teacherCliJsonString(object, "fixtureId"), kind,
-                "non_humaneval_experiment", "scaffold fixture", "scaffold evidence")
-            executions.add(TeacherAssetFixtureExecution(fixture, teacherCliJsonString(object, "fixtureHash"),
-                "fake_contract", teacherCliJsonString(object, "providerIdentityHash"), "fake-scaffold-v1",
-                "", teacherCliJsonString(object, "transcriptHash"), 0, true))
+            expected.remove(file.name)
+        }
+        if (!expected.isEmpty()) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+        try {
+            let raw = teacherReadUtf8File(entryPath.join("fixture.json").toString()).trimAscii()
+            let object = JsonValue.fromStr(raw).asObject()
+            let id = teacherCliJsonString(object, "fixtureId")
+            let kind = teacherCliJsonString(object, "kind")
+            let sourceClass = teacherCliJsonString(object, "sourceClass")
+            let canonical = "{\"schemaVersion\":\"teacher-cli-scaffold-fixture-v2\"," +
+                "\"fixtureId\":\"${id}\",\"kind\":\"${kind}\",\"sourceClass\":\"${sourceClass}\"}"
+            if (object.getFields().size != 4 || raw != canonical || id != entryName || ids.contains(id) ||
+                sourceClass != "non_humaneval_experiment") {
+                throw IllegalArgumentException("candidate_test_evidence_invalid")
+            }
+            ids.add(id)
+            out.add(TeacherAssetFixture(id, kind, sourceClass,
+                teacherReadUtf8File(entryPath.join("input.txt").toString()).trimAscii(),
+                teacherReadUtf8File(entryPath.join("expected.txt").toString()).trimAscii()))
         } catch (e: IllegalArgumentException) { throw e }
         catch (_: Exception) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
     }
-    if (executions.size != 4) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
-    TeacherRuleTestBundle(executions.toArray())
+    if (out.isEmpty()) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+    out.toArray()
+}
+
+private class TeacherCliUnusedCommandExecutor <: TeacherCommandExecutor {
+    public func execute(_: TeacherCommandSpec): TeacherProcessResult {
+        TeacherProcessResult(1, "unused")
+    }
 }
 
 private func runTeacherScaffoldFailureAssetsBuild(options: TeacherCliOptions): Int64 {
-    if (!options.scaffoldContract || options.fixtureRoot.isEmpty() || options.failurePath.isEmpty() ||
-        options.expectedHash.isEmpty() || options.sourceManifest.isEmpty() ||
-        options.baseContextManifest.isEmpty() || options.baseContextHash.isEmpty() ||
-        options.outputRoot.isEmpty() || options.runId.isEmpty()) {
+    if (!options.scaffoldContract) { throw IllegalArgumentException("classification_requires_review") }
+    if (options.command == "failure-assets-reexport") {
+        if (options.allowedRoot.isEmpty() || options.baseContextRoot.isEmpty() ||
+            options.sourceExport.isEmpty() || options.outputRoot.isEmpty()) {
+            throw IllegalArgumentException("missing_required_cli_option")
+        }
+        let candidate = parseTeacherContextCandidateSetDirectoryV2(options.allowedRoot,
+            options.sourceExport, baseContextRoot: options.baseContextRoot)
+        _ = exportTeacherContextCandidateSetV2(candidate, options.allowedRoot, options.outputRoot,
+            baseContextRoot: options.baseContextRoot)
+        println(renderTeacherFailureAssetsBuildOutput(candidate.candidateSetId,
+            candidate.candidateSetHash, options.json)); return 0
+    }
+    if (options.fixtureRoot.isEmpty() || options.fixtureRootHash.isEmpty() ||
+        options.failurePath.isEmpty() || options.expectedHash.isEmpty() ||
+        options.allowedRoot.isEmpty() || options.sourceRoot.isEmpty() || options.protectedRoot.isEmpty() ||
+        options.baseContextRoot.isEmpty() || options.outputRoot.isEmpty() || options.runId.isEmpty()) {
         throw IllegalArgumentException("missing_required_cli_option")
     }
-    let failureRaw = teacherReadUtf8File(options.failurePath)
-    if (!teacherCliScaffoldSafe(failureRaw) || teacherStableHash(failureRaw) != options.expectedHash) {
+    let failurePath = teacherResolveArtifactInput(options.allowedRoot, options.failurePath)
+    let failureRaw = teacherReadUtf8File(failurePath).trimAscii()
+    if (!teacherCliScaffoldSafe(failureRaw)) { throw IllegalArgumentException("candidate_generation_invalid") }
+    let failure = parseTeacherCompletionFailureInput(failureRaw)
+    if (failure.evidenceHash != options.expectedHash || renderTeacherCompletionFailureInput(failure) != failureRaw) {
         throw IllegalArgumentException("candidate_generation_invalid")
     }
-    let fixtureMaterial = teacherJoin([
-        teacherReadUtf8File("${options.fixtureRoot}/classification-a.json"),
-        teacherReadUtf8File("${options.fixtureRoot}/classification-b.json"),
-        teacherReadUtf8File("${options.fixtureRoot}/gap-description.txt"),
-        teacherReadUtf8File("${options.fixtureRoot}/generation-request-rules.json"),
-        teacherReadUtf8File("${options.fixtureRoot}/proposal-rules.json"),
-        teacherReadUtf8File("${options.fixtureRoot}/fixture-executions.jsonl")], "\n")
-    if (!teacherCliScaffoldSafe(fixtureMaterial)) { throw IllegalArgumentException("candidate_generation_invalid") }
-    let source = parseTeacherContextSourceManifest(teacherReadUtf8File(options.sourceManifest).trimAscii())
-    if (source.sourceKind != "completion_failures" || source.sourceHashes.size != 1 ||
-        source.sourceHashes[0] != "sha256:${options.expectedHash}") {
-        throw IllegalArgumentException("candidate_lane_lineage_invalid")
+    if (failure.datasetVersion != "synthetic-non-humaneval-v1" || failure.assetLineage != "independent") {
+        throw IllegalArgumentException("candidate_generation_invalid")
     }
-    let firstRaw = teacherReadUtf8File("${options.fixtureRoot}/classification-a.json").trimAscii()
-    let secondRaw = teacherReadUtf8File("${options.fixtureRoot}/classification-b.json").trimAscii()
+    let fixtureRoot = teacherResolveArtifactInput(options.allowedRoot, options.fixtureRoot, directory: true)
+    let firstRaw = teacherReadUtf8File("${fixtureRoot}/classification-a.json").trimAscii()
+    let secondRaw = teacherReadUtf8File("${fixtureRoot}/classification-b.json").trimAscii()
     let first = parseTeacherFailureAssetClassifierResponse(firstRaw)
     let second = parseTeacherFailureAssetClassifierResponse(secondRaw)
     if (first.failureEvidenceHash != options.expectedHash || second.failureEvidenceHash != options.expectedHash ||
-        first.gapKind != "rules_gap") { throw IllegalArgumentException("classification_requires_review") }
-    let syntheticFailure = TeacherCompletionFailureInput("scaffold-contract", "synthetic-non-humaneval",
-        "synthetic-non-humaneval-v1", "completion-only-v1", options.expectedHash,
-        "failed", "failed", "test_failure", "synthetic scaffold failure", "independent", options.expectedHash)
-    let built = buildTeacherFailureAssets(syntheticFailure, first, second,
-        teacherReadUtf8File("${options.fixtureRoot}/gap-description.txt").trimAscii(),
-        TeacherCliScaffoldGenerator(options.fixtureRoot))
-    if (built.proposals.size != 1 || built.proposals[0].lane != "rules") {
-        throw IllegalArgumentException("candidate_generation_invalid")
+        firstRaw != secondRaw || first.gapKind != "rules_gap") {
+        throw IllegalArgumentException("classification_requires_review")
     }
-    let base = teacherCliLoadBaseContext(options.baseContextManifest, options.baseContextHash)
-    let baseRoot = Path(options.baseContextManifest).parent
-    let baseSkills = teacherReadUtf8File(baseRoot.join("student-skills.prompt.md").toString())
-    let baseKnowledge = teacherReadUtf8File(baseRoot.join("knowledge-reference.json").toString())
-    let tests = teacherCliLoadScaffoldFixtureExecutions("${options.fixtureRoot}/fixture-executions.jsonl")
-    let proposal = built.proposals[0]
-    let ruleId = "scaffold-rule-${built.classification.classificationEvidenceHash}"
-    let rule = buildTeacherRuleCandidate(built.classification, ruleId, "synthetic-rune-boundary",
-        proposal.title, proposal.content, proposal.trigger, proposal.scope, proposal.priority,
-        "completion_failure", options.expectedHash, tests)
-    let rulesMarkdown = renderTeacherAgentsMarkdown([rule])
-    let ruleManifest = renderTeacherRuleCandidateManifest(rule)
-    let classificationHash = "sha256:${teacherStableHash(firstRaw + "\n" + secondRaw + "\n")}"
-    let candidate = buildTeacherScaffoldRuleDelta(source, options.runId, base.compositeHash,
-        base.skillsHash, base.skillCount, base.skillLineage, base.knowledgeHash,
-        base.knowledgeVersion, base.knowledgeLineage, rulesMarkdown, ruleManifest,
-        baseSkills, baseKnowledge, classificationHash)
-    _ = exportTeacherContextCandidateSet(candidate, options.outputRoot)
-    println(renderTeacherFailureAssetsBuildOutput(candidate.candidateSetId,
-        candidate.candidateSetHash, options.json))
+    let fixtures = teacherCliLoadRawFixtures(options.allowedRoot, options.fixtureRoot,
+        options.fixtureRootHash)
+    let closure = loadTeacherContextSourceClosure(options.allowedRoot, options.sourceRoot,
+        options.protectedRoot)
+    let base = loadTeacherContextBaseStateV2(options.allowedRoot, options.baseContextRoot)
+    let baseKnowledge = teacherReadUtf8File("${base.baseRoot}/knowledge-reference.json").trimAscii()
+    let request = TeacherFailureAssetBuildRequestV2(failure, first, second,
+        teacherReadUtf8File("${fixtureRoot}/gap-description.txt").trimAscii(),
+        TeacherCliScaffoldGenerator(fixtureRoot), fixtures, fixtures,
+        TeacherCliFixtureExecutor(fixtureRoot), TeacherFailureKnowledgeRequest("unused", "unused",
+            "{}", baseKnowledge, "${base.baseRoot}/unused", closure.protectedArtifacts),
+        ScaffoldTeacherFailureKnowledgeAdapter(TeacherCliUnusedCommandExecutor()), closure, base,
+        options.runId, "scaffold-rule-${first.classificationEvidenceHash}",
+        "synthetic-rune-boundary", "unused-skill", "add", "", "add", "",
+        options.allowedRoot, options.outputRoot)
+    let built = buildTeacherFailureAssets(request)
+    let candidate = match (built.candidateSetV2) {
+        case Some(value) => value
+        case None => throw IllegalArgumentException("candidate_generation_invalid")
+    }
+    println(renderTeacherFailureAssetsBuildOutput(candidate.candidateSetId, candidate.candidateSetHash,
+        options.json))
     0
 }
 

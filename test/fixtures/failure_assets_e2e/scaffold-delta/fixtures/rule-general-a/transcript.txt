@@ -1,0 +1,1 @@
+fake scaffold v2 executed rule-general-a

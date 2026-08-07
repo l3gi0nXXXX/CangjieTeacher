@@ -107,13 +107,16 @@ public func buildTeacherIndependentRuleCandidate(ruleId: String, conceptId: Stri
 }
 
 private func teacherRuleSorted(values: Array<TeacherRuleCandidate>): Array<TeacherRuleCandidate> {
-    let keys = values.map({v: TeacherRuleCandidate => "${1000000 - v.priority}-${v.ruleId}"})
-    sort(keys)
     let out = ArrayList<TeacherRuleCandidate>()
-    for (key in keys) {
-        for (value in values) {
-            if (key == "${1000000 - value.priority}-${value.ruleId}") { out.add(value); break }
-        }
+    var priority: Int64 = 1000
+    while (priority >= 0) {
+        let ids = ArrayList<String>()
+        for (value in values) { if (value.priority == priority) { ids.add(value.ruleId) } }
+        let sortedIds = ids.toArray(); sort(sortedIds)
+        for (id in sortedIds) { for (value in values) {
+            if (value.ruleId == id) { out.add(value); break }
+        } }
+        priority -= 1
     }
     out.toArray()
 }
