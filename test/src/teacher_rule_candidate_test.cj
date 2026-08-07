@@ -23,6 +23,7 @@ public class TeacherRuleCandidateTest {
         let second = renderTeacherAgentsMarkdown([candidate])
         @Expect(first, second)
         @Expect(candidate.assetLineage, "humaneval_164_derived")
+        @Expect(candidate.sourceEvidenceHash.startsWith("sha256:"), true)
         @Expect(first.contains("中文🙂"), true)
         @Expect(first.toArray().size <= 8192, true)
         let root = "/tmp/teacher-rule-s2-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"

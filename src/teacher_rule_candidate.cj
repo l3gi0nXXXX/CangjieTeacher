@@ -86,10 +86,13 @@ public func buildTeacherRuleCandidate(classification: TeacherFailureAssetClassif
         throw IllegalArgumentException("candidate_test_evidence_invalid")
     }
     let lineage = if (sourceEvidenceKind == "completion_failure") { "humaneval_164_derived" } else { "independent" }
+    let normalizedSourceEvidenceHash = if (sourceEvidenceHash.startsWith("sha256:")) {
+        sourceEvidenceHash
+    } else { "sha256:${sourceEvidenceHash}" }
     let provisional = TeacherRuleCandidate(ruleId, conceptId, title, body, trigger, scope, priority,
-        sourceEvidenceKind, sourceEvidenceHash, lineage, tests, "")
+        sourceEvidenceKind, normalizedSourceEvidenceHash, lineage, tests, "")
     TeacherRuleCandidate(ruleId, conceptId, title, body, trigger, scope, priority,
-        sourceEvidenceKind, sourceEvidenceHash, lineage, tests,
+        sourceEvidenceKind, normalizedSourceEvidenceHash, lineage, tests,
         "sha256:${teacherStableHash(teacherRuleCanonical(provisional))}")
 }
 
