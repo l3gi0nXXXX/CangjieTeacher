@@ -53,6 +53,14 @@ public class FakeTeacherAssetFixtureExecutor <: TeacherAssetFixtureExecutor {
     }
 }
 
+// Transcript semantics normalize line endings and trailing line breaks without trimming spaces.
+public func teacherTranscriptSemantic(value: String): String {
+    let normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    let runes = normalized.toRuneArray(); var end = runes.size
+    while (end > 0 && runes[end - 1] == r'\n') { end -= 1 }
+    if (end == 0) { "" } else { String(runes[..end]) }
+}
+
 private func teacherFixtureCanonical(value: TeacherAssetFixture): String {
     teacherJoin([value.fixtureId, value.kind, value.sourceClass, value.content,
         value.expectedEvidence].map({v: String => "${v.toArray().size}:${v}"}), "")
@@ -83,10 +91,11 @@ public func executeTeacherAssetFixtureBundle(fixtures: Array<TeacherAssetFixture
         let fixtureHash = "sha256:${teacherStableHash(teacherFixtureCanonical(fixture))}"
         let executed = executor.execute(fixture)
         let passed = executed[0] == 0 && executed[1] == fixture.expectedEvidence
-        let transcriptHash = "sha256:${teacherStableHash(executed[2])}"
+        let transcript = teacherTranscriptSemantic(executed[2])
+        let transcriptHash = "sha256:${teacherStableHash(transcript)}"
         out.add(TeacherAssetFixtureExecution(fixture, fixtureHash, executor.executorKind(),
             executor.providerIdentityHash(), executor.modelVersion(), executed[1], transcriptHash,
-            executed[0], passed, transcript: executed[2]))
+            executed[0], passed, transcript: transcript))
     }
     out.toArray()
 }
@@ -119,16 +128,19 @@ public func renderTeacherAssetFixture(value: TeacherAssetFixture): String {
 
 public func teacherAssetFixtureExecutionFiles(value: TeacherAssetFixtureExecution,
     prefix: String): Array<TeacherArtifactFile> {
+    let transcript = teacherTranscriptSemantic(value.transcript)
     if (value.fixtureHash != teacherAssetFixtureHash(value.fixture) ||
-        value.transcriptHash != "sha256:${teacherStableHash(value.transcript)}" ||
+        value.transcriptHash != "sha256:${teacherStableHash(transcript)}" ||
+        value.fixture.expectedEvidence.contains("\r") || value.fixture.expectedEvidence.endsWith("\n") ||
+        value.actualEvidence.contains("\r") || value.actualEvidence.endsWith("\n") ||
         value.passed != (value.exitCode == 0 && value.actualEvidence == value.fixture.expectedEvidence)) {
         throw IllegalArgumentException("candidate_test_evidence_invalid")
     }
     [
         TeacherArtifactFile("${prefix}/fixture.json", renderTeacherAssetFixture(value.fixture) + "\n"),
-        TeacherArtifactFile("${prefix}/expected.txt", value.fixture.expectedEvidence),
-        TeacherArtifactFile("${prefix}/actual.txt", value.actualEvidence),
-        TeacherArtifactFile("${prefix}/transcript.txt", value.transcript),
+        TeacherArtifactFile("${prefix}/expected.txt", value.fixture.expectedEvidence + "\n"),
+        TeacherArtifactFile("${prefix}/actual.txt", value.actualEvidence + "\n"),
+        TeacherArtifactFile("${prefix}/transcript.txt", transcript + "\n"),
         TeacherArtifactFile("${prefix}/execution.json", renderTeacherAssetFixtureExecution(value) + "\n")
     ]
 }
@@ -139,6 +151,7 @@ private func teacherFixtureExecutionEscape(value: String): String {
 
 public func renderTeacherAssetFixtureExecution(value: TeacherAssetFixtureExecution): String {
     if (!value.fixtureHash.startsWith("sha256:") || !value.transcriptHash.startsWith("sha256:") ||
+        value.transcriptHash != "sha256:${teacherStableHash(teacherTranscriptSemantic(value.transcript))}" ||
         !value.providerIdentityHash.startsWith("sha256:") ||
         !["fake_contract", "student_completion_non_humaneval"].contains(value.executorKind)) {
         throw IllegalArgumentException("candidate_test_evidence_invalid")

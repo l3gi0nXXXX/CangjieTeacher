@@ -120,7 +120,8 @@ private func teacherPipelineAllPassed(values: Array<TeacherAssetFixtureExecution
     for (value in values) {
         if (!value.passed || value.fixtureHash != teacherAssetFixtureHash(value.fixture) ||
             value.actualEvidence != value.fixture.expectedEvidence ||
-            value.transcriptHash != "sha256:${teacherStableHash(value.transcript)}") { return false }
+            value.transcriptHash !=
+                "sha256:${teacherStableHash(teacherTranscriptSemantic(value.transcript))}") { return false }
     }
     true
 }

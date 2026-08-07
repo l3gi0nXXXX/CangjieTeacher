@@ -357,11 +357,22 @@ private func teacherV2File(files: Array<TeacherArtifactFile>, path: String): Str
     throw IllegalArgumentException("candidate_lane_hash_mismatch")
 }
 
+private func teacherV2TextArtifact(files: Array<TeacherArtifactFile>, path: String): String {
+    let raw = teacherV2File(files, path)
+    if (!raw.endsWith("\n") || raw.contains("\r")) {
+        throw IllegalArgumentException("candidate_test_evidence_invalid")
+    }
+    let runes = raw.toRuneArray()
+    let semantic = if (runes.size == 1) { "" } else { String(runes[..runes.size - 1]) }
+    if (semantic.endsWith("\n")) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+    semantic
+}
+
 private func teacherV2ValidateExecution(files: Array<TeacherArtifactFile>, prefix: String): (String, String, String) {
     let fixtureRaw = teacherV2File(files, "${prefix}/fixture.json").trimAscii()
-    let expected = teacherV2File(files, "${prefix}/expected.txt").trimAscii()
-    let actual = teacherV2File(files, "${prefix}/actual.txt").trimAscii()
-    let transcript = teacherV2File(files, "${prefix}/transcript.txt").trimAscii()
+    let expected = teacherV2TextArtifact(files, "${prefix}/expected.txt")
+    let actual = teacherV2TextArtifact(files, "${prefix}/actual.txt")
+    let transcript = teacherV2TextArtifact(files, "${prefix}/transcript.txt")
     let executionRaw = teacherV2File(files, "${prefix}/execution.json").trimAscii()
     try {
         let fixture = JsonValue.fromStr(fixtureRaw).asObject()
@@ -392,7 +403,7 @@ private func teacherV2ValidateExecution(files: Array<TeacherArtifactFile>, prefi
             teacherV2String(execution, "actualEvidenceHash") !=
                 "sha256:${teacherStableHash(actual)}" ||
             teacherV2String(execution, "transcriptHash") !=
-                "sha256:${teacherStableHash(transcript)}" ||
+                "sha256:${teacherStableHash(teacherTranscriptSemantic(transcript))}" ||
             teacherV2Int(execution, "exitCode") != 0 || !teacherV2Bool(execution, "passed") ||
             expected != actual || !["fake_contract", "student_completion_non_humaneval"].contains(
                 teacherV2String(execution, "executorKind")) ||

@@ -26,7 +26,18 @@ private class S2RuleEvidenceExecutor <: TeacherAssetFixtureExecutor {
     }
     public func modelVersion(): String { "fake-rule-evidence-v1" }
     public func execute(fixture: TeacherAssetFixture): (Int64, String, String) {
-        (0, fixture.expectedEvidence, "${label}-${fixture.fixtureId}")
+        (0, fixture.expectedEvidence, "${label}-${fixture.fixtureId}\r\n")
+    }
+}
+
+private class S2CanonicalTranscriptFixtureExecutor <: TeacherAssetFixtureExecutor {
+    public func executorKind(): String { "fake_contract" }
+    public func providerIdentityHash(): String {
+        "sha256:${teacherStableHash("canonical-transcript-fixture")}"
+    }
+    public func modelVersion(): String { "fake-canonical-transcript-v1" }
+    public func execute(fixture: TeacherAssetFixture): (Int64, String, String) {
+        (0, fixture.expectedEvidence, "${fixture.fixtureId}  \r\n")
     }
 }
 
@@ -757,7 +768,7 @@ public class TeacherFailureAssetOrchestratorTest {
                     "Reusable Unicode boundary gap 中文🙂", S2Generator(),
                     s2FullFixtures("rule-${kind.replace("_", "-")}"),
                     s2FullFixtures("skill-${kind.replace("_", "-")}"),
-                    FakeTeacherAssetFixtureExecutor(),
+                    S2CanonicalTranscriptFixtureExecutor(),
                     TeacherFailureKnowledgeRequest("g-rune", "compiler missing 'Rune'", atom[0], atom[1],
                         "${root}/atom-${kind.replace("_", "-")}", closure.protectedArtifacts),
                     ScaffoldTeacherFailureKnowledgeAdapter(atomExecutor), closure, s2Base(root),
@@ -778,6 +789,14 @@ public class TeacherFailureAssetOrchestratorTest {
                             "${root}/exports/${candidate.candidateSetId}",
                             baseContextRoot: "${root}/base-context").candidateSetHash,
                             candidate.candidateSetHash)
+                        if (skillEligible) {
+                            let suffix = kind.replace("_", "-")
+                            let skillId = "skill-${suffix}"
+                            let fixtureId = "skill-${suffix}-positive"
+                            @Expect(teacherReadUtf8File("${root}/exports/${candidate.candidateSetId}/" +
+                                "skills/${skillId}/executions/${fixtureId}/transcript.txt"),
+                                "${fixtureId}  \n")
+                        }
                         let approval = approveTeacherContextCandidateSetV2(root,
                             "${root}/exports/${candidate.candidateSetId}", "${root}/failure-source",
                             "${root}/failure-protected", "${root}/base-context",

@@ -458,7 +458,8 @@ public func buildTeacherSkillCandidateFromFailureAsset(input: TeacherCompletionF
     for (execution in executions) {
         if (!execution.passed || execution.fixtureHash != teacherAssetFixtureHash(execution.fixture) ||
             execution.actualEvidence != execution.fixture.expectedEvidence ||
-            execution.transcriptHash != "sha256:${teacherStableHash(execution.transcript)}") {
+            execution.transcriptHash !=
+                "sha256:${teacherStableHash(teacherTranscriptSemantic(execution.transcript))}") {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
         if (execution.fixture.kind == "unit") { continue }
@@ -488,7 +489,8 @@ public func buildTeacherIndependentSkillCandidate(skillId: String,
     for (execution in executions) {
         if (!execution.passed || execution.fixtureHash != teacherAssetFixtureHash(execution.fixture) ||
             execution.actualEvidence != execution.fixture.expectedEvidence ||
-            execution.transcriptHash != "sha256:${teacherStableHash(execution.transcript)}") {
+            execution.transcriptHash !=
+                "sha256:${teacherStableHash(teacherTranscriptSemantic(execution.transcript))}") {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
         if (execution.fixture.kind == "unit") { continue }
