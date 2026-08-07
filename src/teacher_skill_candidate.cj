@@ -287,6 +287,23 @@ private func teacherFailureAssetReasonValid(value: TeacherFailureAssetClassifica
     }
 }
 
+public func sealTeacherFailureAssetClassification(
+    value: TeacherFailureAssetClassification): TeacherFailureAssetClassification {
+    if (value.schemaVersion != "ckb-completion-failure-classification-v2" ||
+        !teacherFailureHex(value.failureEvidenceHash)) {
+        throw IllegalArgumentException("classification_identity_invalid")
+    }
+    if (!teacherFailureAssetEligibilityValid(value) || !teacherFailureAssetReasonValid(value)) {
+        throw IllegalArgumentException("classification_eligibility_invalid")
+    }
+    let evidence = renderTeacherFailureAssetClassificationEvidence(value)
+    let sealed = TeacherFailureAssetClassification(value.schemaVersion, value.failureEvidenceHash,
+        value.gapKind, value.knowledgeEligible, value.skillEligible, value.rulesEligible,
+        value.classificationReasonCode, teacherStableHash(evidence))
+    _ = parseTeacherFailureAssetClassification(renderTeacherFailureAssetClassification(sealed))
+    sealed
+}
+
 public func parseTeacherFailureAssetClassification(raw: String): TeacherFailureAssetClassification {
     try {
         let object = JsonValue.fromStr(raw).asObject()
@@ -335,6 +352,14 @@ public func parseTeacherFailureAssetClassification(raw: String): TeacherFailureA
             "classification_eligibility_invalid", "classification_evidence_hash_mismatch"].contains(e.message)) { throw e }
         throw IllegalArgumentException("malformed_json")
     } catch (_: Exception) { throw IllegalArgumentException("malformed_json") }
+}
+
+public func parseTeacherFailureAssetClassificationBytes(
+    bytes: Array<UInt8>): TeacherFailureAssetClassification {
+    let raw = try { String.fromUtf8(bytes) } catch (_: Exception) {
+        throw IllegalArgumentException("invalid_response_encoding")
+    }
+    parseTeacherFailureAssetClassification(raw)
 }
 
 public func classifyTeacherAssetOutputKind(value: TeacherFailureAssetClassification): String {

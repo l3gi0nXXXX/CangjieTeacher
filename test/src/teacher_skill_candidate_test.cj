@@ -72,6 +72,149 @@ private func failureAssetHexBytes(raw: String): Array<UInt8> {
     out.toArray()
 }
 
+private let FAILURE_ASSET_PAYLOADS = [
+    "approval-v1.json", "candidate-fixture-execution-v1.json", "candidate-set-manifest-v1.json",
+    "certification-v5-delta.json", "classification-invalid-utf8.hex",
+    "classification-v1-compatibility.jsonl", "classification-v2-contract-drift.jsonl",
+    "classification-v2-valid.jsonl", "completion-context-evidence-v2.json",
+    "completion-failure-v1-utf8.json", "frozen-knowledge-reference-v1.json", "knowledge-content.md",
+    "provider-prompt-capability-v1.json", "rule-candidate-v1.json", "rules-operation-v1.json",
+    "skills-operation-v1.json", "source-evidence-manifest-v1.json", "student-context-bundle-v1.json",
+    "student-skill-content.md"
+]
+
+private func failureAssetTopLevelKeys(raw: String): Array<String> {
+    let runes = raw.trimAscii().toRuneArray(); let keys = ArrayList<String>()
+    var depth: Int64 = 0; var inString = false; var escaped = false
+    var collectingKey = false; var expectingKey = false; var start: Int64 = 0
+    var pending = ""
+    for (i in 0..runes.size) {
+        let rune = runes[i]
+        if (inString) {
+            if (escaped) { escaped = false }
+            else if (rune == r'\\') { escaped = true }
+            else if (rune == r'"') {
+                if (collectingKey) { pending = String(runes[start..i]) }
+                inString = false; collectingKey = false
+            }
+        } else if (rune == r'"') {
+            inString = true; collectingKey = depth == 1 && expectingKey; start = i + 1
+        } else if (rune == r'{' || rune == r'[') {
+            depth += 1
+            if (depth == 1) { expectingKey = true }
+        } else if (rune == r'}' || rune == r']') {
+            depth -= 1
+        } else if (rune == r':' && depth == 1 && expectingKey && !pending.isEmpty()) {
+            keys.add(pending); pending = ""; expectingKey = false
+        } else if (rune == r',' && depth == 1) {
+            pending = ""; expectingKey = true
+        }
+    }
+    keys.toArray()
+}
+
+private func expectFailureAssetKeys(name: String, expected: Array<String>): Unit {
+    let actual = failureAssetTopLevelKeys(
+        teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/${name}"))
+    @Expect(actual.size, expected.size)
+    for (i in 0..expected.size) { @Expect(actual[i], expected[i]) }
+}
+
+private func failureAssetAssertFixtureInventory(): Unit {
+    let sums = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/SHA256SUMS")
+    @Expect(teacherStableHash(sums), "ebace396c9b7b6103a9b4b65dc489ca8606224de63293f8d04656c0121589479")
+    let lines = ArrayList<String>()
+    for (line in sums.split("\n")) { if (!line.isEmpty()) { lines.add(line) } }
+    @Expect(lines.size, FAILURE_ASSET_PAYLOADS.size)
+    for (i in 0..FAILURE_ASSET_PAYLOADS.size) {
+        let parts = lines[i].split("  ")
+        @Expect(parts.size, 2); @Expect(parts[1], FAILURE_ASSET_PAYLOADS[i])
+        @Expect(teacherStableHash(teacherReadUtf8File(
+            "${FAILURE_ASSET_FIXTURE_ROOT}/${parts[1]}")), parts[0])
+    }
+}
+
+private func failureAssetAssertSchemaKeys(): Unit {
+    expectFailureAssetKeys("approval-v1.json", ["schemaVersion", "candidateSetHash", "rulesHash",
+        "skillsHash", "knowledgeCandidateHash", "decision", "reviewer", "reason", "approvedAtUtc"])
+    expectFailureAssetKeys("candidate-fixture-execution-v1.json", ["schemaVersion", "fixtureId", "kind",
+        "sourceClass", "fixtureHash", "executorKind", "providerIdentityHash", "modelVersion",
+        "expectedEvidenceHash", "actualEvidenceHash", "transcriptHash", "exitCode", "passed"])
+    expectFailureAssetKeys("candidate-set-manifest-v1.json", ["schemaVersion", "candidateSetId",
+        "baseCompositeHash", "validationLevel", "sourceEvidenceManifestHash", "classificationManifestHash",
+        "rulesEligible", "rulesHash", "rulesCount", "rulesAssetLineage", "skillsEligible", "skillsHash",
+        "skillsCount", "skillAssetLineage", "knowledgeEligible", "knowledgeCandidateHash",
+        "knowledgeTargetVersion", "knowledgeAssetLineage", "combinationAuditHash", "candidateSetHash"])
+    expectFailureAssetKeys("completion-context-evidence-v2.json", ["schemaVersion", "ok", "diagnostic",
+        "taskHash", "mcpToolRequestHash", "mcpToolResponseHash", "knowledgeVersion", "knowledgeRequestHash",
+        "knowledgeResponseHash", "knowledgePackHash", "knowledgeContentBytes", "rulesVersion", "rulesHash",
+        "skillBundleVersion", "skillBundleHash", "compositeHash", "promptHash"])
+    expectFailureAssetKeys("completion-failure-v1-utf8.json", ["schemaVersion", "runId", "caseId",
+        "datasetVersion", "generationProtocol", "completionHash", "baseStatus", "plusStatus", "failureKind",
+        "failureObservation", "assetLineage", "evidenceHash"])
+    expectFailureAssetKeys("frozen-knowledge-reference-v1.json", ["schemaVersion", "knowledgeCandidateHash",
+        "knowledgeVersion", "frozenCandidateManifestHash", "knowledgeContentHash", "assetLineage"])
+    expectFailureAssetKeys("provider-prompt-capability-v1.json", ["schemaVersion", "modelVersion",
+        "maxContextTokens", "reservedOutputTokens", "sourceEvidence", "observedAtUtc", "capabilityHash"])
+    expectFailureAssetKeys("rule-candidate-v1.json", ["schemaVersion", "ruleId", "conceptId", "title", "body",
+        "trigger", "scope", "priority", "sourceEvidenceKind", "sourceEvidenceHash", "assetRole", "assetLineage",
+        "positiveEvidenceHash", "negativeEvidenceHash", "boundaryEvidenceHash", "generalizationEvidenceHash",
+        "canonicalHash"])
+    for (name in ["rules-operation-v1.json", "skills-operation-v1.json"]) {
+        expectFailureAssetKeys(name, ["schemaVersion", "assetRole", "assetId", "operation",
+            "expectedOldHash", "newHash"])
+    }
+    expectFailureAssetKeys("source-evidence-manifest-v1.json", ["schemaVersion", "sourceKind",
+        "sourceHashes", "sourceManifestHash"])
+    expectFailureAssetKeys("student-context-bundle-v1.json", ["schemaVersion", "contextVersion",
+        "baseCompositeHash", "candidateSetHash", "approvalHash", "validationLevel", "changedLanes",
+        "rulesVersion", "rulesHash", "rulesCount", "rulesContentBytes", "rulesAssetLineage",
+        "skillBundleVersion", "skillBundleHash", "skillCount", "skillContentBytes", "skillAssetLineage",
+        "knowledgeVersion", "knowledgeContentHash", "frozenCandidateManifestHash", "knowledgeAssetLineage",
+        "aggregateAssetLineage", "combinationAuditHash", "compositeHash"])
+}
+
+private func failureAssetAssertReferenceClosureAndSafety(): Unit {
+    let hash = {name: String =>
+        "sha256:${teacherStableHash(teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/${name}"))}"
+    }
+    let source = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/source-evidence-manifest-v1.json")
+    @Expect(source.contains(hash("knowledge-content.md")), true)
+    @Expect(source.contains(hash("student-skill-content.md")), true)
+    let rule = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/rule-candidate-v1.json")
+    for (name in ["classification-v2-valid.jsonl", "classification-v2-contract-drift.jsonl",
+        "completion-failure-v1-utf8.json", "classification-v1-compatibility.jsonl"]) {
+        @Expect(rule.contains(hash(name)), true)
+    }
+    let candidate = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/candidate-set-manifest-v1.json")
+    for (name in ["rule-candidate-v1.json", "skills-operation-v1.json", "knowledge-content.md",
+        "candidate-fixture-execution-v1.json"]) { @Expect(candidate.contains(hash(name)), true) }
+    let student = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/student-context-bundle-v1.json")
+    for (name in ["approval-v1.json", "rule-candidate-v1.json", "skills-operation-v1.json",
+        "knowledge-content.md", "candidate-set-manifest-v1.json", "candidate-fixture-execution-v1.json"]) {
+        @Expect(student.contains(hash(name)), true)
+    }
+    let certification = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/certification-v5-delta.json")
+    @Expect(certification.contains(hash("student-context-bundle-v1.json")), true)
+    @Expect(certification.contains(hash("provider-prompt-capability-v1.json")), true)
+    let completion = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/completion-context-evidence-v2.json")
+    for (name in ["classification-invalid-utf8.hex", "rules-operation-v1.json", "skills-operation-v1.json",
+        "source-evidence-manifest-v1.json", "frozen-knowledge-reference-v1.json", "knowledge-content.md",
+        "rule-candidate-v1.json", "classification-v2-valid.jsonl"]) {
+        @Expect(completion.contains(hash(name)), true)
+    }
+    for (name in FAILURE_ASSET_PAYLOADS) {
+        var raw = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/${name}")
+        if (name == "completion-failure-v1-utf8.json") {
+            raw = raw.replace("CJ-HUMANEVAL-007", "").replace("cangjie-humaneval-164-v1", "")
+        }
+        let lower = raw.toAsciiLower()
+        for (marker in ["cj-humaneval-", "/users/", "/home/", "/private/", "authorization",
+            "token=", "password=", "proxy password", "hidden_test", "solution_cj", "reference solution",
+            "expectedoutput", "\"code\":"]) { @Expect(lower.contains(marker), false) }
+    }
+}
+
 @Test
 public class TeacherSkillCandidateTest {
     // S0-UT-01: v2 parses and seals to its exact canonical bytes.
@@ -84,7 +227,15 @@ public class TeacherSkillCandidateTest {
             let parsed = parseTeacherFailureAssetClassification(raw)
             @Expect(renderTeacherFailureAssetClassification(parsed), raw)
             @Expect(parsed.schemaVersion, "ckb-completion-failure-classification-v2")
+            let unsealed = TeacherFailureAssetClassification(parsed.schemaVersion,
+                parsed.failureEvidenceHash, parsed.gapKind, parsed.knowledgeEligible,
+                parsed.skillEligible, parsed.rulesEligible, parsed.classificationReasonCode, "")
+            let sealed = sealTeacherFailureAssetClassification(unsealed)
+            @Expect(renderTeacherFailureAssetClassification(sealed), raw)
         }
+        failureAssetAssertFixtureInventory()
+        failureAssetAssertSchemaKeys()
+        failureAssetAssertReferenceClosureAndSafety()
     }
 
     // S0-BND-01: the v1 Unicode fixture remains readable and every v2 reason boundary round-trips.
@@ -100,7 +251,8 @@ public class TeacherSkillCandidateTest {
         let invalidBytes = failureAssetHexBytes(
             teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/classification-invalid-utf8.hex"))
         var invalidEncoding = "not_rejected"
-        try { _ = String.fromUtf8(invalidBytes) } catch (_: Exception) { invalidEncoding = "invalid_response_encoding" }
+        try { _ = parseTeacherFailureAssetClassificationBytes(invalidBytes) }
+        catch (e: Exception) { invalidEncoding = e.message }
         @Expect(invalidEncoding, "invalid_response_encoding")
     }
 
