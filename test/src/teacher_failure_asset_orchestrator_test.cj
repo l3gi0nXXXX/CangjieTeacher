@@ -1,7 +1,9 @@
 package cangjie_teacher_test
 
 import std.unittest.testmacro.*
+import std.collection.*
 import std.fs.*
+import std.sort.*
 import std.time.*
 import cangjie_teacher.*
 
@@ -12,6 +14,19 @@ private class S2AtomExecutor <: TeacherCommandExecutor {
         if (spec.cwd.contains("/negative") && spec.args[0] == "build") {
             TeacherProcessResult(1, "synthetic failure")
         } else { TeacherProcessResult(0, "ok") }
+    }
+}
+
+private class S2RuleEvidenceExecutor <: TeacherAssetFixtureExecutor {
+    private let label: String
+    public init(label: String) { this.label = label }
+    public func executorKind(): String { "fake_contract" }
+    public func providerIdentityHash(): String {
+        "sha256:${teacherStableHash("rule-evidence-${label}")}"
+    }
+    public func modelVersion(): String { "fake-rule-evidence-v1" }
+    public func execute(fixture: TeacherAssetFixture): (Int64, String, String) {
+        (0, fixture.expectedEvidence, "${label}-${fixture.fixtureId}")
     }
 }
 
@@ -122,6 +137,73 @@ private func s2SealBaseRoot(root: String, caseName: String,
     target
 }
 
+private func s2CollectArtifactFiles(current: Path, relative: String,
+    out: ArrayList<TeacherArtifactFile>): Unit {
+    for (entry in Directory.readFrom(current)) {
+        let child = if (relative.isEmpty()) { entry.name } else { "${relative}/${entry.name}" }
+        if (entry.isDirectory()) { s2CollectArtifactFiles(entry.path, child, out) }
+        else { out.add(TeacherArtifactFile(child, teacherReadUtf8File(entry.path.toString()))) }
+    }
+}
+
+private func s2ArtifactFiles(root: String, lane: String): Array<TeacherArtifactFile> {
+    let out = ArrayList<TeacherArtifactFile>()
+    s2CollectArtifactFiles(Path("${root}/${lane}"), "", out)
+    out.toArray()
+}
+
+private func s2ResealGoldenCandidateOuter(root: String, skillCandidateHash: String,
+    rulesProjectionHash!: String = "sha256:0ce1be55d3152a921d3c5c5a18653476bd5b99806777e24748af3994a0f037ac",
+    rulesCount!: Int64 = 1): Unit {
+    let rules = s2ArtifactFiles(root, "rules")
+    let skills = s2ArtifactFiles(root, "skills")
+    let knowledge = s2ArtifactFiles(root, "knowledge")
+    let audit = s2ArtifactFiles(root, "audit")
+    let rulesTreeHash = teacherContextLaneTreeHashV2(rules)
+    let skillsTreeHash = teacherContextLaneTreeHashV2(skills)
+    var skillProjection = ""; var operationBound = false
+    for (file in skills) {
+        if (file.path.endsWith("/SKILL.md")) { skillProjection += file.content }
+        if (file.path.endsWith("/operation.json") &&
+            file.content.contains("\"newHash\":\"${skillCandidateHash}\"")) { operationBound = true }
+    }
+    if (skillProjection.isEmpty() || !operationBound) {
+        throw IllegalArgumentException("test_fixture_invalid")
+    }
+    let skillsProjectionHash = "sha256:${teacherStableHash(skillProjection)}"
+    let inventoryHash = teacherContextAssetInventoryHashV2(rules, skills, knowledge, audit: audit)
+    let combinationHash = s2CanonicalHash([
+        rulesProjectionHash,
+        skillsProjectionHash,
+        "sha256:39c400fb1e29b16784f5305012430e3cdcc35e7d4b2c6aceb37b4e6892d29ece",
+        "sha256:e319c582529ba1fdb48aa374974461af57a01b970b337e58304064987067d4b8",
+        "sha256:d30f0da5fb1ac0d6f92588b3fcf71f5d89236721897caa7de8042880836659b9"
+    ])
+    let manifestPath = "${root}/candidate-set-manifest.json"
+    var manifest = teacherReadUtf8File(manifestPath)
+    manifest = s2ReplaceRequired(manifest,
+        "\"rulesHash\":\"sha256:0ce1be55d3152a921d3c5c5a18653476bd5b99806777e24748af3994a0f037ac\"",
+        "\"rulesHash\":\"${rulesProjectionHash}\"")
+    manifest = s2ReplaceRequired(manifest,
+        "\"rulesTreeHash\":\"sha256:7d96e7e4b1690136b4b1eca0c706ded2284090eef9903bf3a5b826dfa4c473d3\"",
+        "\"rulesTreeHash\":\"${rulesTreeHash}\"")
+    manifest = s2ReplaceRequired(manifest, "\"rulesCount\":1", "\"rulesCount\":${rulesCount}")
+    manifest = s2ReplaceRequired(manifest,
+        "\"skillsHash\":\"sha256:e4774bac98335a2912fb43c34cafdb00cb06bcabde767a523d5a46e184a0f9f0\"",
+        "\"skillsHash\":\"${skillsProjectionHash}\"")
+    manifest = s2ReplaceRequired(manifest,
+        "\"skillsTreeHash\":\"sha256:96fcc10d477fb62ab7e733dc6359d5417672a434b358d45940e2a78978588f05\"",
+        "\"skillsTreeHash\":\"${skillsTreeHash}\"")
+    manifest = s2ReplaceRequired(manifest,
+        "\"assetInventoryHash\":\"sha256:316e17b5af69196717ae9590948db3a0287fae6b465266b4df539a2394339ade\"",
+        "\"assetInventoryHash\":\"${inventoryHash}\"")
+    manifest = s2ReplaceRequired(manifest,
+        "\"combinationAuditHash\":\"sha256:938968cf3e9277f220ec4578aa9b4e6862128b5ebfe10eeeef3e404bd24e0757\"",
+        "\"combinationAuditHash\":\"${combinationHash}\"")
+    _ = teacherAtomicWrite(manifestPath,
+        s2ResealTrailingHash(manifest, ",\"candidateSetHash\":\"")[0])
+}
+
 @Test
 public class TeacherFailureAssetOrchestratorTest {
     @TestCase public func ruleProjectionSortsNumericPriorityBoundaries(): Unit {
@@ -133,6 +215,70 @@ public class TeacherFailureAssetOrchestratorTest {
             TeacherContextBaseAssetIdentity("rule-one-a", hash, content: "one-a\n", priority: 1)
         ])
         @Expect(projection, "# Student Rules\nmax\none-a\none-b\nzero\n")
+    }
+
+    @TestCase public func parserKeepsTwoRuleEvidenceIndependentWithShuffledExecutions(): Unit {
+        let fixtureRoot = "fixtures/student_context_candidate_v2/candidate-set-v2"
+        let root = "/tmp/teacher-two-rule-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            Directory.create(Path(root), recursive: true)
+            let executed = executeTeacherAssetFixtureBundle(s2FullFixtures("second-rule"),
+                S2RuleEvidenceExecutor("second"))
+            let shuffled = [executed[6], executed[1], executed[0], executed[5], executed[2],
+                executed[3], executed[4]]
+            let second = buildTeacherIndependentRuleCandidate("second-rule", "second-rule-concept",
+                "Second isolated rule", "Keep second-rule evidence isolated.", "When reviewing text.",
+                "Cangjie text rendering", 90,
+                "sha256:2e7c33c74b6ddb9f7a50b45d1c90545b9c1d4aa00d1ef2b9b69c9bc130449b60",
+                TeacherRuleTestBundle(shuffled))
+            let operation = TeacherContextAssetOperation("rules", second.ruleId, "add", "",
+                second.canonicalHash)
+            let secondFiles = teacherRuleCandidateArtifactFiles(second, operation)
+            let generalizationAHash = executed[4].transcriptHash
+            @Expect(renderTeacherRuleCandidateManifest(second).contains(
+                "\"generalizationEvidenceHash\":\"${generalizationAHash}\""), true)
+
+            let existingId = "prefer-rune-safe-text-boundaries"
+            let existingHash = "sha256:f4e44a92ea2dfa3728ff0b54a660476b205fa53961c6847f3a28901728995fe7"
+            let headerSize = "# Student Rules\n".toRuneArray().size
+            let existingRaw = teacherReadUtf8File("${fixtureRoot}/rules/${existingId}/AGENTS.md")
+            let existingContent = String(existingRaw.toRuneArray()[headerSize..])
+            let secondRaw = renderTeacherAgentsMarkdown([second])
+            let secondContent = String(secondRaw.toRuneArray()[headerSize..])
+            let rulesProjection = teacherContextAssetProjection("rules", [
+                TeacherContextBaseAssetIdentity(existingId, existingHash,
+                    content: existingContent, priority: 100),
+                TeacherContextBaseAssetIdentity(second.ruleId, second.canonicalHash,
+                    content: secondContent, priority: second.priority)
+            ])
+            let rulesProjectionHash = "sha256:${teacherStableHash(rulesProjection)}"
+
+            let positiveRoot = "${root}/positive"
+            teacherCopyTree(fixtureRoot, positiveRoot)
+            for (file in secondFiles) {
+                _ = teacherAtomicWrite("${positiveRoot}/rules/${file.path}", file.content)
+            }
+            s2ResealGoldenCandidateOuter(positiveRoot,
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a",
+                rulesProjectionHash: rulesProjectionHash, rulesCount: 2)
+            @Expect(parseTeacherContextCandidateSetDirectoryV2(root, positiveRoot).rules.count,
+                Int64(2))
+
+            let missingRoot = "${root}/missing-second-negative"
+            teacherCopyTree(fixtureRoot, missingRoot)
+            for (file in secondFiles) {
+                if (!file.path.startsWith("second-rule/tests/second-rule-negative/")) {
+                    _ = teacherAtomicWrite("${missingRoot}/rules/${file.path}", file.content)
+                }
+            }
+            s2ResealGoldenCandidateOuter(missingRoot,
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a",
+                rulesProjectionHash: rulesProjectionHash, rulesCount: 2)
+            var missingDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(root, missingRoot) }
+            catch (e: Exception) { missingDiagnostic = e.message }
+            @Expect(missingDiagnostic, "candidate_test_evidence_invalid")
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
     @TestCase public func baseContextKeepsValidatedInputPathSeparateFromCanonicalReadPath(): Unit {
@@ -288,13 +434,21 @@ public class TeacherFailureAssetOrchestratorTest {
         let candidatePath = canonicalize(Path(candidateRoot)).toString()
         let candidate = parseTeacherContextCandidateSetDirectoryV2(testRoot, candidatePath)
         @Expect(candidate.candidateSetHash,
-            "sha256:4a0c7941f9d455731e96b72138ed379ad8ccdf48e5ffbf9c478f1f145446729a")
+            "sha256:6f1a247361d2f07b663bb45143960ff964540e00cf88beaef05b410554a7c92f")
         @Expect(candidate.assetInventoryHash,
-            "sha256:58e57be659ac51a074a63c88ac446984a8c374e80ac5ef0e2c73693a7d6bd28a")
+            "sha256:316e17b5af69196717ae9590948db3a0287fae6b465266b4df539a2394339ade")
         @Expect(candidate.rules.treeHash,
             "sha256:7d96e7e4b1690136b4b1eca0c706ded2284090eef9903bf3a5b826dfa4c473d3")
         @Expect(candidate.skills.treeHash,
-            "sha256:7c52e017a5ce394f8237beefccdae23c5f49a90b75e0e0fa8dfc88deef615e47")
+            "sha256:96fcc10d477fb62ab7e733dc6359d5417672a434b358d45940e2a78978588f05")
+        @Expect(candidate.skills.hash,
+            "sha256:e4774bac98335a2912fb43c34cafdb00cb06bcabde767a523d5a46e184a0f9f0")
+        let goldenSkill = teacherReadUtf8File(
+            "${candidateRoot}/skills/rune-safe-review/SKILL.md")
+        let goldenSkillHash = "sha256:${teacherStableHash(goldenSkill)}"
+        @Expect(candidate.skills.hash, goldenSkillHash)
+        @Expect(teacherReadUtf8File(
+            "${candidateRoot}/skills/rune-safe-review/SKILL.md").contains("中文🙂"), true)
         @Expect(candidate.knowledge.treeHash,
             "sha256:2a307aa2890878a1cb99f84af3cc95e992adcc882040c1773b598d5cda08d09a")
         @Expect(renderTeacherContextCandidateSetManifestV2(candidate),
@@ -302,7 +456,7 @@ public class TeacherFailureAssetOrchestratorTest {
         let approval = teacherReadUtf8File("${fixtureRoot}/approval-v2.json").trimAscii()
         @Expect(validateTeacherContextApprovalV2(approval, candidate), "approve")
         @Expect(teacherStableHash(teacherReadUtf8File("${fixtureRoot}/SHA256SUMS")),
-            "18a576336e2c9d116053d7b9081da9bbfab6f61cc9ade62978e9318ab112dd2a")
+            "c6454da21eca3afad1814ce329afc39f566ba75506194b9a41d2c5309b9e9324")
         for (line in teacherReadUtf8File("${fixtureRoot}/SHA256SUMS").trimAscii().split("\n")) {
             let fields = line.split("  ")
             @Expect(fields.size, Int64(2))
@@ -328,6 +482,177 @@ public class TeacherFailureAssetOrchestratorTest {
             try { _ = parseTeacherContextCandidateSetDirectoryV2(root, tampered) }
             catch (e: Exception) { tamperDiagnostic = e.message }
             @Expect(tamperDiagnostic, "candidate_lane_hash_mismatch")
+
+            let noFrontmatter = "${root}/skill-no-frontmatter"
+            teacherCopyTree(candidateRoot, noFrontmatter)
+            let noFrontmatterSkill = "# Rune-safe review\n\n" +
+                "Review UTF-8 boundaries before rendering bounded text. 中文🙂\n"
+            let noFrontmatterManifestPath =
+                "${noFrontmatter}/skills/rune-safe-review/candidate-manifest.json"
+            let noFrontmatterManifest = s2ReplaceRequired(
+                teacherReadUtf8File(noFrontmatterManifestPath),
+                "\"skillContentHash\":\"sha256:e4774bac98335a2912fb43c34cafdb00cb06bcabde767a523d5a46e184a0f9f0\"",
+                "\"skillContentHash\":\"sha256:${teacherStableHash(noFrontmatterSkill)}\"")
+            _ = teacherAtomicWrite(noFrontmatterManifestPath,
+                s2ResealTrailingHash(noFrontmatterManifest, ",\"artifactHash\":\"")[0])
+            _ = teacherAtomicWrite("${noFrontmatter}/skills/rune-safe-review/SKILL.md",
+                noFrontmatterSkill)
+            s2ResealGoldenCandidateOuter(noFrontmatter,
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a")
+            var noFrontmatterDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(root, noFrontmatter) }
+            catch (e: Exception) { noFrontmatterDiagnostic = e.message }
+            @Expect(noFrontmatterDiagnostic, "candidate_lane_hash_mismatch")
+
+            let skillHashAsCandidate = "${root}/skill-hash-as-candidate"
+            teacherCopyTree(candidateRoot, skillHashAsCandidate)
+            let skillManifestPath = "${skillHashAsCandidate}/skills/rune-safe-review/candidate-manifest.json"
+            let skillManifest = teacherReadUtf8File(skillManifestPath)
+            let skillContent = teacherReadUtf8File(
+                "${skillHashAsCandidate}/skills/rune-safe-review/SKILL.md")
+            let skillContentHash = "sha256:${teacherStableHash(skillContent)}"
+            let invalidSkillManifest = s2ResealTrailingHash(s2ReplaceRequired(skillManifest,
+                "\"candidateContentHash\":\"sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a\"",
+                "\"candidateContentHash\":\"${skillContentHash}\""), ",\"artifactHash\":\"")[0]
+            _ = teacherAtomicWrite(skillManifestPath, invalidSkillManifest)
+            let skillHashOperationPath =
+                "${skillHashAsCandidate}/skills/rune-safe-review/operation.json"
+            _ = teacherAtomicWrite(skillHashOperationPath, s2ReplaceRequired(
+                teacherReadUtf8File(skillHashOperationPath),
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a",
+                skillContentHash))
+            s2ResealGoldenCandidateOuter(skillHashAsCandidate, skillContentHash)
+            var skillHashAsCandidateDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(root, skillHashAsCandidate) }
+            catch (e: Exception) { skillHashAsCandidateDiagnostic = e.message }
+            @Expect(skillHashAsCandidateDiagnostic, "candidate_lane_hash_mismatch")
+
+            let runeLengthHash = "${root}/skill-rune-length-hash"
+            teacherCopyTree(candidateRoot, runeLengthHash)
+            let hashFields = ["rune-safe-review", "1.0.0", "Rune-safe review",
+                "Review UTF-8 boundaries before rendering bounded text. 中文🙂",
+                "general_engineering", "Cangjie text rendering", "independent",
+                "sha256:c4c4a67ec087a46e1121a076012f52bec8f44e8ab7417c35ed286b290ef414d1"]
+            let byteHash = s2CanonicalHash(hashFields)
+            let runeEvidence = teacherJoin(hashFields.map({field: String =>
+                "${field.toRuneArray().size}:${field}"}), "")
+            let runeHash = "sha256:${teacherStableHash(runeEvidence)}"
+            @Expect(teacherReadUtf8File(
+                "${runeLengthHash}/skills/rune-safe-review/operation.json").contains(
+                    "\"newHash\":\"${byteHash}\""), true)
+            @Expect(teacherReadUtf8File(
+                "${runeLengthHash}/skills/rune-safe-review/candidate-manifest.json").contains(
+                    "\"candidateContentHash\":\"${byteHash}\""), true)
+            @Expect(runeHash == byteHash, false)
+            let runeSkillPath = "${runeLengthHash}/skills/rune-safe-review/SKILL.md"
+            let runeSkill = s2ReplaceRequired(teacherReadUtf8File(runeSkillPath),
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a", runeHash)
+            _ = teacherAtomicWrite(runeSkillPath, runeSkill)
+            let runeManifestPath = "${runeLengthHash}/skills/rune-safe-review/candidate-manifest.json"
+            var runeManifest = s2ReplaceRequired(teacherReadUtf8File(runeManifestPath),
+                "\"candidateContentHash\":\"sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a\"",
+                "\"candidateContentHash\":\"${runeHash}\"")
+            runeManifest = s2ReplaceRequired(runeManifest,
+                "\"skillContentHash\":\"sha256:e4774bac98335a2912fb43c34cafdb00cb06bcabde767a523d5a46e184a0f9f0\"",
+                "\"skillContentHash\":\"sha256:${teacherStableHash(runeSkill)}\"")
+            _ = teacherAtomicWrite(runeManifestPath,
+                s2ResealTrailingHash(runeManifest, ",\"artifactHash\":\"")[0])
+            let runeOperationPath = "${runeLengthHash}/skills/rune-safe-review/operation.json"
+            _ = teacherAtomicWrite(runeOperationPath, s2ReplaceRequired(
+                teacherReadUtf8File(runeOperationPath),
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a",
+                runeHash))
+            s2ResealGoldenCandidateOuter(runeLengthHash, runeHash)
+            var runeLengthDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(root, runeLengthHash) }
+            catch (e: Exception) { runeLengthDiagnostic = e.message }
+            @Expect(runeLengthDiagnostic, "candidate_lane_hash_mismatch")
+
+            let bundleTamper = "${root}/skill-bundle-tamper"
+            teacherCopyTree(candidateRoot, bundleTamper)
+            let bundlePath = "${bundleTamper}/skills/rune-safe-review/test-bundle.json"
+            let changedBundle = s2ResealTrailingHash(s2ReplaceRequired(
+                teacherReadUtf8File(bundlePath), "\"positiveCount\":1", "\"positiveCount\":2"),
+                ",\"evidenceHash\":\"")
+            _ = teacherAtomicWrite(bundlePath, changedBundle[0])
+            let changedCandidateHash = s2CanonicalHash(["rune-safe-review", "1.0.0",
+                "Rune-safe review", "Review UTF-8 boundaries before rendering bounded text. 中文🙂",
+                "general_engineering", "Cangjie text rendering", "independent", changedBundle[1]])
+            let changedSkillPath = "${bundleTamper}/skills/rune-safe-review/SKILL.md"
+            let changedSkill = s2ReplaceRequired(teacherReadUtf8File(changedSkillPath),
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a",
+                changedCandidateHash)
+            _ = teacherAtomicWrite(changedSkillPath, changedSkill)
+            let changedManifestPath =
+                "${bundleTamper}/skills/rune-safe-review/candidate-manifest.json"
+            var changedManifest = teacherReadUtf8File(changedManifestPath)
+            changedManifest = s2ReplaceRequired(changedManifest,
+                "\"testBundleHash\":\"sha256:d5b754b0cc435fed3401598a6749199523abd2bda1d099439944d8d9d7a3a5de\"",
+                "\"testBundleHash\":\"sha256:${teacherStableHash(changedBundle[0].trimAscii())}\"")
+            changedManifest = s2ReplaceRequired(changedManifest,
+                "\"testEvidenceHash\":\"sha256:c4c4a67ec087a46e1121a076012f52bec8f44e8ab7417c35ed286b290ef414d1\"",
+                "\"testEvidenceHash\":\"${changedBundle[1]}\"")
+            changedManifest = s2ReplaceRequired(changedManifest,
+                "\"candidateContentHash\":\"sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a\"",
+                "\"candidateContentHash\":\"${changedCandidateHash}\"")
+            changedManifest = s2ReplaceRequired(changedManifest,
+                "\"skillContentHash\":\"sha256:e4774bac98335a2912fb43c34cafdb00cb06bcabde767a523d5a46e184a0f9f0\"",
+                "\"skillContentHash\":\"sha256:${teacherStableHash(changedSkill)}\"")
+            _ = teacherAtomicWrite(changedManifestPath,
+                s2ResealTrailingHash(changedManifest, ",\"artifactHash\":\"")[0])
+            let changedOperationPath = "${bundleTamper}/skills/rune-safe-review/operation.json"
+            _ = teacherAtomicWrite(changedOperationPath, s2ReplaceRequired(
+                teacherReadUtf8File(changedOperationPath),
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a",
+                changedCandidateHash))
+            s2ResealGoldenCandidateOuter(bundleTamper, changedCandidateHash)
+            var bundleDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(root, bundleTamper) }
+            catch (e: Exception) { bundleDiagnostic = e.message }
+            @Expect(bundleDiagnostic, "candidate_lane_hash_mismatch")
+
+            let flatMissing = "${root}/skill-flat-missing"
+            teacherCopyTree(candidateRoot, flatMissing)
+            remove(Path("${flatMissing}/skills/rune-safe-review/tests/positive-contract.txt"))
+            s2ResealGoldenCandidateOuter(flatMissing,
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a")
+            var flatMissingDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(root, flatMissing) }
+            catch (e: Exception) { flatMissingDiagnostic = e.message }
+            @Expect(flatMissingDiagnostic, "candidate_set_schema_invalid")
+
+            let flatExtra = "${root}/skill-flat-extra"
+            teacherCopyTree(candidateRoot, flatExtra)
+            _ = teacherAtomicWrite("${flatExtra}/skills/rune-safe-review/tests/extra-contract.txt",
+                "{\"schemaVersion\":\"cangjie-teacher-skill-fixture-v1\",\"task\":\"extra\",\"resultEvidence\":\"extra\"}\n")
+            s2ResealGoldenCandidateOuter(flatExtra,
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a")
+            var flatExtraDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(root, flatExtra) }
+            catch (e: Exception) { flatExtraDiagnostic = e.message }
+            @Expect(flatExtraDiagnostic, "candidate_set_schema_invalid")
+
+            let flatDrift = "${root}/skill-flat-drift"
+            teacherCopyTree(candidateRoot, flatDrift)
+            _ = teacherAtomicWrite("${flatDrift}/skills/rune-safe-review/tests/positive-contract.txt",
+                "{\"schemaVersion\":\"cangjie-teacher-skill-fixture-v1\",\"task\":\"drift\",\"resultEvidence\":\"positive-ok\"}\n")
+            s2ResealGoldenCandidateOuter(flatDrift,
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a")
+            var flatDriftDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(root, flatDrift) }
+            catch (e: Exception) { flatDriftDiagnostic = e.message }
+            @Expect(flatDriftDiagnostic, "candidate_test_evidence_invalid")
+
+            let extraSkillFile = "${root}/skill-extra-file"
+            teacherCopyTree(candidateRoot, extraSkillFile)
+            _ = teacherAtomicWrite("${extraSkillFile}/skills/rune-safe-review/raw-secret.txt",
+                "must not be accepted\n")
+            s2ResealGoldenCandidateOuter(extraSkillFile,
+                "sha256:b51c608314f131470038059a7407e575cd4e0bf1b6aa513c830d729e8b65c45a")
+            var extraSkillFileDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(root, extraSkillFile) }
+            catch (e: Exception) { extraSkillFileDiagnostic = e.message }
+            @Expect(extraSkillFileDiagnostic, "candidate_set_schema_invalid")
 
             let symlinked = "${root}/symlinked"
             teacherCopyTree(candidateRoot, symlinked)

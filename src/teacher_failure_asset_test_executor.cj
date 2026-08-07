@@ -1,6 +1,7 @@
 package cangjie_teacher
 
 import std.collection.*
+import std.sort.*
 
 public class TeacherAssetFixture {
     public let fixtureId: String
@@ -92,6 +93,19 @@ public func executeTeacherAssetFixtureBundle(fixtures: Array<TeacherAssetFixture
 
 public func teacherAssetFixtureHash(value: TeacherAssetFixture): String {
     "sha256:${teacherStableHash(teacherFixtureCanonical(value))}"
+}
+
+// Candidate writers and readers select repeated categories by the same stable fixture-id order.
+public func teacherFirstEvidenceHashByFixtureId(
+    entries: Array<(String, String, String)>, kind: String): String {
+    let ids = ArrayList<String>()
+    for (entry in entries) { if (entry[1] == kind) { ids.add(entry[0]) } }
+    let sortedIds = ids.toArray(); sort(sortedIds)
+    if (sortedIds.isEmpty()) { return "" }
+    for (entry in entries) {
+        if (entry[0] == sortedIds[0] && entry[1] == kind) { return entry[2] }
+    }
+    ""
 }
 
 public func renderTeacherAssetFixture(value: TeacherAssetFixture): String {

@@ -136,9 +136,19 @@ private func teacherFailureBool(value: JsonObject, key: String): Bool {
 
 private func teacherFailureObservationSafe(value: String): Bool {
     if (value.isEmpty() || value.toRuneArray().size > 512) { return false }
+    if (!teacherSkillCandidateTextSafe(value)) { return false }
     let lower = value.toAsciiLower()
-    for (marker in ["/users/", "/home/", "/private/", "authorization", "token", "password",
-        "secret", "hidden_test", "expectedoutput", "reference solution", "assertion line"]) {
+    for (marker in ["token", "assertion line"]) {
+        if (lower.contains(marker)) { return false }
+    }
+    true
+}
+
+// Shared by the skill writer and the v2 reader so protected-text policy cannot drift.
+public func teacherSkillCandidateTextSafe(value: String): Bool {
+    let lower = value.toAsciiLower()
+    for (marker in ["cj-humaneval-", "hidden_test", "expectedoutput", "reference solution",
+        "/users/", "/home/", "/private/", "authorization", "token=", "password", "secret"]) {
         if (lower.contains(marker)) { return false }
     }
     true
@@ -455,7 +465,7 @@ public func buildTeacherSkillCandidateFromFailureAsset(input: TeacherCompletionF
         fixtures.add(TeacherSkillFixture(execution.fixture.fixtureId, execution.fixture.content,
             execution.actualEvidence, sourceClass: execution.fixture.sourceClass,
             kind: execution.fixture.kind, fixturePath: "tests/${execution.fixture.fixtureId}.txt",
-            benchmarkDerived: false, passed: execution.passed))
+            targetVersion: "1.0.0", benchmarkDerived: false, passed: execution.passed))
     }
     let legacyKind = if (classification.knowledgeEligible) { "mixed_gap" } else { "procedure_gap" }
     let provisional = TeacherFailureClassification(input.evidenceHash, legacyKind,
@@ -485,7 +495,7 @@ public func buildTeacherIndependentSkillCandidate(skillId: String,
         fixtures.add(TeacherSkillFixture(execution.fixture.fixtureId, execution.fixture.content,
             execution.actualEvidence, sourceClass: execution.fixture.sourceClass,
             kind: execution.fixture.kind, fixturePath: "tests/${execution.fixture.fixtureId}.txt",
-            benchmarkDerived: false, passed: execution.passed))
+            targetVersion: "1.0.0", benchmarkDerived: false, passed: execution.passed))
     }
     let tests = buildTeacherSkillTestBundle(fixtures.toArray())
     let provisional = TeacherSkillCandidate(skillId, "1.0.0", proposal.title, proposal.content,
@@ -627,12 +637,7 @@ private func teacherSkillCandidateExportSafe(value: TeacherSkillCandidate): Bool
     for (fixture in value.tests.fixtures) {
         body += "\n${fixture.fixtureId}\n${fixture.fixturePath}\n${fixture.task}\n${fixture.expectedEvidence}"
     }
-    let lower = body.toAsciiLower()
-    for (marker in ["cj-humaneval-", "hidden_test", "expectedoutput", "reference solution",
-        "/users/", "/home/", "/private/", "authorization", "token=", "password", "secret"] ) {
-        if (lower.contains(marker)) { return false }
-    }
-    true
+    teacherSkillCandidateTextSafe(body)
 }
 
 private func teacherSkillCandidateDirectoryValid(path: String, value: TeacherSkillCandidate): Bool {
@@ -706,6 +711,13 @@ public func exportTeacherSkillCandidateDirectory(value: TeacherSkillCandidate, c
 public func teacherSkillCandidateArtifactFiles(value: TeacherSkillCandidate,
     operation: TeacherContextAssetOperation,
     executions!: Array<TeacherAssetFixtureExecution> = []): Array<TeacherArtifactFile> {
+    // The generic public candidate API remains version-flexible; candidate-set v2 is fixed at 1.0.0.
+    if (value.version != "1.0.0") { throw IllegalArgumentException("candidate_version_invalid") }
+    for (fixture in value.tests.fixtures) {
+        if (fixture.targetVersion != "1.0.0") {
+            throw IllegalArgumentException("candidate_version_invalid")
+        }
+    }
     if (operation.assetRole != "skills" || operation.assetId != value.skillId ||
         operation.newHash != value.contentHash) {
         throw IllegalArgumentException("candidate_operation_invalid")
@@ -719,10 +731,14 @@ public func teacherSkillCandidateArtifactFiles(value: TeacherSkillCandidate,
         renderTeacherSkillTestBundle(value) + "\n"))
     files.add(TeacherArtifactFile("${value.skillId}/operation.json",
         renderTeacherContextAssetOperation(operation) + "\n"))
+    for (fixture in value.tests.fixtures) {
+        files.add(TeacherArtifactFile("${value.skillId}/${fixture.fixturePath}",
+            teacherSkillFixtureBytes(fixture)))
+    }
     if (executions.isEmpty()) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
     for (execution in executions) {
         for (file in teacherAssetFixtureExecutionFiles(execution,
-            "${value.skillId}/tests/${execution.fixture.fixtureId}")) { files.add(file) }
+            "${value.skillId}/executions/${execution.fixture.fixtureId}")) { files.add(file) }
     }
     files.toArray()
 }

@@ -371,7 +371,12 @@ private func teacherV2ValidateExecution(files: Array<TeacherArtifactFile>, prefi
             teacherV2String(fixture, "kind"), teacherV2String(fixture, "sourceClass"),
             teacherV2String(fixture, "content"), teacherV2String(fixture, "expectedEvidence"))
         let fixtureHash = teacherAssetFixtureHash(value)
-        if (fixtureRaw != renderTeacherAssetFixture(value) || expected != value.expectedEvidence ||
+        if (!teacherArtifactSafeComponent(value.fixtureId) ||
+            !["unit", "positive", "negative", "boundary", "generalization"].contains(value.kind) ||
+            !["official", "community", "non_humaneval_experiment"].contains(value.sourceClass) ||
+            value.content.isEmpty() || value.expectedEvidence.isEmpty() ||
+            !teacherSkillCandidateTextSafe(value.content + value.expectedEvidence) ||
+            fixtureRaw != renderTeacherAssetFixture(value) || expected != value.expectedEvidence ||
             teacherV2String(fixture, "fixtureHash") != fixtureHash) {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
@@ -398,6 +403,121 @@ private func teacherV2ValidateExecution(files: Array<TeacherArtifactFile>, prefi
         (value.kind, teacherV2String(execution, "transcriptHash"), value.sourceClass)
     } catch (e: IllegalArgumentException) { throw e }
     catch (_: Exception) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+}
+
+private func teacherV2SkillTestBundle(files: Array<TeacherArtifactFile>, candidateId: String,
+    candidateVersion: String, lineage: String): (String, String) {
+    let rows = HashMap<String, String>(); let fixtureHashes = HashMap<String, String>()
+    let fixtureBytesByPath = HashMap<String, String>()
+    let fixturePaths = ArrayList<String>()
+    var positive: Int64 = 0; var negative: Int64 = 0
+    var boundary: Int64 = 0; var generalization: Int64 = 0
+    for (file in files) {
+        if (!file.path.startsWith("${candidateId}/executions/") ||
+            !file.path.endsWith("/execution.json")) { continue }
+        let suffix = "/execution.json"; let runes = file.path.toRuneArray()
+        let prefix = String(runes[..runes.size - suffix.toRuneArray().size])
+        let execution = teacherV2ValidateExecution(files, prefix)
+        let fixture = JsonValue.fromStr(teacherV2File(files, "${prefix}/fixture.json").trimAscii()).asObject()
+        let fixtureId = teacherV2String(fixture, "fixtureId")
+        if (prefix != "${candidateId}/executions/${fixtureId}") {
+            throw IllegalArgumentException("candidate_test_evidence_invalid")
+        }
+        // Unit evidence remains mandatory for rules and valid for skills, but is not a skill bundle row.
+        if (execution[0] == "unit") { continue }
+        let fixturePath = "tests/${fixtureId}.txt"
+        let task = teacherV2String(fixture, "content").replace("\r\n", "\n").replace("\r", "\n")
+        let result = teacherV2String(fixture, "expectedEvidence")
+        let fixtureBytes = "{\"schemaVersion\":\"cangjie-teacher-skill-fixture-v1\"," +
+            "\"task\":\"${teacherV2Escape(task)}\",\"resultEvidence\":\"${teacherV2Escape(result)}\"}\n"
+        let fixtureHash = "sha256:${teacherStableHash(fixtureBytes)}"
+        let row = "{\"testId\":\"${teacherV2Escape(fixtureId)}\",\"kind\":\"${execution[0]}\"," +
+            "\"fixturePath\":\"${teacherV2Escape(fixturePath)}\",\"fixtureHash\":\"${fixtureHash}\"," +
+            "\"targetVersion\":\"1.0.0\",\"sourceClass\":\"${execution[2]}\"," +
+            "\"benchmarkDerived\":false,\"passed\":true," +
+            "\"resultHash\":\"sha256:${teacherStableHash(result)}\"}"
+        if (rows.contains(fixturePath) || fixtureId.isEmpty()) {
+            throw IllegalArgumentException("candidate_test_evidence_invalid")
+        }
+        rows.add(fixturePath, row); fixtureHashes.add(fixturePath, fixtureHash)
+        fixtureBytesByPath.add(fixturePath, fixtureBytes)
+        fixturePaths.add(fixturePath)
+        if (execution[0] == "positive") { positive += 1 }
+        else if (execution[0] == "negative") { negative += 1 }
+        else if (execution[0] == "boundary") { boundary += 1 }
+        else if (execution[0] == "generalization") { generalization += 1 }
+    }
+    if (positive < 1 || negative < 1 || boundary < 1 || generalization < 3) {
+        throw IllegalArgumentException("candidate_test_evidence_invalid")
+    }
+    let paths = fixturePaths.toArray(); sort(paths)
+    let sortedRows = ArrayList<String>(); let treeParts = ArrayList<String>()
+    for (path in paths) {
+        sortedRows.add(rows.get(path).getOrThrow())
+        let hash = fixtureHashes.get(path).getOrThrow()
+        treeParts.add("${path.toArray().size}:${path}${hash.toArray().size}:${hash}")
+    }
+    let actualFixturePaths = ArrayList<String>()
+    for (file in files) {
+        let prefix = "${candidateId}/tests/"
+        if (file.path.startsWith(prefix)) {
+            let relative = String(file.path.toRuneArray()[candidateId.toRuneArray().size + 1..])
+            if (!fixtureBytesByPath.contains(relative) ||
+                fixtureBytesByPath.get(relative).getOrThrow() != file.content) {
+                throw IllegalArgumentException("candidate_test_evidence_invalid")
+            }
+            actualFixturePaths.add(relative)
+        }
+    }
+    let actual = actualFixturePaths.toArray(); sort(actual)
+    if (actual != paths) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+    let treeHash = "sha256:${teacherStableHash(teacherJoin(treeParts.toArray(), ""))}"
+    let evidence = "{\"schemaVersion\":\"cangjie-teacher-skill-test-bundle-v1\"," +
+        "\"candidateId\":\"${teacherV2Escape(candidateId)}\"," +
+        "\"candidateVersion\":\"${teacherV2Escape(candidateVersion)}\",\"lineage\":\"${lineage}\"," +
+        "\"testsRoot\":\"tests\",\"testsTreeHash\":\"${treeHash}\"," +
+        "\"positiveCount\":${positive},\"negativeCount\":${negative}," +
+        "\"boundaryCount\":${boundary},\"generalizationCount\":${generalization}," +
+        "\"tests\":[" + teacherJoin(sortedRows.toArray(), ",") + "]}"
+    let evidenceHash = "sha256:${teacherStableHash(evidence)}"
+    (String(evidence.toRuneArray()[..evidence.toRuneArray().size - 1]) +
+        ",\"evidenceHash\":\"${evidenceHash}\"}", evidenceHash)
+}
+
+// Evidence selection is rule-local: another rule cannot supply a missing category or its hash.
+private func teacherContextRuleEvidenceHashesV2(files: Array<TeacherArtifactFile>,
+    ruleId: String): (String, String, String, String) {
+    let entries = ArrayList<(String, String, String)>(); let categories = HashSet<String>()
+    var generalizationCount: Int64 = 0
+    for (file in files) {
+        if (!file.path.startsWith("${ruleId}/tests/") || !file.path.endsWith("/execution.json")) {
+            continue
+        }
+        let suffix = "/execution.json"; let runes = file.path.toRuneArray()
+        let prefix = String(runes[..runes.size - suffix.toRuneArray().size])
+        let parts = prefix.split("/")
+        let executed = teacherV2ValidateExecution(files, prefix)
+        let fixture = JsonValue.fromStr(teacherV2File(files,
+            "${prefix}/fixture.json").trimAscii()).asObject()
+        if (parts.size != 3 || parts[0] != ruleId || parts[1] != "tests" ||
+            parts[2] != teacherV2String(fixture, "fixtureId")) {
+            throw IllegalArgumentException("candidate_test_evidence_invalid")
+        }
+        categories.add(executed[0])
+        entries.add((teacherV2String(fixture, "fixtureId"), executed[0], executed[1]))
+        if (executed[0] == "generalization" && executed[2] == "non_humaneval_experiment") {
+            generalizationCount += 1
+        }
+    }
+    if (!categories.contains("unit") || !categories.contains("positive") ||
+        !categories.contains("negative") || !categories.contains("boundary") ||
+        !categories.contains("generalization") || generalizationCount < 3) {
+        throw IllegalArgumentException("candidate_test_evidence_invalid")
+    }
+    (teacherFirstEvidenceHashByFixtureId(entries.toArray(), "positive"),
+        teacherFirstEvidenceHashByFixtureId(entries.toArray(), "negative"),
+        teacherFirstEvidenceHashByFixtureId(entries.toArray(), "boundary"),
+        teacherFirstEvidenceHashByFixtureId(entries.toArray(), "generalization"))
 }
 
 private func teacherV2DeriveLane(name: String, files: Array<TeacherArtifactFile>,
@@ -431,12 +551,11 @@ private func teacherV2DeriveLane(name: String, files: Array<TeacherArtifactFile>
         "humaneval_164_derived"
     }
     let visibleName = if (name == "rules") { "/AGENTS.md" } else { "/SKILL.md" }
-    let ids = HashSet<String>(); var visible = ""; let categories = HashMap<String, String>()
+    let ids = HashSet<String>(); var visible = ""
     var projectionAssets = match (base) {
         case Some(value) => if (name == "rules") { value.rulesAssets } else { value.skillsAssets }
         case None => Array<TeacherContextBaseAssetIdentity>()
     }
-    var generalizationCount: Int64 = 0
     for (file in files) {
         let parts = file.path.split("/")
         if (parts.size < 2 || !teacherArtifactSafeComponent(parts[0])) {
@@ -444,22 +563,42 @@ private func teacherV2DeriveLane(name: String, files: Array<TeacherArtifactFile>
         }
         ids.add(parts[0])
         if (file.path.endsWith(visibleName)) { visible += file.content }
-        if (file.path.endsWith("/execution.json")) {
-            let suffix = "/execution.json"; let runes = file.path.toRuneArray()
-            let prefix = String(runes[..runes.size - suffix.toRuneArray().size])
-            let executed = teacherV2ValidateExecution(files, prefix)
-            if (!categories.contains(executed[0])) { categories.add(executed[0], executed[1]) }
-            if (executed[0] == "generalization" && executed[2] == "non_humaneval_experiment") {
-                generalizationCount += 1
-            }
-        }
     }
-    if (ids.isEmpty() || ids.size > 16 || visible.isEmpty() ||
-        !categories.contains("positive") || !categories.contains("negative") ||
-        !categories.contains("boundary") || !categories.contains("generalization") ||
-        generalizationCount < 3 || (name == "rules" && !categories.contains("unit"))) {
+    if (ids.isEmpty() || ids.size > 16 || visible.isEmpty()) {
         throw IllegalArgumentException("candidate_test_evidence_invalid")
     }
+    let expectedPaths = HashSet<String>()
+    for (id in ids) {
+        expectedPaths.add("${id}/candidate-manifest.json")
+        expectedPaths.add("${id}/operation.json")
+        expectedPaths.add(if (name == "rules") { "${id}/AGENTS.md" } else { "${id}/SKILL.md" })
+        if (name == "skills") { expectedPaths.add("${id}/test-bundle.json") }
+    }
+    for (file in files) {
+        if (!file.path.endsWith("/execution.json")) { continue }
+        let suffix = "/execution.json"; let runes = file.path.toRuneArray()
+        let prefix = String(runes[..runes.size - suffix.toRuneArray().size])
+        let parts = prefix.split("/")
+        if (parts.size != 3 ||
+            (name == "rules" && parts[1] != "tests") ||
+            (name == "skills" && parts[1] != "executions")) {
+            throw IllegalArgumentException("candidate_set_schema_invalid")
+        }
+        for (leaf in ["fixture.json", "expected.txt", "actual.txt", "transcript.txt", "execution.json"]) {
+            expectedPaths.add("${prefix}/${leaf}")
+        }
+        let executed = teacherV2ValidateExecution(files, prefix)
+        if (name == "skills" && executed[0] != "unit") {
+            expectedPaths.add("${parts[0]}/tests/${parts[2]}.txt")
+        }
+    }
+    for (file in files) {
+        if (!expectedPaths.contains(file.path)) {
+            throw IllegalArgumentException("candidate_set_schema_invalid")
+        }
+        expectedPaths.remove(file.path)
+    }
+    if (!expectedPaths.isEmpty()) { throw IllegalArgumentException("candidate_set_schema_invalid") }
     for (id in ids) {
         let operation = JsonValue.fromStr(teacherV2File(files, "${id}/operation.json").trimAscii()).asObject()
         if (operation.getFields().size != 6 || teacherV2String(operation, "schemaVersion") !=
@@ -480,16 +619,17 @@ private func teacherV2DeriveLane(name: String, files: Array<TeacherArtifactFile>
             baseAssets)
         var assetContent = ""
         if (name == "rules") {
+            let ruleEvidence = teacherContextRuleEvidenceHashesV2(files, id)
             let candidateRaw = teacherV2File(files, "${id}/candidate-manifest.json").trimAscii()
             let candidate = JsonValue.fromStr(candidateRaw).asObject()
             if (candidate.getFields().size != 17 || teacherV2String(candidate, "schemaVersion") !=
                 "teacher-rule-candidate-v1" || teacherV2String(candidate, "ruleId") != id ||
                 teacherV2String(candidate, "assetRole") != "rules" ||
                 teacherV2String(candidate, "assetLineage") != lineage ||
-                teacherV2String(candidate, "positiveEvidenceHash") != categories.get("positive").getOrThrow() ||
-                teacherV2String(candidate, "negativeEvidenceHash") != categories.get("negative").getOrThrow() ||
-                teacherV2String(candidate, "boundaryEvidenceHash") != categories.get("boundary").getOrThrow() ||
-                teacherV2String(candidate, "generalizationEvidenceHash") != categories.get("generalization").getOrThrow()) {
+                teacherV2String(candidate, "positiveEvidenceHash") != ruleEvidence[0] ||
+                teacherV2String(candidate, "negativeEvidenceHash") != ruleEvidence[1] ||
+                teacherV2String(candidate, "boundaryEvidenceHash") != ruleEvidence[2] ||
+                teacherV2String(candidate, "generalizationEvidenceHash") != ruleEvidence[3]) {
                 throw IllegalArgumentException("candidate_lane_hash_mismatch")
             }
             let fields = [teacherV2String(candidate, "ruleId"), teacherV2String(candidate, "conceptId"),
@@ -518,16 +658,40 @@ private func teacherV2DeriveLane(name: String, files: Array<TeacherArtifactFile>
             let candidateRaw = teacherV2File(files, "${id}/candidate-manifest.json").trimAscii()
             let candidate = JsonValue.fromStr(candidateRaw).asObject()
             let bundle = teacherV2File(files, "${id}/test-bundle.json").trimAscii()
+            let expectedBundle = teacherV2SkillTestBundle(files, id,
+                teacherV2String(candidate, "version"), lineage)
+            let candidateCanonical = teacherJoin([
+                id, teacherV2String(candidate, "version"), teacherV2String(candidate, "title"),
+                teacherV2String(candidate, "procedure"), teacherV2String(candidate, "sourceCategory"),
+                teacherV2String(candidate, "applicability"), teacherV2String(candidate, "lineage"),
+                teacherV2String(candidate, "testEvidenceHash")
+            ].map({field: String => "${field.toArray().size}:${field}"}), "")
+            let candidateContentHash = "sha256:${teacherStableHash(candidateCanonical)}"
+            let expectedSkill = "---\nname: ${id}\nversion: ${teacherV2String(candidate, "version")}\n" +
+                "source: ${teacherV2String(candidate, "sourceCategory")}\n" +
+                "lineage: ${teacherV2String(candidate, "lineage")}\n" +
+                "content-hash: ${candidateContentHash}\n---\n\n" +
+                "# ${teacherV2String(candidate, "title")}\n\n" +
+                "Applicability: ${teacherV2String(candidate, "applicability")}\n\n" +
+                "${teacherV2String(candidate, "procedure")}\n"
             if (candidate.getFields().size != 15 || teacherV2String(candidate, "schemaVersion") !=
                 "cangjie-teacher-skill-candidate-v1" || teacherV2String(candidate, "id") != id ||
+                teacherV2String(candidate, "version") != "1.0.0" ||
                 teacherV2String(candidate, "skillPath") != "SKILL.md" ||
                 teacherV2String(candidate, "testBundlePath") != "test-bundle.json" ||
                 teacherV2String(candidate, "lineage") != lineage ||
+                !((teacherV2String(candidate, "sourceCategory") == "general_engineering" &&
+                    lineage == "independent") ||
+                    (teacherV2String(candidate, "sourceCategory") == "teacher_derived" &&
+                    lineage == "humaneval_164_derived")) ||
+                assetContent != expectedSkill ||
                 teacherV2String(candidate, "skillContentHash") !=
-                    "sha256:${teacherStableHash(teacherV2File(files, "${id}/SKILL.md"))}" ||
+                    "sha256:${teacherStableHash(assetContent)}" ||
+                bundle != expectedBundle[0] ||
                 teacherV2String(candidate, "testBundleHash") != "sha256:${teacherStableHash(bundle)}" ||
-                !teacherV2Hash(teacherV2String(candidate, "testEvidenceHash")) ||
-                teacherV2String(candidate, "candidateContentHash") !=
+                teacherV2String(candidate, "testEvidenceHash") != expectedBundle[1] ||
+                teacherV2String(candidate, "candidateContentHash") != candidateContentHash ||
+                candidateContentHash !=
                     teacherV2String(operation, "newHash")) {
                 throw IllegalArgumentException("candidate_lane_hash_mismatch")
             }

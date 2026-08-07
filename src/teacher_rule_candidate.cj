@@ -52,10 +52,13 @@ private func teacherRuleVisibleSafe(value: String): Bool {
 }
 
 private func teacherRuleEvidenceHash(tests: TeacherRuleTestBundle, kind: String): String {
+    let entries = ArrayList<(String, String, String)>()
     for (execution in tests.executions) {
-        if (execution.fixture.kind == kind && execution.passed) { return execution.transcriptHash }
+        if (execution.passed) {
+            entries.add((execution.fixture.fixtureId, execution.fixture.kind, execution.transcriptHash))
+        }
     }
-    ""
+    teacherFirstEvidenceHashByFixtureId(entries.toArray(), kind)
 }
 
 private func teacherRuleCanonical(value: TeacherRuleCandidate): String {

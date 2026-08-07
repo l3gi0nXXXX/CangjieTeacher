@@ -1,0 +1,1 @@
+{"schemaVersion":"cangjie-teacher-skill-fixture-v1","task":"Apply Rune review broadly.","resultEvidence":"general-ok"}
