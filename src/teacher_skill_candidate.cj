@@ -42,6 +42,26 @@ public class TeacherFailureClassification {
     }
 }
 
+public class TeacherFailureAssetClassification {
+    public let schemaVersion: String
+    public let failureEvidenceHash: String
+    public let gapKind: String
+    public let knowledgeEligible: Bool
+    public let skillEligible: Bool
+    public let rulesEligible: Bool
+    public let classificationReasonCode: String
+    public let classificationEvidenceHash: String
+    public init(schemaVersion: String, failureEvidenceHash: String, gapKind: String,
+        knowledgeEligible: Bool, skillEligible: Bool, rulesEligible: Bool,
+        classificationReasonCode: String, classificationEvidenceHash: String) {
+        this.schemaVersion = schemaVersion; this.failureEvidenceHash = failureEvidenceHash
+        this.gapKind = gapKind; this.knowledgeEligible = knowledgeEligible
+        this.skillEligible = skillEligible; this.rulesEligible = rulesEligible
+        this.classificationReasonCode = classificationReasonCode
+        this.classificationEvidenceHash = classificationEvidenceHash
+    }
+}
+
 public class TeacherSkillFixture {
     public let fixtureId: String
     public let task: String
@@ -217,6 +237,115 @@ public func parseTeacherFailureClassification(raw: String): TeacherFailureClassi
         throw IllegalArgumentException("malformed_json")
     }
     catch (_: Exception) { throw IllegalArgumentException("malformed_json") }
+}
+
+private func renderTeacherFailureAssetClassificationEvidence(
+    value: TeacherFailureAssetClassification): String {
+    "{\"schemaVersion\":\"${value.schemaVersion}\",\"failureEvidenceHash\":\"${value.failureEvidenceHash}\"," +
+        "\"gapKind\":\"${value.gapKind}\",\"knowledgeEligible\":${value.knowledgeEligible}," +
+        "\"skillEligible\":${value.skillEligible},\"rulesEligible\":${value.rulesEligible}," +
+        "\"classificationReasonCode\":\"${value.classificationReasonCode}\"}"
+}
+
+public func renderTeacherFailureAssetClassification(value: TeacherFailureAssetClassification): String {
+    let evidence = renderTeacherFailureAssetClassificationEvidence(value)
+    if (value.classificationEvidenceHash != teacherStableHash(evidence)) {
+        throw IllegalArgumentException("classification_evidence_hash_mismatch")
+    }
+    let runes = evidence.toRuneArray()
+    String(runes[..runes.size - 1]) +
+        ",\"classificationEvidenceHash\":\"${value.classificationEvidenceHash}\"}"
+}
+
+private func teacherFailureAssetEligibilityValid(value: TeacherFailureAssetClassification): Bool {
+    match (value.gapKind) {
+        case "knowledge_gap" => value.knowledgeEligible && !value.skillEligible && !value.rulesEligible
+        case "procedure_gap" => !value.knowledgeEligible && value.skillEligible && !value.rulesEligible
+        case "rules_gap" => !value.knowledgeEligible && !value.skillEligible && value.rulesEligible
+        case "knowledge_procedure_gap" => value.knowledgeEligible && value.skillEligible && !value.rulesEligible
+        case "knowledge_rules_gap" => value.knowledgeEligible && !value.skillEligible && value.rulesEligible
+        case "procedure_rules_gap" => !value.knowledgeEligible && value.skillEligible && value.rulesEligible
+        case "all_assets_gap" => value.knowledgeEligible && value.skillEligible && value.rulesEligible
+        case "none" | "reasoning_error" | "translation_defect" | "infrastructure_failure" =>
+            !value.knowledgeEligible && !value.skillEligible && !value.rulesEligible
+        case _ => false
+    }
+}
+
+private func teacherFailureAssetReasonValid(value: TeacherFailureAssetClassification): Bool {
+    match (value.gapKind) {
+        case "knowledge_gap" => value.classificationReasonCode == "missing_versioned_fact"
+        case "procedure_gap" => value.classificationReasonCode == "missing_reusable_procedure"
+        case "rules_gap" => value.classificationReasonCode == "missing_global_invariant"
+        case "knowledge_procedure_gap" | "knowledge_rules_gap" | "procedure_rules_gap" | "all_assets_gap" =>
+            value.classificationReasonCode == "multiple_reusable_gaps"
+        case "reasoning_error" => value.classificationReasonCode == "reasoning_only"
+        case "translation_defect" => value.classificationReasonCode == "translation_defect_only"
+        case "infrastructure_failure" => value.classificationReasonCode == "infrastructure_only"
+        case "none" => value.classificationReasonCode == "no_reusable_gap"
+        case _ => false
+    }
+}
+
+public func parseTeacherFailureAssetClassification(raw: String): TeacherFailureAssetClassification {
+    try {
+        let object = JsonValue.fromStr(raw).asObject()
+        if (object.getFields().size != 8) {
+            throw IllegalArgumentException("classification_schema_fields_invalid")
+        }
+        for (name in ["schemaVersion", "failureEvidenceHash", "gapKind", "classificationReasonCode",
+            "classificationEvidenceHash"]) {
+            match (object.get(name)) {
+                case Some(field) => try { _ = field.asString().getValue() } catch (_: Exception) {
+                    throw IllegalArgumentException("classification_schema_fields_invalid")
+                }
+                case None => throw IllegalArgumentException("classification_schema_fields_invalid")
+            }
+        }
+        for (name in ["knowledgeEligible", "skillEligible", "rulesEligible"]) {
+            match (object.get(name)) {
+                case Some(field) => try { _ = field.asBool().getValue() } catch (_: Exception) {
+                    throw IllegalArgumentException("classification_schema_fields_invalid")
+                }
+                case None => throw IllegalArgumentException("classification_schema_fields_invalid")
+            }
+        }
+        let value = TeacherFailureAssetClassification(teacherFailureString(object, "schemaVersion"),
+            teacherFailureString(object, "failureEvidenceHash"), teacherFailureString(object, "gapKind"),
+            teacherFailureBool(object, "knowledgeEligible"), teacherFailureBool(object, "skillEligible"),
+            teacherFailureBool(object, "rulesEligible"), teacherFailureString(object, "classificationReasonCode"),
+            teacherFailureString(object, "classificationEvidenceHash"))
+        if (value.schemaVersion != "ckb-completion-failure-classification-v2" ||
+            !teacherFailureHex(value.failureEvidenceHash)) {
+            throw IllegalArgumentException("classification_identity_invalid")
+        }
+        if (!teacherFailureAssetEligibilityValid(value) || !teacherFailureAssetReasonValid(value)) {
+            throw IllegalArgumentException("classification_eligibility_invalid")
+        }
+        if (!teacherFailureHex(value.classificationEvidenceHash) ||
+            value.classificationEvidenceHash != teacherStableHash(renderTeacherFailureAssetClassificationEvidence(value))) {
+            throw IllegalArgumentException("classification_evidence_hash_mismatch")
+        }
+        if (raw != renderTeacherFailureAssetClassification(value)) {
+            throw IllegalArgumentException("classification_schema_fields_invalid")
+        }
+        value
+    } catch (e: IllegalArgumentException) {
+        if (["classification_schema_fields_invalid", "classification_identity_invalid",
+            "classification_eligibility_invalid", "classification_evidence_hash_mismatch"].contains(e.message)) { throw e }
+        throw IllegalArgumentException("malformed_json")
+    } catch (_: Exception) { throw IllegalArgumentException("malformed_json") }
+}
+
+public func classifyTeacherAssetOutputKind(value: TeacherFailureAssetClassification): String {
+    if (value.knowledgeEligible && value.skillEligible && value.rulesEligible) { "all" }
+    else if (value.knowledgeEligible && value.skillEligible) { "knowledge_skill" }
+    else if (value.knowledgeEligible && value.rulesEligible) { "knowledge_rules" }
+    else if (value.skillEligible && value.rulesEligible) { "skill_rules" }
+    else if (value.knowledgeEligible) { "knowledge" }
+    else if (value.skillEligible) { "skill" }
+    else if (value.rulesEligible) { "rules" }
+    else { "none" }
 }
 
 public func classifyTeacherOutputKind(input: TeacherCompletionFailureInput,

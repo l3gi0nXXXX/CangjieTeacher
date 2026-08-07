@@ -1,12 +1,24 @@
 package cangjie_teacher_test
 
 import std.unittest.testmacro.*
+import std.collection.*
 import std.fs.*
 import std.time.*
 import cangjie_teacher.*
 
 private let FAILURE_FIXTURE = "{\"schemaVersion\":\"ckb-completion-failure-v1\",\"runId\":\"recert-fixture-run\",\"caseId\":\"CJ-HUMANEVAL-007\",\"datasetVersion\":\"cangjie-humaneval-164-v1\",\"generationProtocol\":\"completion-only-v1\",\"completionHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"baseStatus\":\"failed\",\"plusStatus\":\"failed\",\"failureKind\":\"test_failure\",\"failureObservation\":\"student_completion_test_failed 中文😀\",\"assetLineage\":\"independent\",\"evidenceHash\":\"f08453591302a46c4acc04c43d9bdf456679fae27b354bbca7ebecb194c1e773\"}"
 private let CLASSIFICATION_FIXTURE = "{\"schemaVersion\":\"ckb-completion-failure-classification-v1\",\"failureEvidenceHash\":\"f08453591302a46c4acc04c43d9bdf456679fae27b354bbca7ebecb194c1e773\",\"gapKind\":\"mixed_gap\",\"knowledgeEligible\":true,\"skillEligible\":true,\"classificationEvidenceHash\":\"1ff85ffec78c69504a2f98146daebb75557d340b6366e92875c4c1acd4b44a16\"}"
+
+private func failureAssetFixture(gapKind: String, knowledge: Bool, skill: Bool, rules: Bool,
+    reason: String): String {
+    let evidence = "{\"schemaVersion\":\"ckb-completion-failure-classification-v2\"," +
+        "\"failureEvidenceHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"," +
+        "\"gapKind\":\"${gapKind}\",\"knowledgeEligible\":${knowledge}," +
+        "\"skillEligible\":${skill},\"rulesEligible\":${rules},\"classificationReasonCode\":\"${reason}\"}"
+    let runes = evidence.toRuneArray()
+    String(runes[..runes.size - 1]) +
+        ",\"classificationEvidenceHash\":\"${teacherStableHash(evidence)}\"}"
+}
 
 private func skillFixtures(): Array<TeacherSkillFixture> {
     [
@@ -30,8 +42,98 @@ private func skillCandidate(): TeacherSkillCandidate {
 
 private func artifactCandidate(): TeacherSkillCandidate { skillCandidate() }
 
+private let FAILURE_ASSET_FIXTURE_ROOT = "fixtures/completion_failure_assets"
+
+private func failureAssetFixtureLines(name: String): Array<String> {
+    let out = ArrayList<String>()
+    for (line in teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/${name}").split("\n")) {
+        if (!line.isEmpty()) { out.add(line) }
+    }
+    out.toArray()
+}
+
+private func failureAssetHexNibble(value: Rune): UInt8 {
+    match (value) {
+        case r'0' => UInt8(0); case r'1' => UInt8(1); case r'2' => UInt8(2); case r'3' => UInt8(3)
+        case r'4' => UInt8(4); case r'5' => UInt8(5); case r'6' => UInt8(6); case r'7' => UInt8(7)
+        case r'8' => UInt8(8); case r'9' => UInt8(9); case r'a' => UInt8(10); case r'b' => UInt8(11)
+        case r'c' => UInt8(12); case r'd' => UInt8(13); case r'e' => UInt8(14); case r'f' => UInt8(15)
+        case _ => throw IllegalArgumentException("fixture_hex_invalid")
+    }
+}
+
+private func failureAssetHexBytes(raw: String): Array<UInt8> {
+    let hex = raw.trimAscii().toRuneArray()
+    if (hex.size == 0 || hex.size % 2 != 0) { throw IllegalArgumentException("fixture_hex_invalid") }
+    let out = ArrayList<UInt8>()
+    for (i in 0..hex.size: 2) {
+        out.add(failureAssetHexNibble(hex[i]) * UInt8(16) + failureAssetHexNibble(hex[i + 1]))
+    }
+    out.toArray()
+}
+
 @Test
 public class TeacherSkillCandidateTest {
+    // S0-UT-01: v2 parses and seals to its exact canonical bytes.
+    @TestCase public func failureAssetV2CanonicalBytesMatchAcrossRepositories(): Unit {
+        let fixture = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/classification-v2-valid.jsonl")
+        @Expect(teacherStableHash(fixture), "5fa4aa906f5a147d220372cbb67533565ac7222419bf6f7c462cc476c0a31768")
+        let lines = failureAssetFixtureLines("classification-v2-valid.jsonl")
+        @Expect(lines.size, 11)
+        for (raw in lines) {
+            let parsed = parseTeacherFailureAssetClassification(raw)
+            @Expect(renderTeacherFailureAssetClassification(parsed), raw)
+            @Expect(parsed.schemaVersion, "ckb-completion-failure-classification-v2")
+        }
+    }
+
+    // S0-BND-01: the v1 Unicode fixture remains readable and every v2 reason boundary round-trips.
+    @TestCase public func failureAssetV2BoundariesAreUtf8Safe(): Unit {
+        let utf8 = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/completion-failure-v1-utf8.json").trimAscii()
+        @Expect(parseTeacherCompletionFailureInput(utf8).failureObservation,
+            "student_completion_test_failed 中文😀")
+        let legacy = failureAssetFixtureLines("classification-v1-compatibility.jsonl")
+        @Expect(legacy.size, 1)
+        let parsedLegacy = parseTeacherFailureClassification(legacy[0])
+        @Expect(parsedLegacy.knowledgeEligible, true)
+        @Expect(parsedLegacy.skillEligible, true)
+        let invalidBytes = failureAssetHexBytes(
+            teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/classification-invalid-utf8.hex"))
+        var invalidEncoding = "not_rejected"
+        try { _ = String.fromUtf8(invalidBytes) } catch (_: Exception) { invalidEncoding = "invalid_response_encoding" }
+        @Expect(invalidEncoding, "invalid_response_encoding")
+    }
+
+    // S0-POS-01: the three booleans map to the exact eight output kinds.
+    @TestCase public func failureAssetOutputKindsAreExact(): Unit {
+        let expected = ["none", "knowledge", "skill", "rules", "knowledge_skill", "knowledge_rules",
+            "skill_rules", "all", "none", "none", "none"]
+        let lines = failureAssetFixtureLines("classification-v2-valid.jsonl")
+        @Expect(lines.size, expected.size)
+        for (i in 0..lines.size) {
+            @Expect(classifyTeacherAssetOutputKind(parseTeacherFailureAssetClassification(lines[i])), expected[i])
+        }
+    }
+
+    // S0-NEG-01: field, schema, eligibility, reason, hash and canonical-byte drift all fail closed.
+    @TestCase public func failureAssetV2RejectsContractDrift(): Unit {
+        let diagnostics = ["classification_schema_fields_invalid", "classification_schema_fields_invalid",
+            "classification_schema_fields_invalid", "classification_schema_fields_invalid",
+            "classification_evidence_hash_mismatch", "classification_eligibility_invalid",
+            "classification_eligibility_invalid"]
+        let drift = failureAssetFixtureLines("classification-v2-contract-drift.jsonl")
+        @Expect(drift.size, diagnostics.size)
+        for (i in 0..drift.size) {
+            var actual = "not_rejected"
+            try { _ = parseTeacherFailureAssetClassification(drift[i]) } catch (e: Exception) { actual = e.message }
+            @Expect(actual, diagnostics[i])
+        }
+        var malformed = "not_rejected"
+        try { _ = parseTeacherFailureAssetClassification("{malformed-json") }
+        catch (e: Exception) { malformed = e.message }
+        @Expect(malformed, "malformed_json")
+    }
+
     // P2-UT-01 / P6-UT-01 / L2: exact bytes and hashes are shared with CKB's frozen fixture.
     @TestCase public func frozenFailureFixtureAndSkillExportAreDeterministic(): Unit {
         let input = parseTeacherCompletionFailureInput(FAILURE_FIXTURE)
