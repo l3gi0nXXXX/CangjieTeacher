@@ -5,6 +5,7 @@ import std.posix.*
 import std.time.*
 import std.collection.*
 import std.convert.Parsable
+import stdx.encoding.json.*
 
 public class TeacherCliOptions {
     public var command = ""
@@ -24,6 +25,21 @@ public class TeacherCliOptions {
     public var outputRoot = ""
     public var sourceExport = ""
     public var extractor = "codex"
+    public var sourceManifest = ""
+    public var failurePath = ""
+    public var expectedHash = ""
+    public var baseContextManifest = ""
+    public var output = ""
+    public var candidateSetHash = ""
+    public var decision = ""
+    public var reviewer = ""
+    public var reason = ""
+    public var approvedAtUtc = ""
+    public var rulesContent = ""
+    public var skillsContent = ""
+    public var knowledgeContent = ""
+    public var knowledgeVersion = ""
+    public var json = false
     public init() {}
 }
 
@@ -35,6 +51,7 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
         if (args[i] == "--help") { out.command = "help"; i += 1; continue }
         if (!args[i].startsWith("--") && out.command.isEmpty()) { out.command = args[i]; i += 1; continue }
         if (args[i] == "--local-only") { if (seen.contains(args[i])) { throw IllegalArgumentException("duplicate_cli_option") }; seen.add(args[i]); out.localOnly = true; i += 1; continue }
+        if (args[i] == "--json") { if (seen.contains(args[i])) { throw IllegalArgumentException("duplicate_cli_option") }; seen.add(args[i]); out.json = true; i += 1; continue }
         if (i + 1 >= args.size) { throw IllegalArgumentException("missing_cli_option_value") }
         if (seen.contains(args[i])) { throw IllegalArgumentException("duplicate_cli_option") }
         seen.add(args[i])
@@ -55,11 +72,91 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
             case "--output-root" => out.outputRoot = value
             case "--source-export" => out.sourceExport = value
             case "--extractor" => out.extractor = value
+            case "--source-manifest" => out.sourceManifest = value
+            case "--failure" => out.failurePath = value
+            case "--expected-hash" => out.expectedHash = value
+            case "--base-context-manifest" => out.baseContextManifest = value
+            case "--output" => out.output = value
+            case "--candidate-set-hash" => out.candidateSetHash = value
+            case "--decision" => out.decision = value
+            case "--reviewer" => out.reviewer = value
+            case "--reason" => out.reason = value
+            case "--approved-at-utc" => out.approvedAtUtc = value
+            case "--rules-content" => out.rulesContent = value
+            case "--skills-content" => out.skillsContent = value
+            case "--knowledge-content" => out.knowledgeContent = value
+            case "--knowledge-version" => out.knowledgeVersion = value
             case _ => throw IllegalArgumentException("unknown_cli_option")
         }
         i += 2
     }
     out
+}
+
+private func teacherCliJsonString(object: JsonObject, name: String): String {
+    match (object.get(name)) { case Some(value) => value.asString().getValue(); case None => "" }
+}
+
+private func teacherCliSafeReviewText(value: String): Bool {
+    if (value.isEmpty() || value.toArray().size > 1024) { return false }
+    let lower = value.toAsciiLower()
+    !lower.contains("token=") && !lower.contains("authorization") && !lower.contains("/users/") &&
+        !lower.contains("/private/")
+}
+
+private func teacherCliJsonEscape(value: String): String {
+    value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+        .replace("\r", "\\r").replace("\t", "\\t")
+}
+
+private func runTeacherContextSeedBuild(options: TeacherCliOptions): Int64 {
+    if (options.sourceManifest.isEmpty() || options.rulesContent.isEmpty() ||
+        options.skillsContent.isEmpty() || options.knowledgeContent.isEmpty() ||
+        options.knowledgeVersion.isEmpty() || options.outputRoot.isEmpty() ||
+        options.baseContextManifest != "none" || options.runId.isEmpty()) {
+        throw IllegalArgumentException("missing_required_cli_option")
+    }
+    let source = parseTeacherContextSourceManifest(teacherReadUtf8File(options.sourceManifest).trimAscii())
+    let candidate = buildTeacherIndependentContextSeed(source, options.runId,
+        teacherReadUtf8File(options.rulesContent), teacherReadUtf8File(options.skillsContent),
+        teacherReadUtf8File(options.knowledgeContent), options.knowledgeVersion)
+    _ = exportTeacherContextCandidateSet(candidate, options.outputRoot)
+    if (options.json) { println("{\"ok\":true,\"candidateSetHash\":\"${candidate.candidateSetHash}\"}") }
+    else { println("context seed built candidateSet=${candidate.candidateSetId} validation=scaffold_contract") }
+    0
+}
+
+private func runTeacherFailureAssetsApprove(options: TeacherCliOptions): Int64 {
+    if (options.sourceExport.isEmpty() || options.output.isEmpty() || options.candidateSetHash.isEmpty() ||
+        !["approve", "reject"].contains(options.decision) || !teacherCliSafeReviewText(options.reviewer) ||
+        !teacherCliSafeReviewText(options.reason) || options.approvedAtUtc.isEmpty()) {
+        throw IllegalArgumentException("missing_required_cli_option")
+    }
+    let manifestPath = Path(options.sourceExport).join("candidate-set-manifest.json")
+    let raw = teacherReadUtf8File(manifestPath.toString()).trimAscii()
+    let object = try { JsonValue.fromStr(raw).asObject() } catch (_: Exception) {
+        throw IllegalArgumentException("candidate_set_schema_invalid")
+    }
+    let actual = teacherCliJsonString(object, "candidateSetHash")
+    let marker = ",\"candidateSetHash\":\""
+    let parts = raw.split(marker)
+    if (object.getFields().size != 20 || parts.size != 2 || !parts[1].endsWith("\"}") ||
+        actual != options.candidateSetHash ||
+        actual != "sha256:${teacherStableHash(parts[0] + "}")}" ||
+        raw != parts[0] + marker + actual + "\"}") {
+        throw IllegalArgumentException("candidate_approval_hash_mismatch")
+    }
+    let approval = "{\"schemaVersion\":\"teacher-student-context-approval-v1\"," +
+        "\"candidateSetHash\":\"${actual}\",\"rulesHash\":\"${teacherCliJsonString(object, "rulesHash")}\"," +
+        "\"skillsHash\":\"${teacherCliJsonString(object, "skillsHash")}\"," +
+        "\"knowledgeCandidateHash\":\"${teacherCliJsonString(object, "knowledgeCandidateHash")}\"," +
+        "\"decision\":\"${options.decision}\",\"reviewer\":\"${teacherCliJsonEscape(options.reviewer)}\"," +
+        "\"reason\":\"${teacherCliJsonEscape(options.reason)}\",\"approvedAtUtc\":\"${teacherCliJsonEscape(options.approvedAtUtc)}\"}"
+    if (exists(Path(options.output))) { throw IllegalArgumentException("candidate_approval_hash_mismatch") }
+    _ = teacherAtomicWrite(options.output, approval + "\n")
+    if (options.json) { println("{\"ok\":true,\"decision\":\"${options.decision}\"}") }
+    else { println("candidate review recorded decision=${options.decision}") }
+    0
 }
 
 public func loadTeacherDatasetManifestFile(path: String, checksum: String): TeacherDatasetManifest {
@@ -227,6 +324,19 @@ public func cangjieTeacherCliMain(args: Array<String>): Int64 {
         if (options.command == "candidate-reexport") {
             return runTeacherCandidateReexport(options)
         }
+        if (options.command == "context-seed-build") { return runTeacherContextSeedBuild(options) }
+        if (options.command == "failure-assets-approve") { return runTeacherFailureAssetsApprove(options) }
+        if (options.command == "failure-assets-build" || options.command == "failure-assets-reexport") {
+            if (options.failurePath.isEmpty() || options.expectedHash.isEmpty() ||
+                options.baseContextManifest.isEmpty() || options.outputRoot.isEmpty()) {
+                throw IllegalArgumentException("missing_required_cli_option")
+            }
+            let failure = teacherReadUtf8File(options.failurePath)
+            if (teacherStableHash(failure) != options.expectedHash) {
+                throw IllegalArgumentException("candidate_set_hash_mismatch")
+            }
+            throw IllegalArgumentException("classification_requires_review")
+        }
         println(teacherCliUsage())
         2
     } catch (e: Exception) {
@@ -236,5 +346,5 @@ public func cangjieTeacherCliMain(args: Array<String>): Int64 {
 }
 
 private func teacherCliUsage(): String {
-    "usage: cangjie_teacher manifest-check --manifest <path> --checksum <sha256> | hash-directory --starter-root <path> | run --root <private-root> --manifest <path> --checksum <sha256> --starter-root <path> --tests-root <path> --run-id <id> --repo-root <path> --local-only [--case-id <id>] [--codex <path>] [--model <id>] [--timeout-ms <ms>] | candidate-build --root <private-root> --manifest <path> --checksum <sha256> --authority-gap <path> --run-id <id> --output-root <path> [--extractor <path>] [--model <id>] [--timeout-ms <ms>] | candidate-reexport --root <private-root> --manifest <path> --checksum <sha256> --authority-gap <path> --run-id <id> --source-export <path> --output-root <path> [--timeout-ms <ms>]"
+    "usage: cangjie_teacher <manifest-check|hash-directory|run|candidate-build|candidate-reexport|context-seed-build|failure-assets-build|failure-assets-reexport|failure-assets-approve> [options]"
 }

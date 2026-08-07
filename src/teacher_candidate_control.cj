@@ -45,6 +45,15 @@ public class TeacherAtomExecutionResult {
     public var ok=false;public var diagnostic="atom_test_failed";public var evidenceJson="";public var feedback="";public init(){}
 }
 
+// Shared execution boundary for both the legacy benchmark-gap flow and the
+// failure-asset knowledge adapter. It deliberately reuses the established
+// atom runner instead of introducing a second knowledge publication path.
+public func executeTeacherKnowledgeAtomCandidate(raw: String, workspaceRoot: String,
+    executor!: TeacherCommandExecutor = NativeTeacherCommandExecutor(),
+    timeoutMillis!: Int64 = 600000): TeacherAtomExecutionResult {
+    executeTeacherAtomTestBundle(raw, workspaceRoot, executor: executor, timeoutMillis: timeoutMillis)
+}
+
 public class TeacherAuthorityRelevanceResult {
     public var ok=false;public var diagnostic="authority_relevance_failed";public var feedback=""
     public let anchors=ArrayList<String>()
