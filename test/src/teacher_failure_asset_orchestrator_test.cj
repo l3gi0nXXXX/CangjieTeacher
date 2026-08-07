@@ -7,6 +7,64 @@ import cangjie_teacher.*
 
 @Test
 public class TeacherFailureAssetOrchestratorTest {
+    @TestCase public func candidateSetV2GoldenTreeBindsInventoryAndApproval(): Unit {
+        let fixtureRoot = "fixtures/student_context_candidate_v2"
+        let candidateRoot = "${fixtureRoot}/candidate-set-v2"
+        let candidate = parseTeacherContextCandidateSetDirectoryV2(candidateRoot)
+        @Expect(candidate.candidateSetHash,
+            "sha256:93f007c7b27d288a7999b79aed876832a6df4e9fc3ec57df7b9f4ead4816a213")
+        @Expect(candidate.assetInventoryHash,
+            "sha256:32c55bf2fadaca204c1a889460371d32db93b85c1da2bc43cf5e790b0151f044")
+        @Expect(candidate.rules.treeHash,
+            "sha256:00f8456795b3739b4623a85dd223ec31e32dd1094cd74fe99acb68a6100d7f1c")
+        @Expect(candidate.skills.treeHash,
+            "sha256:dabc128b1f21889c7a9d48661caefd3b148b248533e4a8e4b55fd840c3ee5bd9")
+        @Expect(candidate.knowledge.treeHash,
+            "sha256:2a307aa2890878a1cb99f84af3cc95e992adcc882040c1773b598d5cda08d09a")
+        @Expect(renderTeacherContextCandidateSetManifestV2(candidate),
+            teacherReadUtf8File("${candidateRoot}/candidate-set-manifest.json").trimAscii())
+        let approval = teacherReadUtf8File("${fixtureRoot}/approval-v2.json").trimAscii()
+        @Expect(validateTeacherContextApprovalV2(approval, candidate), "approve")
+        @Expect(teacherStableHash(teacherReadUtf8File("${fixtureRoot}/SHA256SUMS")),
+            "085adc27c2686b5fc286f9a6600ad215ca49cf18500594e46af8534d0ab549ca")
+
+        let root = "/tmp/teacher-context-v2-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            Directory.create(Path("${root}/exports"), recursive: true)
+            @Expect(exportTeacherContextCandidateSetV2(candidate, root, "${root}/exports"),
+                renderTeacherContextCandidateSetManifestV2(candidate))
+            let exported = "${root}/exports/${candidate.candidateSetId}"
+            @Expect(parseTeacherContextCandidateSetDirectoryV2(exported).candidateSetHash,
+                candidate.candidateSetHash)
+            @Expect(exportTeacherContextCandidateSetV2(candidate, root, "${root}/exports"),
+                renderTeacherContextCandidateSetManifestV2(candidate))
+
+            let tampered = "${root}/tampered"
+            teacherCopyTree(candidateRoot, tampered)
+            _ = teacherAtomicWrite("${tampered}/skills/rune-safe-review/SKILL.md", "tampered\n")
+            var tamperDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(tampered) }
+            catch (e: Exception) { tamperDiagnostic = e.message }
+            @Expect(tamperDiagnostic, "candidate_lane_hash_mismatch")
+
+            let symlinked = "${root}/symlinked"
+            teacherCopyTree(candidateRoot, symlinked)
+            remove(Path("${symlinked}/knowledge/knowledge-candidate-reference.json"))
+            SymbolicLink.create(Path("${symlinked}/knowledge/knowledge-candidate-reference.json"),
+                to: Path("${candidateRoot}/knowledge/knowledge-candidate-reference.json"))
+            var symlinkDiagnostic = ""
+            try { _ = parseTeacherContextCandidateSetDirectoryV2(symlinked) }
+            catch (e: Exception) { symlinkDiagnostic = e.message }
+            @Expect(symlinkDiagnostic, "candidate_set_schema_invalid")
+
+            var approvalDiagnostic = ""
+            try { _ = validateTeacherContextApprovalV2(approval.replace(
+                candidate.assetInventoryHash, "sha256:${String(Array<Rune>(64, repeat: r'0'))}"), candidate) }
+            catch (e: Exception) { approvalDiagnostic = e.message }
+            @Expect(approvalDiagnostic, "candidate_approval_hash_mismatch")
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     @TestCase public func failureKnowledgeUsesAtomAdapterWithoutLegacySchemaCoercion(): Unit {
         let internal = s2InternalClassification("knowledge_gap", true, false, false, "missing_versioned_fact")
         let shared = reconcileTeacherFailureAssetClassifications(internal, internal)

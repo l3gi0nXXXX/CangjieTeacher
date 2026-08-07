@@ -1,0 +1,9 @@
+d4ae8a16ca67635fa101db1fd390eef3b5d10ca7ac929ef3298e3d4d62f164ec  approval-v2.json
+e3913e74f0c1eeb32a014f956ae963e4b08f29262f46d7c7ff39160bb041f638  candidate-set-v2/candidate-set-manifest.json
+b6f120ac06d16cbb3e6b29252131294c98823dce22cd61a4a2bd37ea79d59ddf  candidate-set-v2/knowledge/knowledge-candidate-reference.json
+0e21a743b95d60128ea394ceebbde601fc12201702754c0a406d48a497bc6e21  candidate-set-v2/rules/prefer-rune-safe-text-boundaries/AGENTS.md
+08565a321868d1fede4e622ed0570a6347bfec0243acc7fe0f18b3bcbcf36c40  candidate-set-v2/rules/prefer-rune-safe-text-boundaries/candidate-manifest.json
+b38ce89372c1d9c305f87266843ecb60590b23f1b7a98f445fe2aa54e70c37a0  candidate-set-v2/rules/prefer-rune-safe-text-boundaries/operation.json
+ea7111cca8a9846374001d183f278bf31ff3bec4389f405672e0f9559691885a  candidate-set-v2/rules/prefer-rune-safe-text-boundaries/tests/rune-boundary-contract/execution.json
+f8f6308a1857aa6b29b6edad7b05d802c1bb2c10216def09a1c335f1eae9870e  candidate-set-v2/skills/rune-safe-review/SKILL.md
+dff0848ff59ab53766538ff3237c85f4ca2b90d4b93a80237c93e3e9f4bf2124  candidate-set-v2/skills/rune-safe-review/operation.json
