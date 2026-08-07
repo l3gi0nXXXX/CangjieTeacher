@@ -1,0 +1,1 @@
+{"schemaVersion":"teacher-failure-asset-generation-response-v1","lane":"knowledge","title":"Rune boundary fact","content":"g-rune","trigger":"When validating synthetic text","scope":"Cangjie 1.0 Rune semantics","priority":80,"proposalHash":"sha256:183479324d0d4add948643992f953f0b25bb88e113f4f3d4c288ef320eb0628d"}

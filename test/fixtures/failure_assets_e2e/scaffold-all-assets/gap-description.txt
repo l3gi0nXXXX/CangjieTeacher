@@ -1,0 +1,1 @@
+Generalize Rune and String boundary handling across synthetic ArrayList label rendering.

@@ -280,9 +280,11 @@ private func teacherCliLoadRawFixtures(allowedRoot: String, fixtureRoot: String,
     out.toArray()
 }
 
-private class TeacherCliUnusedCommandExecutor <: TeacherCommandExecutor {
-    public func execute(_: TeacherCommandSpec): TeacherProcessResult {
-        TeacherProcessResult(1, "unused")
+private class TeacherCliScaffoldAtomExecutor <: TeacherCommandExecutor {
+    public func execute(spec: TeacherCommandSpec): TeacherProcessResult {
+        if (spec.cwd.contains("/negative") && !spec.args.isEmpty() && spec.args[0] == "build") {
+            TeacherProcessResult(1, "synthetic compile rejection")
+        } else { TeacherProcessResult(0, "synthetic atom check passed") }
     }
 }
 
@@ -322,23 +324,48 @@ private func runTeacherScaffoldFailureAssetsBuild(options: TeacherCliOptions): I
     let first = parseTeacherFailureAssetClassifierResponse(firstRaw)
     let second = parseTeacherFailureAssetClassifierResponse(secondRaw)
     if (first.failureEvidenceHash != options.expectedHash || second.failureEvidenceHash != options.expectedHash ||
-        firstRaw != secondRaw || first.gapKind != "rules_gap") {
+        firstRaw != secondRaw || !["rules_gap", "all_assets_gap"].contains(first.gapKind)) {
         throw IllegalArgumentException("classification_requires_review")
     }
     let fixtures = teacherCliLoadRawFixtures(options.allowedRoot, options.fixtureRoot,
         options.fixtureRootHash)
+    if (first.gapKind == "all_assets_gap") {
+        let official = teacherReadUtf8File("${fixtureRoot}/official-source.md").trimAscii()
+        let community = teacherReadUtf8File("${fixtureRoot}/community-source.md").trimAscii()
+        let experiment = teacherReadUtf8File("${fixtureRoot}/non-humaneval-source.txt").trimAscii()
+        if (!teacherCliScaffoldSafe(official + community + experiment) ||
+            !official.contains("String") || !official.contains("Rune") ||
+            !community.contains("中文🙂") || !experiment.contains("non-HumanEval")) {
+            throw IllegalArgumentException("candidate_generation_invalid")
+        }
+    }
     let closure = loadTeacherContextSourceClosure(options.allowedRoot, options.sourceRoot,
         options.protectedRoot)
     let base = loadTeacherContextBaseStateV2(options.allowedRoot, options.baseContextRoot)
+    if (first.gapKind == "all_assets_gap" && (base.rulesLineage != "independent" ||
+        base.skillsLineage != "independent" || base.knowledgeLineage != "independent")) {
+        throw IllegalArgumentException("candidate_base_composite_mismatch")
+    }
     let baseKnowledge = teacherReadUtf8File("${base.baseRoot}/knowledge-reference.json").trimAscii()
+    let knowledgeRequest = if (first.knowledgeEligible) {
+        TeacherFailureKnowledgeRequest(
+            teacherReadUtf8File("${fixtureRoot}/knowledge-missing.txt").trimAscii(),
+            teacherReadUtf8File("${fixtureRoot}/knowledge-authority.txt").trimAscii(),
+            teacherReadUtf8File("${fixtureRoot}/knowledge-atom.json").trimAscii(),
+            teacherReadUtf8File("${fixtureRoot}/knowledge-reference.json").trimAscii(),
+            "${options.allowedRoot}/knowledge-workspace", closure.protectedArtifacts)
+    } else {
+        TeacherFailureKnowledgeRequest("unused", "unused", "{}", baseKnowledge,
+            "${base.baseRoot}/unused", closure.protectedArtifacts)
+    }
     let request = TeacherFailureAssetBuildRequestV2(failure, first, second,
         teacherReadUtf8File("${fixtureRoot}/gap-description.txt").trimAscii(),
         TeacherCliScaffoldGenerator(fixtureRoot), fixtures, fixtures,
-        TeacherCliFixtureExecutor(fixtureRoot), TeacherFailureKnowledgeRequest("unused", "unused",
-            "{}", baseKnowledge, "${base.baseRoot}/unused", closure.protectedArtifacts),
-        ScaffoldTeacherFailureKnowledgeAdapter(TeacherCliUnusedCommandExecutor()), closure, base,
+        TeacherCliFixtureExecutor(fixtureRoot), knowledgeRequest,
+        ScaffoldTeacherFailureKnowledgeAdapter(TeacherCliScaffoldAtomExecutor()), closure, base,
         options.runId, "scaffold-rule-${first.classificationEvidenceHash}",
-        "synthetic-rune-boundary", "unused-skill", "add", "", "add", "",
+        "synthetic-rune-boundary", "scaffold-skill-${first.classificationEvidenceHash}",
+        "add", "", "add", "",
         options.allowedRoot, options.outputRoot)
     let built = buildTeacherFailureAssets(request)
     let candidate = match (built.candidateSetV2) {

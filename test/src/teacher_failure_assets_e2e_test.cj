@@ -7,8 +7,10 @@ import std.time.*
 import cangjie_teacher.*
 
 private let S5_FIXTURE = "fixtures/failure_assets_e2e/scaffold-delta"
+private let S5_ALL_FIXTURE = "fixtures/failure_assets_e2e/scaffold-all-assets"
 private let S5_BASE = "fixtures/failure_assets_e2e/base-context"
 private let S5_FAILURE_HASH = "77271cefb38180b274bc6e41f8a5e9feddc035db05c30947dffbd544d2cd4319"
+private let S5_ALL_FAILURE_HASH = "dff82ac343306bb5609bb20bb9458315c8e5297f649f892cad7f96cdad470940"
 
 private func s5BuildArgs(root: String, scaffold!: Bool = true,
     fixtureHash!: String = ""): Array<String> {
@@ -32,8 +34,119 @@ private func s5Prepare(root: String): Unit {
     Directory.create(Path("${root}/review"), recursive: true)
 }
 
+private func s5PrepareAll(root: String): Unit {
+    Directory.create(Path(root), recursive: true)
+    teacherCopyTree(S5_ALL_FIXTURE, "${root}/fixture")
+    teacherCopyTree(S5_BASE, "${root}/base-context")
+    Directory.create(Path("${root}/exports"), recursive: true)
+    Directory.create(Path("${root}/review"), recursive: true)
+}
+
+private func s5AllBuildArgs(root: String, runId!: String = "synthetic-cli-all-assets-v2"):
+    Array<String> {
+    let fixture = "${root}/fixture"
+    ["failure-assets-build", "--scaffold-contract", "--allowed-root", root,
+        "--scaffold-fixture-root", fixture, "--fixture-root-hash", teacherDirectoryHash(fixture),
+        "--failure", "${fixture}/completion-failure.json", "--expected-hash", S5_ALL_FAILURE_HASH,
+        "--source-root", "${fixture}/source-root", "--protected-root", "${fixture}/protected-root",
+        "--base-context-root", "${root}/base-context", "--run-id", runId,
+        "--output-root", "${root}/exports"]
+}
+
 @Test
 public class TeacherFailureAssetsE2ETest {
+    // S5 gap matrix:
+    // POS/E2E-03: canonical CLI input -> three builders -> fixture executor/knowledge adapter ->
+    // combination audit -> atomic immutable export -> independent approval.
+    // BND: source/protected/base/fixture roots and approval hashes remain independently bound.
+    // NEG: classification disagreement and incomplete evidence fail before publishing a candidate.
+    // S5-UT remains in the focused unit suites and is intentionally not duplicated here.
+    @TestCase public func allAssetCliBuildIsAtomicImmutableAndIndependentlyApproved(): Unit {
+        let root = "/tmp/teacher-assets-all-e2e-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            s5PrepareAll(root)
+            // S5-POS / E2E-03: every production input comes from the canonical fixture root.
+            @Expect(teacherReadUtf8File("${root}/fixture/completion-failure.json").contains(
+                "Synthetic program returned an incorrect result. 中文🙂"), true)
+            @Expect(teacherReadUtf8File("${root}/fixture/knowledge-atom.json").contains(
+                "\"sourceClass\":\"official\""), true)
+            @Expect(exists(Path("${root}/fixture/community-source.md")), true)
+            @Expect(exists(Path("${root}/fixture/non-humaneval-source.txt")), true)
+            @Expect(cangjieTeacherCliMain(s5AllBuildArgs(root)), Int64(0))
+            let candidateRoot = "${root}/exports/synthetic-cli-all-assets-v2"
+            let candidate = parseTeacherContextCandidateSetDirectoryV2(root, candidateRoot,
+                baseContextRoot: "${root}/base-context")
+            @Expect(candidate.rules.eligible, true)
+            @Expect(candidate.skills.eligible, true)
+            @Expect(candidate.knowledge.eligible, true)
+            @Expect(candidate.rules.lineage, "humaneval_164_derived")
+            @Expect(candidate.skills.lineage, "humaneval_164_derived")
+            @Expect(candidate.knowledge.lineage, "humaneval_164_derived")
+            @Expect(exists(Path("${candidateRoot}/audit/source-closure.json")), true)
+            @Expect(exists(Path("${candidateRoot}/audit/protected-closure.json")), true)
+            let immutableHash = teacherDirectoryHash(candidateRoot)
+            @Expect(cangjieTeacherCliMain(s5AllBuildArgs(root)), Int64(0))
+            @Expect(teacherDirectoryHash(candidateRoot), immutableHash)
+
+            let driftProtected = "${root}/protected-drift"
+            teacherCopyTree("${root}/fixture/protected-root", driftProtected)
+            _ = teacherAtomicWrite("${driftProtected}/independent-drift.txt", "boundary drift\n")
+            let rejectedApproval = "${root}/review/rejected-drift.json"
+            @Expect(cangjieTeacherCliMain(["failure-assets-approve", "--allowed-root", root,
+                "--source-export", candidateRoot, "--source-root", "${root}/fixture/source-root",
+                "--protected-root", driftProtected, "--base-context-root", "${root}/base-context",
+                "--candidate-set-hash", candidate.candidateSetHash, "--decision", "approve",
+                "--reviewer", "synthetic-independent-reviewer", "--reason",
+                "Drifted protected root must fail.", "--approved-at-utc", "2026-08-07T00:00:00Z",
+                "--output", rejectedApproval]), Int64(1))
+            @Expect(exists(Path(rejectedApproval)), false)
+
+            let approvalPath = "${root}/review/all-assets-approval-v2.json"
+            @Expect(cangjieTeacherCliMain(["failure-assets-approve", "--allowed-root", root,
+                "--source-export", candidateRoot, "--source-root", "${root}/fixture/source-root",
+                "--protected-root", "${root}/fixture/protected-root", "--base-context-root",
+                "${root}/base-context", "--candidate-set-hash", candidate.candidateSetHash,
+                "--decision", "approve", "--reviewer", "synthetic-independent-reviewer",
+                "--reason", "Verified three-lane synthetic boundaries.", "--approved-at-utc",
+                "2026-08-07T00:00:00Z", "--output", approvalPath]), Int64(0))
+            @Expect(validateTeacherContextApprovalV2(
+                teacherReadUtf8File(approvalPath).trimAscii(), candidate), "approve")
+            // S5-BND: approval is a separate immutable act.
+            @Expect(cangjieTeacherCliMain(["failure-assets-approve", "--allowed-root", root,
+                "--source-export", candidateRoot, "--source-root", "${root}/fixture/source-root",
+                "--protected-root", "${root}/fixture/protected-root", "--base-context-root",
+                "${root}/base-context", "--candidate-set-hash", candidate.candidateSetHash,
+                "--decision", "approve", "--reviewer", "synthetic-independent-reviewer",
+                "--reason", "Duplicate approval must fail.", "--approved-at-utc",
+                "2026-08-07T00:00:00Z", "--output", approvalPath]), Int64(1))
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    @TestCase public func allAssetCliFailsClosedBeforeAtomicPublish(): Unit {
+        let root = "/tmp/teacher-assets-all-negative-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            s5PrepareAll(root)
+            let second = "${root}/fixture/classification-b.json"
+            _ = teacherAtomicWrite(second, teacherReadUtf8File(second).replace(
+                "\"gapKind\":\"all_assets_gap\"", "\"gapKind\":\"rules_gap\""))
+            @Expect(cangjieTeacherCliMain(s5AllBuildArgs(root)), Int64(1))
+            @Expect(exists(Path("${root}/exports/synthetic-cli-all-assets-v2")), false)
+
+            remove(Path("${root}/fixture"), recursive: true)
+            teacherCopyTree(S5_ALL_FIXTURE, "${root}/fixture")
+            remove(Path("${root}/fixture/fixtures/rule-negative"), recursive: true)
+            @Expect(cangjieTeacherCliMain(s5AllBuildArgs(root)), Int64(1))
+            @Expect(exists(Path("${root}/exports/synthetic-cli-all-assets-v2")), false)
+
+            remove(Path("${root}/fixture"), recursive: true)
+            teacherCopyTree(S5_ALL_FIXTURE, "${root}/fixture")
+            _ = teacherAtomicWrite("${root}/fixture/source-root/sources/completion-failure.json",
+                "drifted source evidence\n")
+            @Expect(cangjieTeacherCliMain(s5AllBuildArgs(root)), Int64(1))
+            @Expect(exists(Path("${root}/exports/synthetic-cli-all-assets-v2")), false)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     @TestCase public func scaffoldBuildApproveAndReexportUseV2ActualRoots(): Unit {
         let root = "/tmp/teacher-assets-e2e-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         try {

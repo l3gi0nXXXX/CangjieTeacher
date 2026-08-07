@@ -1,0 +1,1 @@
+{"schemaVersion":"teacher-failure-asset-generation-request-v1","failureEvidenceHash":"dff82ac343306bb5609bb20bb9458315c8e5297f649f892cad7f96cdad470940","classificationEvidenceHash":"7a47385ab2fd2b8d4a6a887598d59b7e06ee2291698a282612330467387be904","lane":"rules","gapDescription":"Generalize Rune and String boundary handling across synthetic ArrayList label rendering."}
