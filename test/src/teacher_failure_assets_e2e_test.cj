@@ -42,6 +42,43 @@ private func s5PrepareAll(root: String): Unit {
     Directory.create(Path("${root}/review"), recursive: true)
 }
 
+private func s5PrepareGenesis(root: String): Unit {
+    s5PrepareAll(root)
+    remove(Path("${root}/fixture/source-root"), recursive: true)
+    remove(Path("${root}/fixture/protected-root"), recursive: true)
+    Directory.create(Path("${root}/fixture/source-root/sources"), recursive: true)
+    Directory.create(Path("${root}/fixture/protected-root"), recursive: true)
+    let sources = [("official-rune.md", "official-source.md"),
+        ("community-rune.md", "community-source.md"),
+        ("non-humaneval-rune.txt", "non-humaneval-source.txt")]
+    let hashes = ArrayList<String>()
+    for (source in sources) {
+        let raw = teacherReadUtf8File("${root}/fixture/${source[1]}").trimAscii()
+        hashes.add("sha256:${teacherStableHash(raw)}")
+        _ = teacherAtomicWrite("${root}/fixture/source-root/sources/${source[0]}", raw)
+    }
+    let manifest = buildTeacherContextSourceManifest("independent_sources", hashes.toArray())
+    _ = teacherAtomicWrite("${root}/fixture/source-root/source-manifest.json",
+        renderTeacherContextSourceManifest(manifest) + "\n")
+    _ = teacherAtomicWrite("${root}/fixture/protected-root/opaque-sentinel.txt",
+        "quartz zebra sentinel 78291\n")
+    let reference = teacherReadUtf8File("${root}/fixture/knowledge-reference.json")
+        .replace("\"assetLineage\":\"humaneval_164_derived\"",
+            "\"assetLineage\":\"independent\"")
+    _ = teacherAtomicWrite("${root}/fixture/knowledge-reference.json", reference)
+}
+
+private func s5GenesisArgs(root: String, scaffold!: Bool = true): Array<String> {
+    let out = ArrayList<String>(); out.add("context-seed-build")
+    if (scaffold) { out.add("--scaffold-contract") }
+    for (value in ["--allowed-root", root, "--scaffold-fixture-root", "${root}/fixture",
+        "--fixture-root-hash", teacherDirectoryHash("${root}/fixture"),
+        "--source-root", "${root}/fixture/source-root", "--protected-root",
+        "${root}/fixture/protected-root", "--run-id", "synthetic-cli-genesis-v2",
+        "--output-root", "${root}/exports"]) { out.add(value) }
+    out.toArray()
+}
+
 private func s5AllBuildArgs(root: String, runId!: String = "synthetic-cli-all-assets-v2"):
     Array<String> {
     let fixture = "${root}/fixture"
@@ -119,6 +156,32 @@ public class TeacherFailureAssetsE2ETest {
                 "--decision", "approve", "--reviewer", "synthetic-independent-reviewer",
                 "--reason", "Duplicate approval must fail.", "--approved-at-utc",
                 "2026-08-07T00:00:00Z", "--output", approvalPath]), Int64(1))
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    @TestCase public func independentGenesisCliExportsAndApprovesV2Contract(): Unit {
+        let root = "/tmp/teacher-assets-genesis-e2e-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            s5PrepareGenesis(root)
+            @Expect(cangjieTeacherCliMain(s5GenesisArgs(root, scaffold: false)), Int64(1))
+            @Expect(exists(Path("${root}/exports/synthetic-cli-genesis-v2")), false)
+            @Expect(cangjieTeacherCliMain(s5GenesisArgs(root)), Int64(0))
+            let candidateRoot = "${root}/exports/synthetic-cli-genesis-v2"
+            let candidate = parseTeacherContextCandidateSetDirectoryV2(root, candidateRoot)
+            @Expect(candidate.baseCompositeHash, "none")
+            @Expect(candidate.rules.lineage, "independent")
+            @Expect(candidate.skills.lineage, "independent")
+            @Expect(candidate.knowledge.lineage, "independent")
+            let approval = "${root}/review/genesis-approval-v2.json"
+            @Expect(cangjieTeacherCliMain(["failure-assets-approve", "--allowed-root", root,
+                "--source-export", candidateRoot, "--source-root", "${root}/fixture/source-root",
+                "--protected-root", "${root}/fixture/protected-root", "--base-context-root", "none",
+                "--candidate-set-hash", candidate.candidateSetHash, "--decision", "approve",
+                "--reviewer", "synthetic-genesis-reviewer", "--reason",
+                "Verified independent synthetic genesis.", "--approved-at-utc",
+                "2026-08-07T00:00:00Z", "--output", approval]), Int64(0))
+            @Expect(validateTeacherContextApprovalV2(
+                teacherReadUtf8File(approval).trimAscii(), candidate), "approve")
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 

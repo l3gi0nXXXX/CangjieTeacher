@@ -128,6 +128,42 @@ private func teacherCliJsonEscape(value: String): String {
 }
 
 private func runTeacherContextSeedBuild(options: TeacherCliOptions): Int64 {
+    if (options.scaffoldContract) {
+        if (options.fixtureRoot.isEmpty() || options.fixtureRootHash.isEmpty() ||
+            options.allowedRoot.isEmpty() || options.sourceRoot.isEmpty() ||
+            options.protectedRoot.isEmpty() || options.outputRoot.isEmpty() ||
+            options.runId.isEmpty()) {
+            throw IllegalArgumentException("missing_required_cli_option")
+        }
+        let fixtureRoot = teacherResolveArtifactInput(options.allowedRoot,
+            options.fixtureRoot, directory: true)
+        let fixtures = teacherCliLoadRawFixtures(options.allowedRoot,
+            options.fixtureRoot, options.fixtureRootHash)
+        let closure = loadTeacherContextSourceClosure(options.allowedRoot,
+            options.sourceRoot, options.protectedRoot)
+        if (closure.manifest.sourceKind != "independent_sources") {
+            throw IllegalArgumentException("candidate_lane_lineage_invalid")
+        }
+        let ruleProposal = parseTeacherFailureAssetGenerationResponse(
+            teacherReadUtf8File("${fixtureRoot}/proposal-rules.json").trimAscii())
+        let skillProposal = parseTeacherFailureAssetGenerationResponse(
+            teacherReadUtf8File("${fixtureRoot}/proposal-skill.json").trimAscii())
+        let knowledgeRequest = TeacherFailureKnowledgeRequest(
+            teacherReadUtf8File("${fixtureRoot}/knowledge-missing.txt").trimAscii(),
+            teacherReadUtf8File("${fixtureRoot}/knowledge-authority.txt").trimAscii(),
+            teacherReadUtf8File("${fixtureRoot}/knowledge-atom.json").trimAscii(),
+            teacherReadUtf8File("${fixtureRoot}/knowledge-reference.json").trimAscii(),
+            "${options.allowedRoot}/knowledge-workspace", closure.protectedArtifacts)
+        let candidate = buildTeacherIndependentContextSeed(TeacherIndependentSeedRequestV2(
+            closure, ruleProposal, skillProposal, fixtures, fixtures,
+            TeacherCliFixtureExecutor(fixtureRoot), knowledgeRequest,
+            ScaffoldTeacherFailureKnowledgeAdapter(TeacherCliScaffoldAtomExecutor()),
+            options.runId, "scaffold-seed-rule", "synthetic-rune-boundary",
+            "scaffold-seed-skill", options.allowedRoot, options.outputRoot))
+        println(renderTeacherFailureAssetsBuildOutput(candidate.candidateSetId,
+            candidate.candidateSetHash, options.json))
+        return 0
+    }
     if (options.sourceManifest.isEmpty() || options.rulesContent.isEmpty() ||
         options.skillsContent.isEmpty() || options.knowledgeContent.isEmpty() ||
         options.knowledgeVersion.isEmpty() || options.outputRoot.isEmpty() ||
