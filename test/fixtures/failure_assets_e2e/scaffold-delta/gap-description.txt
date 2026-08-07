@@ -1,0 +1,1 @@
+Apply the reusable Rune boundary invariant to synthetic visible text.

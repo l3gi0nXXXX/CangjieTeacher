@@ -21,9 +21,11 @@ public class TeacherContextLane {
     public let count: Int64
     public let lineage: String
     public let content: String
-    public init(eligible: Bool, hash: String, count: Int64, lineage: String, content: String) {
+    public let auditEvidence: String
+    public init(eligible: Bool, hash: String, count: Int64, lineage: String, content: String,
+        auditEvidence!: String = "") {
         this.eligible = eligible; this.hash = hash; this.count = count
-        this.lineage = lineage; this.content = content
+        this.lineage = lineage; this.content = content; this.auditEvidence = auditEvidence
     }
 }
 
@@ -186,6 +188,29 @@ public func buildTeacherIndependentContextSeed(sourceManifest: TeacherContextSou
         knowledge, knowledgeTargetVersion, protectedArtifacts)
 }
 
+public func buildTeacherScaffoldRuleDelta(sourceManifest: TeacherContextSourceManifest,
+    candidateSetId: String, baseCompositeHash: String, baseSkillsHash: String,
+    baseSkillCount: Int64, baseSkillLineage: String, baseKnowledgeHash: String,
+    baseKnowledgeVersion: String, baseKnowledgeLineage: String, rulesMarkdown: String,
+    ruleCandidateManifest: String, baseSkillsContent: String, baseKnowledgeContent: String,
+    classificationManifestHash: String, protectedArtifacts!: Array<String> = []): TeacherContextCandidateSet {
+    if (sourceManifest.sourceKind != "completion_failures" || baseCompositeHash == "none" ||
+        candidateSetId.isEmpty() || rulesMarkdown.isEmpty() || ruleCandidateManifest.isEmpty() ||
+        baseSkillsHash.isEmpty() || baseKnowledgeHash.isEmpty() || baseKnowledgeVersion.isEmpty() ||
+        classificationManifestHash.isEmpty()) {
+        throw IllegalArgumentException("candidate_lane_lineage_invalid")
+    }
+    let rulesHash = "sha256:${teacherStableHash(rulesMarkdown + ruleCandidateManifest)}"
+    let rules = TeacherContextLane(true, rulesHash, 1, "humaneval_164_derived", rulesMarkdown,
+        auditEvidence: ruleCandidateManifest)
+    let skills = TeacherContextLane(false, baseSkillsHash, baseSkillCount, baseSkillLineage,
+        baseSkillsContent)
+    let knowledge = TeacherContextLane(false, baseKnowledgeHash, 0, baseKnowledgeLineage,
+        baseKnowledgeContent)
+    teacherBuildContextSet(candidateSetId, baseCompositeHash, sourceManifest.sourceManifestHash,
+        classificationManifestHash, rules, skills, knowledge, baseKnowledgeVersion, protectedArtifacts)
+}
+
 public func buildTeacherFailureAssets(failure: TeacherCompletionFailureInput,
     first: TeacherFailureAssetClassification, second: TeacherFailureAssetClassification,
     gapDescription: String, generator: TeacherFailureAssetGenerator): TeacherFailureAssetsBuildResult {
@@ -224,8 +249,16 @@ public func exportTeacherContextCandidateSet(value: TeacherContextCandidateSet, 
         Directory.create(stage.join("skills"), recursive: true)
         Directory.create(stage.join("knowledge"), recursive: true)
         _ = teacherAtomicWrite(stage.join("candidate-set-manifest.json").toString(), manifest + "\n")
-        _ = teacherAtomicWrite(stage.join("rules/AGENTS.md").toString(), value.rules.content)
-        _ = teacherAtomicWrite(stage.join("skills/student-skills.prompt.md").toString(), value.skills.content)
+        if (value.rules.eligible) {
+            _ = teacherAtomicWrite(stage.join("rules/AGENTS.md").toString(), value.rules.content)
+            if (!value.rules.auditEvidence.isEmpty()) {
+                _ = teacherAtomicWrite(stage.join("rules/candidate-manifest.json").toString(),
+                    value.rules.auditEvidence + "\n")
+            }
+        }
+        if (value.skills.eligible) {
+            _ = teacherAtomicWrite(stage.join("skills/student-skills.prompt.md").toString(), value.skills.content)
+        }
         _ = teacherAtomicWrite(stage.join("knowledge/knowledge-candidate-reference.json").toString(), value.knowledge.content)
         rename(stage, to: target, overwrite: false)
     } catch (e: Exception) {

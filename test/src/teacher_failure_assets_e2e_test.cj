@@ -7,6 +7,32 @@ import std.time.*
 import cangjie_teacher.*
 
 private let S5_FIXTURE_ROOT = "fixtures/failure_assets_e2e"
+private let S5_SCAFFOLD_ROOT = "${S5_FIXTURE_ROOT}/scaffold-delta"
+private let S5_BASE_MANIFEST = "${S5_FIXTURE_ROOT}/base-context/student-context-manifest.json"
+private let S5_FAILURE_HASH = "31916209b2bdd910bb8875f9a51e43153af24315145da8a9bf9120f4976bdc8d"
+
+private func s5ScaffoldBuildArgs(outputRoot: String, fixtureRoot!: String = S5_SCAFFOLD_ROOT,
+    failurePath!: String = "${S5_FIXTURE_ROOT}/synthetic-failure.txt",
+    expectedHash!: String = S5_FAILURE_HASH, baseHash!: String = "",
+    baseManifest!: String = S5_BASE_MANIFEST, scaffold!: Bool = true): Array<String> {
+    let actualBaseHash = if (baseHash.isEmpty()) {
+        "sha256:${teacherStableHash(teacherReadUtf8File(baseManifest))}"
+    } else { baseHash }
+    let out = ArrayList<String>(); out.add("failure-assets-build")
+    if (scaffold) { out.add("--scaffold-contract") }
+    for (value in ["--fixture-root", fixtureRoot, "--failure", failurePath,
+        "--expected-hash", expectedHash, "--source-manifest", "${S5_SCAFFOLD_ROOT}/source-manifest.json",
+        "--base-context-manifest", baseManifest, "--base-context-hash", actualBaseHash,
+        "--run-id", "synthetic-cli-delta-v1", "--output-root", outputRoot]) { out.add(value) }
+    out.toArray()
+}
+
+private func s5CandidateSetHash(raw: String): String {
+    let marker = "\"candidateSetHash\":\""
+    let tail = raw.split(marker)
+    if (tail.size != 2) { return "" }
+    tail[1].split("\"")[0]
+}
 
 private func s5SourceManifest(): TeacherContextSourceManifest {
     buildTeacherContextSourceManifest("independent_sources", [
@@ -68,6 +94,29 @@ public class TeacherFailureAssetsE2ETest {
                 "Synthetic Unicode rendering gap", S2Generator())
             @Expect(delta.proposals.size, 3)
             @Expect(delta.classification.schemaVersion, "ckb-completion-failure-classification-v2")
+
+            let deltaRoot = "${root}/delta"
+            @Expect(cangjieTeacherCliMain(s5ScaffoldBuildArgs(deltaRoot)), Int64(0))
+            let exported = "${deltaRoot}/synthetic-cli-delta-v1"
+            let exportedManifest = teacherReadUtf8File("${exported}/candidate-set-manifest.json")
+            let exportedHash = s5CandidateSetHash(exportedManifest)
+            @Expect(exportedManifest.contains("\"validationLevel\":\"scaffold_contract\""), true)
+            @Expect(exportedManifest.contains("\"rulesEligible\":true"), true)
+            @Expect(exportedManifest.contains("\"skillsEligible\":false"), true)
+            @Expect(exportedManifest.contains("\"knowledgeEligible\":false"), true)
+            @Expect(exists(Path("${exported}/rules/AGENTS.md")), true)
+            @Expect(exists(Path("${exported}/rules/candidate-manifest.json")), true)
+            @Expect(exists(Path("${exported}/skills/student-skills.prompt.md")), false)
+            @Expect(exists(Path("${exported}/knowledge/knowledge-candidate-reference.json")), true)
+            let deltaApproval = "${root}/review/synthetic-cli-delta-v1.approval.json"
+            @Expect(cangjieTeacherCliMain(["failure-assets-approve", "--source-export", exported,
+                "--candidate-set-hash", exportedHash, "--decision", "approve",
+                "--reviewer", "synthetic-e2e-reviewer", "--reason", "Synthetic scaffold contract passed.",
+                "--approved-at-utc", "2026-08-07T00:00:00Z", "--output", deltaApproval]), Int64(0))
+            @Expect(exists(Path(deltaApproval)), true)
+            let human = renderTeacherFailureAssetsBuildOutput("synthetic-cli-delta-v1", exportedHash, false)
+            @Expect(human.contains("\"ok\""), false)
+            @Expect(human.contains("\"result\""), false)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
@@ -142,6 +191,42 @@ public class TeacherFailureAssetsE2ETest {
                 "--approved-at-utc", "2026-08-07T00:00:00Z", "--output", approvalPath]), Int64(1))
             @Expect(exists(Path(approvalPath)), false)
             @Expect(teacherDirectoryHash(candidateRoot), before)
+
+            let scaffoldOutput = "${root}/scaffold-negative"
+            @Expect(cangjieTeacherCliMain(s5ScaffoldBuildArgs(scaffoldOutput,
+                scaffold: false)), Int64(1))
+            @Expect(exists(Path(scaffoldOutput)), false)
+
+            let markerFailure = "${root}/real-marker.txt"
+            _ = teacherAtomicWrite(markerFailure, "CJ-HUMANEVAL-REAL protected marker\n")
+            let markerHash = teacherStableHash(teacherReadUtf8File(markerFailure))
+            @Expect(cangjieTeacherCliMain(s5ScaffoldBuildArgs(scaffoldOutput,
+                failurePath: markerFailure, expectedHash: markerHash)), Int64(1))
+            @Expect(exists(Path(scaffoldOutput)), false)
+
+            @Expect(cangjieTeacherCliMain(s5ScaffoldBuildArgs(scaffoldOutput,
+                expectedHash: String(Array<Rune>(64, repeat: r'0')))), Int64(1))
+            @Expect(exists(Path(scaffoldOutput)), false)
+
+            @Expect(cangjieTeacherCliMain(s5ScaffoldBuildArgs(scaffoldOutput,
+                baseHash: "sha256:${String(Array<Rune>(64, repeat: r'0'))}")), Int64(1))
+            @Expect(exists(Path(scaffoldOutput)), false)
+
+            let driftedBaseRoot = "${root}/drifted-base"
+            teacherCopyTree("${S5_FIXTURE_ROOT}/base-context", driftedBaseRoot)
+            let driftedBase = "${driftedBaseRoot}/student-context-manifest.json"
+            _ = teacherAtomicWrite(driftedBase, teacherReadUtf8File(driftedBase) + "\n")
+            @Expect(cangjieTeacherCliMain(s5ScaffoldBuildArgs(scaffoldOutput,
+                baseManifest: driftedBase,
+                baseHash: "sha256:${teacherStableHash(teacherReadUtf8File(S5_BASE_MANIFEST))}")), Int64(1))
+            @Expect(exists(Path(scaffoldOutput)), false)
+
+            let incompleteFixtures = "${root}/incomplete-fixtures"
+            teacherCopyTree(S5_SCAFFOLD_ROOT, incompleteFixtures)
+            remove(Path("${incompleteFixtures}/classification-b.json"))
+            @Expect(cangjieTeacherCliMain(s5ScaffoldBuildArgs(scaffoldOutput,
+                fixtureRoot: incompleteFixtures)), Int64(1))
+            @Expect(exists(Path(scaffoldOutput)), false)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 }
