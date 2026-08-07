@@ -56,9 +56,12 @@ public class TeacherContextCandidateSet {
 public class TeacherFailureAssetsBuildResult {
     public let classification: TeacherFailureAssetClassification
     public let proposals: Array<TeacherFailureAssetGenerationResponse>
+    public let candidateSetV2: ?TeacherContextCandidateSetV2
     public init(classification: TeacherFailureAssetClassification,
-        proposals: Array<TeacherFailureAssetGenerationResponse>) {
+        proposals: Array<TeacherFailureAssetGenerationResponse>,
+        candidateSetV2!: ?TeacherContextCandidateSetV2 = None<TeacherContextCandidateSetV2>) {
         this.classification = classification; this.proposals = proposals
+        this.candidateSetV2 = candidateSetV2
     }
 }
 

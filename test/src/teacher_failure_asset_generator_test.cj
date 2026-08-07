@@ -6,7 +6,7 @@ import cangjie_teacher.*
 class S2Generator <: TeacherFailureAssetGenerator {
     public func generate(request: TeacherFailureAssetGenerationRequest): String {
         let content = match (request.lane) {
-            case "knowledge" => "Use the documented Rune conversion API for version 1.0."
+            case "knowledge" => "g-rune"
             case "skill" => "Inspect byte and Rune types, then verify the boundary before rendering."
             case _ => "Preserve Rune boundaries in every bounded user-visible rendering operation."
         }

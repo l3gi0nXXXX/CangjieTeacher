@@ -25,13 +25,14 @@ public class TeacherAssetFixtureExecution {
     public let transcriptHash: String
     public let exitCode: Int64
     public let passed: Bool
+    public let transcript: String
     public init(fixture: TeacherAssetFixture, fixtureHash: String, executorKind: String,
         providerIdentityHash: String, modelVersion: String, actualEvidence: String,
-        transcriptHash: String, exitCode: Int64, passed: Bool) {
+        transcriptHash: String, exitCode: Int64, passed: Bool, transcript!: String = "") {
         this.fixture = fixture; this.fixtureHash = fixtureHash; this.executorKind = executorKind
         this.providerIdentityHash = providerIdentityHash; this.modelVersion = modelVersion
         this.actualEvidence = actualEvidence; this.transcriptHash = transcriptHash
-        this.exitCode = exitCode; this.passed = passed
+        this.exitCode = exitCode; this.passed = passed; this.transcript = transcript
     }
 }
 
@@ -84,9 +85,38 @@ public func executeTeacherAssetFixtureBundle(fixtures: Array<TeacherAssetFixture
         let transcriptHash = "sha256:${teacherStableHash(executed[2])}"
         out.add(TeacherAssetFixtureExecution(fixture, fixtureHash, executor.executorKind(),
             executor.providerIdentityHash(), executor.modelVersion(), executed[1], transcriptHash,
-            executed[0], passed))
+            executed[0], passed, transcript: executed[2]))
     }
     out.toArray()
+}
+
+public func teacherAssetFixtureHash(value: TeacherAssetFixture): String {
+    "sha256:${teacherStableHash(teacherFixtureCanonical(value))}"
+}
+
+public func renderTeacherAssetFixture(value: TeacherAssetFixture): String {
+    let hash = teacherAssetFixtureHash(value)
+    "{\"schemaVersion\":\"teacher-asset-fixture-v1\",\"fixtureId\":\"${teacherFixtureExecutionEscape(value.fixtureId)}\"," +
+        "\"kind\":\"${value.kind}\",\"sourceClass\":\"${value.sourceClass}\"," +
+        "\"content\":\"${teacherFixtureExecutionEscape(value.content)}\"," +
+        "\"expectedEvidence\":\"${teacherFixtureExecutionEscape(value.expectedEvidence)}\"," +
+        "\"fixtureHash\":\"${hash}\"}"
+}
+
+public func teacherAssetFixtureExecutionFiles(value: TeacherAssetFixtureExecution,
+    prefix: String): Array<TeacherArtifactFile> {
+    if (value.fixtureHash != teacherAssetFixtureHash(value.fixture) ||
+        value.transcriptHash != "sha256:${teacherStableHash(value.transcript)}" ||
+        value.passed != (value.exitCode == 0 && value.actualEvidence == value.fixture.expectedEvidence)) {
+        throw IllegalArgumentException("candidate_test_evidence_invalid")
+    }
+    [
+        TeacherArtifactFile("${prefix}/fixture.json", renderTeacherAssetFixture(value.fixture) + "\n"),
+        TeacherArtifactFile("${prefix}/expected.txt", value.fixture.expectedEvidence),
+        TeacherArtifactFile("${prefix}/actual.txt", value.actualEvidence),
+        TeacherArtifactFile("${prefix}/transcript.txt", value.transcript),
+        TeacherArtifactFile("${prefix}/execution.json", renderTeacherAssetFixtureExecution(value) + "\n")
+    ]
 }
 
 private func teacherFixtureExecutionEscape(value: String): String {

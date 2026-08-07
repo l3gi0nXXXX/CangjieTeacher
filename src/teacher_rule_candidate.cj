@@ -90,6 +90,22 @@ public func buildTeacherRuleCandidate(classification: TeacherFailureAssetClassif
         "sha256:${teacherStableHash(teacherRuleCanonical(provisional))}")
 }
 
+public func buildTeacherIndependentRuleCandidate(ruleId: String, conceptId: String, title: String,
+    body: String, trigger: String, scope: String, priority: Int64, sourceManifestHash: String,
+    tests: TeacherRuleTestBundle): TeacherRuleCandidate {
+    let hash = if (sourceManifestHash.startsWith("sha256:")) {
+        String(sourceManifestHash.toRuneArray()[7..])
+    } else { sourceManifestHash }
+    let classification = sealTeacherFailureAssetClassification(TeacherFailureAssetClassification(
+        "ckb-completion-failure-classification-v2", hash, "rules_gap", false, false, true,
+        "missing_global_invariant", ""))
+    let derived = buildTeacherRuleCandidate(classification, ruleId, conceptId, title, body, trigger,
+        scope, priority, "independent_manifest", sourceManifestHash, tests)
+    TeacherRuleCandidate(derived.ruleId, derived.conceptId, derived.title, derived.body, derived.trigger,
+        derived.scope, derived.priority, derived.sourceEvidenceKind, derived.sourceEvidenceHash,
+        "independent", derived.tests, derived.canonicalHash)
+}
+
 private func teacherRuleSorted(values: Array<TeacherRuleCandidate>): Array<TeacherRuleCandidate> {
     let keys = values.map({v: TeacherRuleCandidate => "${1000000 - v.priority}-${v.ruleId}"})
     sort(keys)
@@ -164,4 +180,23 @@ public func exportTeacherRuleCandidateDirectory(value: TeacherRuleCandidate, out
         throw e
     }
     manifest
+}
+
+public func teacherRuleCandidateArtifactFiles(value: TeacherRuleCandidate,
+    operation: TeacherContextAssetOperation): Array<TeacherArtifactFile> {
+    if (operation.assetRole != "rules" || operation.assetId != value.ruleId ||
+        operation.newHash != value.canonicalHash) {
+        throw IllegalArgumentException("candidate_operation_invalid")
+    }
+    let files = ArrayList<TeacherArtifactFile>()
+    files.add(TeacherArtifactFile("${value.ruleId}/AGENTS.md", renderTeacherAgentsMarkdown([value])))
+    files.add(TeacherArtifactFile("${value.ruleId}/candidate-manifest.json",
+        renderTeacherRuleCandidateManifest(value) + "\n"))
+    files.add(TeacherArtifactFile("${value.ruleId}/operation.json",
+        renderTeacherContextAssetOperation(operation) + "\n"))
+    for (execution in value.tests.executions) {
+        for (file in teacherAssetFixtureExecutionFiles(execution,
+            "${value.ruleId}/tests/${execution.fixture.fixtureId}")) { files.add(file) }
+    }
+    files.toArray()
 }

@@ -37,21 +37,30 @@ private func teacherArtifactDirectChild(root: String, child: String): Bool {
 public func teacherResolveArtifactInput(allowedRoot: String, path: String,
     directory!: Bool = false): String {
     let root = teacherCanonicalArtifactRoot(allowedRoot)
+    let lexicalRoot = Path(allowedRoot).toString().trimEnd('/')
     let input = Path(path)
-    if (!input.isAbsolute() || !exists(input)) { throw IllegalArgumentException("artifact_input_invalid") }
+    if (!input.isAbsolute() || !path.startsWith(lexicalRoot + "/")) {
+        throw IllegalArgumentException("artifact_input_invalid")
+    }
     try {
-        if (FileInfo(input).isSymbolicLink() || (directory && !FileInfo(input).isDirectory()) ||
-            (!directory && !FileInfo(input).isRegular())) {
-            throw IllegalArgumentException("artifact_input_invalid")
+        // Inspect the caller's original path one segment at a time before
+        // canonicalization so an intermediate symlink cannot disappear.
+        var current = Path(lexicalRoot)
+        let relative = path.toRuneArray()[lexicalRoot.toRuneArray().size + 1..]
+        for (component in String(relative).split("/")) {
+            if (component.isEmpty() || component == "." || component == ".." || component.contains("\\")) {
+                throw IllegalArgumentException("artifact_input_invalid")
+            }
+            current = current.join(component)
+            if (!exists(current) || FileInfo(current).isSymbolicLink()) {
+                throw IllegalArgumentException("artifact_input_invalid")
+            }
         }
         let canonical = canonicalize(input).toString()
-        if (!canonical.startsWith(root + "/")) { throw IllegalArgumentException("artifact_input_invalid") }
-        var current = Path(root)
-        let relative = canonical.toRuneArray()[root.toRuneArray().size + 1..]
-        for (component in String(relative).split("/")) {
-            if (!teacherArtifactSafeComponent(component)) { throw IllegalArgumentException("artifact_input_invalid") }
-            current = current.join(component)
-            if (FileInfo(current).isSymbolicLink()) { throw IllegalArgumentException("artifact_input_invalid") }
+        if (!canonical.startsWith(root + "/") ||
+            (directory && !FileInfo(input).isDirectory()) ||
+            (!directory && !FileInfo(input).isRegular())) {
+            throw IllegalArgumentException("artifact_input_invalid")
         }
         canonical
     } catch (e: IllegalArgumentException) { throw e }

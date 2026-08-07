@@ -438,6 +438,68 @@ public func buildTeacherSkillCandidate(input: TeacherCompletionFailureInput,
         candidateLineage, "sha256:${teacherStableHash(canonical)}", boundTests)
 }
 
+public func buildTeacherSkillCandidateFromFailureAsset(input: TeacherCompletionFailureInput,
+    classification: TeacherFailureAssetClassification, proposal: TeacherFailureAssetGenerationResponse,
+    executions: Array<TeacherAssetFixtureExecution>, skillId: String): TeacherSkillCandidate {
+    if (!classification.skillEligible || proposal.lane != "skill" || executions.isEmpty()) {
+        throw IllegalArgumentException("candidate_test_evidence_invalid")
+    }
+    let fixtures = ArrayList<TeacherSkillFixture>()
+    for (execution in executions) {
+        if (!execution.passed || execution.fixtureHash != teacherAssetFixtureHash(execution.fixture) ||
+            execution.actualEvidence != execution.fixture.expectedEvidence ||
+            execution.transcriptHash != "sha256:${teacherStableHash(execution.transcript)}") {
+            throw IllegalArgumentException("candidate_test_evidence_invalid")
+        }
+        if (execution.fixture.kind == "unit") { continue }
+        fixtures.add(TeacherSkillFixture(execution.fixture.fixtureId, execution.fixture.content,
+            execution.actualEvidence, sourceClass: execution.fixture.sourceClass,
+            kind: execution.fixture.kind, fixturePath: "tests/${execution.fixture.fixtureId}.txt",
+            benchmarkDerived: false, passed: execution.passed))
+    }
+    let legacyKind = if (classification.knowledgeEligible) { "mixed_gap" } else { "procedure_gap" }
+    let provisional = TeacherFailureClassification(input.evidenceHash, legacyKind,
+        classification.knowledgeEligible, true, "")
+    let legacy = TeacherFailureClassification(input.evidenceHash, legacyKind,
+        classification.knowledgeEligible, true,
+        teacherStableHash(renderTeacherFailureClassificationEvidence(provisional)))
+    buildTeacherSkillCandidate(input, legacy, skillId, "1.0.0", proposal.title,
+        proposal.content, "teacher_derived", proposal.scope, buildTeacherSkillTestBundle(fixtures.toArray()),
+        candidateOrigin: "p6_failure_derived")
+}
+
+public func buildTeacherIndependentSkillCandidate(skillId: String,
+    proposal: TeacherFailureAssetGenerationResponse,
+    executions: Array<TeacherAssetFixtureExecution>): TeacherSkillCandidate {
+    if (proposal.lane != "skill" || executions.isEmpty()) {
+        throw IllegalArgumentException("candidate_test_evidence_invalid")
+    }
+    let fixtures = ArrayList<TeacherSkillFixture>()
+    for (execution in executions) {
+        if (!execution.passed || execution.fixtureHash != teacherAssetFixtureHash(execution.fixture) ||
+            execution.actualEvidence != execution.fixture.expectedEvidence ||
+            execution.transcriptHash != "sha256:${teacherStableHash(execution.transcript)}") {
+            throw IllegalArgumentException("candidate_test_evidence_invalid")
+        }
+        if (execution.fixture.kind == "unit") { continue }
+        fixtures.add(TeacherSkillFixture(execution.fixture.fixtureId, execution.fixture.content,
+            execution.actualEvidence, sourceClass: execution.fixture.sourceClass,
+            kind: execution.fixture.kind, fixturePath: "tests/${execution.fixture.fixtureId}.txt",
+            benchmarkDerived: false, passed: execution.passed))
+    }
+    let tests = buildTeacherSkillTestBundle(fixtures.toArray())
+    let provisional = TeacherSkillCandidate(skillId, "1.0.0", proposal.title, proposal.content,
+        "general_engineering", proposal.scope, "independent", "", tests)
+    let artifactEvidenceHash = "sha256:${teacherStableHash(renderTeacherSkillTestEvidence(provisional))}"
+    let boundTests = TeacherSkillTestBundle(tests.fixtures, artifactEvidenceHash)
+    let canonical = teacherJoin([skillId, "1.0.0", proposal.title, proposal.content,
+        "general_engineering", proposal.scope, "independent", artifactEvidenceHash]
+        .map({field: String => teacherSkillLengthPart(field)}), "")
+    TeacherSkillCandidate(skillId, "1.0.0", proposal.title, proposal.content,
+        "general_engineering", proposal.scope, "independent",
+        "sha256:${teacherStableHash(canonical)}", boundTests)
+}
+
 public func renderCandidateSkillExport(value: TeacherSkillCandidate): String {
     if (!value.contentHash.startsWith("sha256:") || value.tests.fixtures.size < 3) {
         throw IllegalArgumentException("invalid_teacher_skill_candidate")
@@ -639,6 +701,30 @@ public func exportTeacherSkillCandidateDirectory(value: TeacherSkillCandidate, c
         try { if (exists(Path(stage))) { remove(Path(stage), recursive: true) } } catch (_: Exception) {}
         throw e
     }
+}
+
+public func teacherSkillCandidateArtifactFiles(value: TeacherSkillCandidate,
+    operation: TeacherContextAssetOperation,
+    executions!: Array<TeacherAssetFixtureExecution> = []): Array<TeacherArtifactFile> {
+    if (operation.assetRole != "skills" || operation.assetId != value.skillId ||
+        operation.newHash != value.contentHash) {
+        throw IllegalArgumentException("candidate_operation_invalid")
+    }
+    let files = ArrayList<TeacherArtifactFile>()
+    files.add(TeacherArtifactFile("${value.skillId}/SKILL.md",
+        teacherSkillNormalizedText(renderCandidateSkillExport(value))))
+    files.add(TeacherArtifactFile("${value.skillId}/candidate-manifest.json",
+        renderTeacherSkillCandidateManifest(value) + "\n"))
+    files.add(TeacherArtifactFile("${value.skillId}/test-bundle.json",
+        renderTeacherSkillTestBundle(value) + "\n"))
+    files.add(TeacherArtifactFile("${value.skillId}/operation.json",
+        renderTeacherContextAssetOperation(operation) + "\n"))
+    if (executions.isEmpty()) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+    for (execution in executions) {
+        for (file in teacherAssetFixtureExecutionFiles(execution,
+            "${value.skillId}/tests/${execution.fixture.fixtureId}")) { files.add(file) }
+    }
+    files.toArray()
 }
 
 public func renderTeacherFailureObservationForModel(input: TeacherCompletionFailureInput,

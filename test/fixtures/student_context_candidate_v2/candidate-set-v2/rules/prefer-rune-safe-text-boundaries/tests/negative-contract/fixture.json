@@ -1,0 +1,1 @@
+{"schemaVersion":"teacher-asset-fixture-v1","fixtureId":"negative-contract","kind":"negative","sourceClass":"non_humaneval_experiment","content":"Reject byte slicing.","expectedEvidence":"negative-ok","fixtureHash":"sha256:363d78589206da88153bb6879a409a36c34ef7943be374d2a0c557a2357d21b0"}
