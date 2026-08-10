@@ -47,6 +47,7 @@ private class R6StudentVerifierRunner <: TeacherStudentRuntimeExecutor {
     public var duplicateTerminal = false
     public var trailingAfterTerminal = false
     public var invalidNestedEvidence = false
+    public var nestedEvidence = false
     public var exitCode: Int64 = 0
     public func execute(spec: TeacherStudentRuntimeSpec): TeacherStudentRuntimeResult {
         calls += 1
@@ -58,9 +59,9 @@ private class R6StudentVerifierRunner <: TeacherStudentRuntimeExecutor {
             "{\"solution_cj\":\"positive_passed\",\"extra\":true}"
         } else if (invalidNestedEvidence) {
             "{\"solution_cj\":\"{\\\"actualEvidence\\\":\\\"positive_passed\\\",\\\"extra\\\":true}\"}"
-        } else {
+        } else if (nestedEvidence) {
             "{\"solution_cj\":\"{\\\"actualEvidence\\\":\\\"positive_passed\\\"}\"}"
-        }
+        } else { "{\"solution_cj\":\"positive_passed\"}" }
         let envelope = "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false," +
             "\"modelUsage\":{\"gpt-5.6-sol\":{}},\"structured_output\":${structured}}"
         let initEvent = "{\"type\":\"system\",\"subtype\":\"init\"}"
@@ -166,6 +167,13 @@ public class TeacherFailureAssetTestExecutorTest {
             @Expect(runner.sandboxProfile.contains(".claude"), false)
             @Expect(parseTeacherStudentValidationTranscript(results[0].transcript)
                 .validationIdentityHash, identity.identityHash)
+
+            Directory.create(Path("${root}/workspace-nested"), recursive: true)
+            let nestedRunner = R6StudentVerifierRunner(); nestedRunner.nestedEvidence = true
+            let nestedExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+                "${canonical}/workspace-nested", "${canonical}/completion-control.json",
+                identity, executor: nestedRunner)
+            @Expect(executeTeacherAssetFixtureBundle([s2Fixtures()[0]], nestedExecutor, target)[0].passed, true)
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 

@@ -501,11 +501,13 @@ private func teacherStudentClaudeSolution(raw: String, model: String): String {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
         let solution = teacherValidationString(structured, "solution_cj")
-        let evidence = JsonValue.fromStr(solution).asObject()
-        if (evidence.getFields().size != 1) {
-            throw IllegalArgumentException("candidate_test_evidence_invalid")
-        }
-        let actualEvidence = teacherValidationString(evidence, "actualEvidence")
+        let actualEvidence = if (solution.startsWith("{")) {
+            let evidence = JsonValue.fromStr(solution).asObject()
+            if (evidence.getFields().size != 1) {
+                throw IllegalArgumentException("candidate_test_evidence_invalid")
+            }
+            teacherValidationString(evidence, "actualEvidence")
+        } else { solution }
         if (!teacherStudentProcessSafe(actualEvidence, 8192)) {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
