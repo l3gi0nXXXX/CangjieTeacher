@@ -617,7 +617,7 @@ public class StudentCompletionNonHumanEvalExecutor <: TeacherAssetFixtureExecuto
             else if (exists(Path(transcriptPath))) { teacherReadUtf8File(transcriptPath).trimAscii() }
             else { "" }
         if (raw == "invalid_response_encoding") { throw IllegalArgumentException("invalid_response_encoding") }
-        if (raw.toArray().size > 32768) {
+        if (raw.toArray().size > control.effectivePromptByteBudget) {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
         try {

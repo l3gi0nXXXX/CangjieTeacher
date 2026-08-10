@@ -48,6 +48,7 @@ private class R6StudentVerifierRunner <: TeacherStudentRuntimeExecutor {
     public var trailingAfterTerminal = false
     public var invalidNestedEvidence = false
     public var nestedEvidence = false
+    public var streamPaddingSize: Int64 = 0
     public var exitCode: Int64 = 0
     public func execute(spec: TeacherStudentRuntimeSpec): TeacherStudentRuntimeResult {
         calls += 1
@@ -64,7 +65,8 @@ private class R6StudentVerifierRunner <: TeacherStudentRuntimeExecutor {
         } else { "{\"solution_cj\":\"positive_passed\"}" }
         let envelope = "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false," +
             "\"modelUsage\":{\"gpt-5.6-sol\":{}},\"structured_output\":${structured}}"
-        let initEvent = "{\"type\":\"system\",\"subtype\":\"init\"}"
+        let padding = String(Array<Rune>(streamPaddingSize, repeat: r'x'))
+        let initEvent = "{\"type\":\"system\",\"subtype\":\"init\",\"padding\":\"${padding}\"}"
         let output = if (malformed) { "{malformed" }
             else if (duplicateTerminal) { "[${initEvent},${envelope},${envelope}]" }
             else if (trailingAfterTerminal) { "[${initEvent},${envelope},${initEvent}]" }
@@ -83,7 +85,7 @@ private func r6Control(model: String): String {
     renderTeacherStudentCompletionControl(TeacherStudentCompletionControl(
         "D-ckb-mcp-http", "completion-only-v1", 1,
         "sha256:${teacherStableHash(teacherStudentCompletionOutputSchema())}",
-        "sha256:${teacherStableHash("sampling")}", 32768, 0, 600,
+        "sha256:${teacherStableHash("sampling")}", 65536, 0, 600,
         "sha256:${teacherStableHash("runtime-config")}",
         teacherStudentCompletionCommandHash(model)))
 }
@@ -146,6 +148,7 @@ public class TeacherFailureAssetTestExecutorTest {
             let control = r6Control("gpt-5.6-sol")
             _ = teacherAtomicWrite("${root}/completion-control.json", control)
             let runner = R6StudentVerifierRunner(); runner.streamArray = true
+            runner.streamPaddingSize = 40000
             let identity = r6Identity(runtime, control)
             let executor = StudentCompletionNonHumanEvalExecutor(runtime, canonical, "${canonical}/workspace",
                 "${canonical}/completion-control.json", identity, executor: runner)
@@ -287,6 +290,18 @@ public class TeacherFailureAssetTestExecutorTest {
                 buildTeacherAssetValidationTarget("rules", "trailing-terminal", "none", identity)) }
             catch (e: Exception) { trailing = e.message }
             @Expect(trailing, "candidate_test_evidence_invalid")
+
+            Directory.create(Path("${root}/workspace-over-budget"), recursive: true)
+            let overBudgetRunner = R6StudentVerifierRunner(); overBudgetRunner.streamArray = true
+            overBudgetRunner.streamPaddingSize = 70000
+            let overBudgetExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+                "${canonical}/workspace-over-budget", "${canonical}/completion-control.json",
+                identity, executor: overBudgetRunner)
+            var overBudget = ""
+            try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], overBudgetExecutor,
+                buildTeacherAssetValidationTarget("rules", "over-budget", "none", identity)) }
+            catch (e: Exception) { overBudget = e.message }
+            @Expect(overBudget, "candidate_test_evidence_invalid")
 
             Directory.create(Path("${root}/workspace-invalid-nested"), recursive: true)
             let nestedRunner = R6StudentVerifierRunner(); nestedRunner.invalidNestedEvidence = true
