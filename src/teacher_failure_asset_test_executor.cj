@@ -367,7 +367,9 @@ private func teacherStudentPrompt(fixture: TeacherAssetFixture,
     }
     "Use only the supplied candidate context to complete this independent non-HumanEval fixture. " +
         "Do not use tools, settings, hidden tests, reference solutions, or user configuration. " +
-        "Return exactly one JSON object with only the string field actualEvidence. Request: " +
+        "Return exactly one JSON object with only the string field actualEvidence. " +
+        "Set actualEvidence to only the exact evidence token requested by input; do not add explanations, " +
+        "punctuation, prefixes, or suffixes. Request: " +
         "{\"schemaVersion\":\"teacher-student-non-humaneval-request-v1\"," +
         "\"fixtureId\":\"${fixture.fixtureId}\",\"fixtureHash\":\"${teacherAssetFixtureHash(fixture)}\"," +
         "\"lane\":\"${target.lane}\",\"candidateVisibleHash\":\"${target.candidateProjectionHash}\"," +

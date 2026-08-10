@@ -155,6 +155,8 @@ public class TeacherFailureAssetTestExecutorTest {
             @Expect(runner.candidateProjection.contains(projection.replace("\n", "\\n")), true)
             @Expect(runner.request.contains("positive_passed"), false)
             @Expect(runner.request.contains("expectedEvidence"), false)
+            @Expect(runner.request.contains("only the exact evidence token requested by input"), true)
+            @Expect(runner.request.contains("do not add explanations, punctuation, prefixes, or suffixes"), true)
             @Expect(runner.launchCommand.contains("--tools ''"), true)
             @Expect(runner.launchCommand.contains("--setting-sources ''"), true)
             @Expect(runner.launchCommand.contains("< '${canonical}/workspace/"), true)
