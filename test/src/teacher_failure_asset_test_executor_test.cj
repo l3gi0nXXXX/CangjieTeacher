@@ -1,13 +1,22 @@
 package cangjie_teacher_test
 
 import std.unittest.testmacro.*
+import std.fs.*
+import std.time.*
+import stdx.encoding.json.*
 import cangjie_teacher.*
 
 class S2FailingFixtureExecutor <: TeacherAssetFixtureExecutor {
+    private let identity = sealTeacherValidationIdentity("scaffold", "fake-scaffold-v1", "scaffold",
+        "sha256:${teacherStableHash("s2-fake-runtime")}",
+        "sha256:${teacherStableHash("s2-fake-control")}",
+        "sha256:${teacherStableHash("s2-fake-prompt")}")
     public func executorKind(): String { "fake_contract" }
     public func providerIdentityHash(): String { "sha256:${teacherStableHash("fake")}" }
     public func modelVersion(): String { "fake-scaffold-v1" }
-    public func execute(fixture: TeacherAssetFixture): (Int64, String, String) {
+    public func validationIdentity(): TeacherValidationIdentity { identity }
+    public func execute(target: TeacherAssetValidationTarget,
+        fixture: TeacherAssetFixture): (Int64, String, String) {
         (1, "different", "synthetic failure transcript")
     }
 }
@@ -25,8 +34,216 @@ public func s2Fixtures(): Array<TeacherAssetFixture> {
     ]
 }
 
+private class R6StudentVerifierRunner <: TeacherStudentRuntimeExecutor {
+    public var calls: Int64 = 0
+    public var request = ""
+    public var candidateProjection = ""
+    public var launchCommand = ""
+    public var sandboxProfile = ""
+    public var tamperFixture = false
+    public var invalidEncoding = false
+    public var malformed = false
+    public var exitCode: Int64 = 0
+    public func execute(spec: TeacherStudentRuntimeSpec): TeacherStudentRuntimeResult {
+        calls += 1
+        request = teacherReadUtf8File("${spec.cwd}/prompt.final.md")
+        candidateProjection = request
+        launchCommand = spec.args[1]
+        sandboxProfile = teacherReadUtf8File("${spec.cwd}/sandbox.sb")
+        let structured = if (tamperFixture) {
+            "{\"solution_cj\":\"positive_passed\",\"extra\":true}"
+        } else { "{\"solution_cj\":\"positive_passed\"}" }
+        let envelope = "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false," +
+            "\"modelUsage\":{\"gpt-5.6-sol\":{}},\"structured_output\":${structured}}"
+        let output = if (malformed) { "{malformed" } else { envelope }
+        if (invalidEncoding) {
+            File.writeTo(Path("${spec.cwd}/transcript.json"), [UInt8(0xff)])
+        }
+        TeacherStudentRuntimeResult(exitCode,
+            if (invalidEncoding) { "" } else { output },
+            "provider stderr must stay separate")
+    }
+}
+
+private func r6Control(model: String): String {
+    renderTeacherStudentCompletionControl(TeacherStudentCompletionControl(
+        "D-ckb-mcp-http", "completion-only-v1", 1,
+        "sha256:${teacherStableHash(teacherStudentCompletionOutputSchema())}",
+        "sha256:${teacherStableHash("sampling")}", 32768, 0, 600,
+        "sha256:${teacherStableHash("runtime-config")}",
+        teacherStudentCompletionCommandHash(model)))
+}
+
+private func r6Identity(runtimeExecutable: String, control: String): TeacherValidationIdentity {
+    sealTeacherValidationIdentity("codex", "gpt-5.6-sol", "claude-code-2.1.0",
+        teacherValidationExecutableHash(runtimeExecutable),
+        "sha256:${teacherStableHash(control)}",
+        "sha256:${teacherStableHash("prompt-capability-v1")}")
+}
+
+private class R6CandidateDriftExecutor <: TeacherAssetFixtureExecutor {
+    private let identity: TeacherValidationIdentity
+    public init(identity: TeacherValidationIdentity) { this.identity = identity }
+    public func executorKind(): String { "student_completion_non_humaneval" }
+    public func providerIdentityHash(): String { identity.identityHash }
+    public func modelVersion(): String { identity.modelVersion }
+    public func validationIdentity(): TeacherValidationIdentity { identity }
+    public func execute(target: TeacherAssetValidationTarget,
+        fixture: TeacherAssetFixture): (Int64, String, String) {
+        let drifted = buildTeacherAssetValidationTarget(target.lane,
+            target.candidateVisibleProjection + " drift", target.baseCompositeHash, identity)
+        let transcript = buildTeacherStudentValidationTranscript(fixture, drifted,
+            fixture.expectedEvidence, "sha256:${teacherStableHash("verified")}", 0)
+        (0, fixture.expectedEvidence, renderTeacherStudentValidationTranscript(transcript))
+    }
+}
+
 @Test
 public class TeacherFailureAssetTestExecutorTest {
+    // R6-T1-UT: canonical identity bytes and transcript hashes are deterministic.
+    @TestCase public func r6T1IdentityAndTranscriptContract(): Unit {
+        // Frozen against CKB ckbStudentCompletionCommandHash("GLM-5.2").
+        @Expect(teacherStudentCompletionCommandHash("GLM-5.2"),
+            "sha256:f459b295757aad5f6b192b9117a0097e6deb94b2043070f6a74e2155cfe64ce0")
+        let identity = sealTeacherValidationIdentity("codex", "gpt-5.6-sol", "claude-code-2.1.0",
+            "sha256:${teacherStableHash("runtime")}", "sha256:${teacherStableHash("control")}",
+            "sha256:${teacherStableHash("prompt")}")
+        let raw = renderTeacherValidationIdentity(identity)
+        @Expect(raw.endsWith("\n"), true)
+        @Expect(parseTeacherValidationIdentity(raw).identityHash, identity.identityHash)
+        let fixture = s2Fixtures()[0]
+        let target = buildTeacherAssetValidationTarget("rules", "# Student Rules\n\n中文🙂\n",
+            "none", identity)
+        let transcript = buildTeacherStudentValidationTranscript(fixture, target,
+            fixture.expectedEvidence, "sha256:${teacherStableHash("verified")}", 0)
+        @Expect(parseTeacherStudentValidationTranscript(
+            renderTeacherStudentValidationTranscript(transcript)).candidateVisibleHash,
+            target.candidateProjectionHash)
+    }
+
+    // R6-T1-POS/BND: production runner receives the exact Unicode candidate projection.
+    @TestCase public func r6T1StudentExecutorIsCandidateAware(): Unit {
+        let root = "/tmp/teacher-r6-t1-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            Directory.create(Path("${root}/workspace"), recursive: true)
+            _ = teacherAtomicWrite("${root}/runtime", "deterministic provider runtime\n")
+            let canonical = canonicalize(Path(root)).toString()
+            let runtime = "${canonical}/runtime"
+            let control = r6Control("gpt-5.6-sol")
+            _ = teacherAtomicWrite("${root}/completion-control.json", control)
+            let runner = R6StudentVerifierRunner(); let identity = r6Identity(runtime, control)
+            let executor = StudentCompletionNonHumanEvalExecutor(runtime, canonical, "${canonical}/workspace",
+                "${canonical}/completion-control.json", identity, executor: runner)
+            let projection = "# Student Rules\n\nKeep 中文🙂 on Rune boundaries.\n"
+            let target = buildTeacherAssetValidationTarget("rules", projection, "none", identity)
+            let results = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], executor, target)
+            @Expect(results[0].passed, true); @Expect(runner.calls, 1)
+            @Expect(runner.candidateProjection.contains(projection.replace("\n", "\\n")), true)
+            @Expect(runner.request.contains("positive_passed"), false)
+            @Expect(runner.request.contains("expectedEvidence"), false)
+            @Expect(runner.launchCommand.contains("--tools ''"), true)
+            @Expect(runner.launchCommand.contains("--setting-sources ''"), true)
+            @Expect(runner.launchCommand.contains("< '${canonical}/workspace/"), true)
+            @Expect(runner.sandboxProfile.contains("(deny default)"), true)
+            @Expect(runner.sandboxProfile.contains("(allow default)"), false)
+            @Expect(runner.sandboxProfile.contains("/Users/"), false)
+            @Expect(runner.sandboxProfile.contains(".claude"), false)
+            @Expect(parseTeacherStudentValidationTranscript(results[0].transcript)
+                .validationIdentityHash, identity.identityHash)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
+    // R6-T1-NEG: runner response tamper and executable identity drift fail closed.
+    @TestCase public func r6T1StudentExecutorRejectsTamper(): Unit {
+        let root = "/tmp/teacher-r6-t1-neg-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            Directory.create(Path("${root}/workspace"), recursive: true)
+            _ = teacherAtomicWrite("${root}/runtime", "runtime-a\n")
+            let canonical = canonicalize(Path(root)).toString()
+            let runtime = "${canonical}/runtime"
+            let control = r6Control("gpt-5.6-sol")
+            _ = teacherAtomicWrite("${root}/completion-control.json", control)
+            let identity = r6Identity(runtime, control); let runner = R6StudentVerifierRunner()
+            runner.tamperFixture = true
+            let executor = StudentCompletionNonHumanEvalExecutor(runtime, canonical, "${canonical}/workspace",
+                "${canonical}/completion-control.json", identity, executor: runner)
+            let target = buildTeacherAssetValidationTarget("rules", "candidate", "none", identity)
+            var diagnostic = ""
+            try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], executor, target) }
+            catch (e: Exception) { diagnostic = e.message }
+            @Expect(diagnostic, "candidate_test_evidence_invalid")
+            _ = teacherAtomicWrite("${root}/other-runtime", "runtime-b\n")
+            var drift = ""
+            try { _ = StudentCompletionNonHumanEvalExecutor("${canonical}/other-runtime", canonical,
+                "${canonical}/workspace",
+                "${canonical}/completion-control.json", identity, executor: runner) }
+            catch (e: Exception) { drift = e.message }
+            @Expect(drift, "student_validation_identity_mismatch")
+
+            var escaped = ""
+            try { _ = StudentCompletionNonHumanEvalExecutor(runtime, canonical, "${canonical}/../",
+                "${canonical}/completion-control.json", identity, executor: runner) }
+            catch (e: Exception) { escaped = e.message }
+            @Expect(escaped, "artifact_input_invalid")
+
+            Directory.create(Path("${root}/workspace-invalid-utf8"), recursive: true)
+            let invalidRunner = R6StudentVerifierRunner(); invalidRunner.invalidEncoding = true
+            let invalidExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+                "${canonical}/workspace-invalid-utf8", "${canonical}/completion-control.json",
+                identity, executor: invalidRunner)
+            var encoding = ""
+            try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], invalidExecutor,
+                buildTeacherAssetValidationTarget("rules", "different-candidate", "none", identity)) }
+            catch (e: Exception) { encoding = e.message }
+            @Expect(encoding, "invalid_response_encoding")
+
+            var candidateDrift = ""
+            try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]],
+                R6CandidateDriftExecutor(identity),
+                buildTeacherAssetValidationTarget("rules", "bound-candidate", "none", identity)) }
+            catch (e: Exception) { candidateDrift = e.message }
+            @Expect(candidateDrift, "candidate_test_evidence_invalid")
+
+            Directory.create(Path("${root}/workspace-control-drift"), recursive: true)
+            let controlRunner = R6StudentVerifierRunner()
+            let controlExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+                "${canonical}/workspace-control-drift", "${canonical}/completion-control.json",
+                identity, executor: controlRunner)
+            _ = teacherAtomicWrite("${root}/completion-control.json",
+                control.replace("\"transportRetryBudget\":0", "\"transportRetryBudget\":1"))
+            var controlDrift = ""
+            try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], controlExecutor,
+                buildTeacherAssetValidationTarget("rules", "control-bound", "none", identity)) }
+            catch (e: Exception) { controlDrift = e.message }
+            @Expect(controlDrift, "student_validation_identity_mismatch")
+            @Expect(controlRunner.calls, Int64(0))
+
+            Directory.create(Path("${root}/workspace-nonzero"), recursive: true)
+            let nonzeroRunner = R6StudentVerifierRunner(); nonzeroRunner.exitCode = 9
+            // Restore the frozen control before exercising the process-exit boundary.
+            _ = teacherAtomicWrite("${root}/completion-control.json", control)
+            let nonzeroExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+                "${canonical}/workspace-nonzero", "${canonical}/completion-control.json",
+                identity, executor: nonzeroRunner)
+            var nonzero = ""
+            try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], nonzeroExecutor,
+                buildTeacherAssetValidationTarget("rules", "nonzero-bound", "none", identity)) }
+            catch (e: Exception) { nonzero = e.message }
+            @Expect(nonzero, "candidate_test_evidence_invalid")
+
+            Directory.create(Path("${root}/workspace-malformed"), recursive: true)
+            let malformedRunner = R6StudentVerifierRunner(); malformedRunner.malformed = true
+            let malformedExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+                "${canonical}/workspace-malformed", "${canonical}/completion-control.json",
+                identity, executor: malformedRunner)
+            var malformed = ""
+            try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], malformedExecutor,
+                buildTeacherAssetValidationTarget("rules", "malformed-bound", "none", identity)) }
+            catch (e: Exception) { malformed = e.message }
+            @Expect(malformed, "malformed_json")
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     @TestCase public func failureAssetFixtureResultsComeOnlyFromExecutor(): Unit {
         let results = executeTeacherAssetFixtureBundle(s2Fixtures(), FakeTeacherAssetFixtureExecutor())
         @Expect(results.size, 4)

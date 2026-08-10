@@ -207,6 +207,7 @@ public func sealTeacherContextCandidateSetV2(candidateSetId: String, baseComposi
     sourceClosure: TeacherContextSourceClosure, rules: TeacherContextLaneV2,
     skills: TeacherContextLaneV2, knowledge: TeacherContextLaneV2,
     knowledgeTargetVersion: String): TeacherContextCandidateSetV2 {
+    teacherV2ValidateExecutionMode(validationLevel, baseCompositeHash, rules, skills)
     teacherSealContextCandidateSetV2(candidateSetId, baseCompositeHash, validationLevel,
         sourceClosure.manifest.sourceManifestHash, classificationManifestHash,
         sourceClosure.sourceClosureHash, sourceClosure.protectedClosureHash,
@@ -364,11 +365,30 @@ private func teacherV2TextArtifact(files: Array<TeacherArtifactFile>, path: Stri
     }
     let runes = raw.toRuneArray()
     let semantic = if (runes.size == 1) { "" } else { String(runes[..runes.size - 1]) }
-    if (semantic.endsWith("\n")) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+    if (semantic.endsWith("\n")) {
+        throw IllegalArgumentException("candidate_test_evidence_invalid")
+    }
     semantic
 }
 
-private func teacherV2ValidateExecution(files: Array<TeacherArtifactFile>, prefix: String): (String, String, String) {
+private func teacherV2ValidationRequestHash(fixtureHash: String, lane: String,
+    candidateHash: String, baseHash: String, identityHash: String): String {
+    let fields = [fixtureHash, lane, candidateHash, baseHash, identityHash]
+    let canonical = teacherJoin(fields.map(
+        {value: String => "${value.toArray().size}:${value}"}), "")
+    "sha256:${teacherStableHash(canonical)}"
+}
+
+private func teacherV2ValidationResponseHash(actual: String,
+    verifierHash: String, exitCode: Int64): String {
+    let fields = [actual, verifierHash, exitCode.toString()]
+    let canonical = teacherJoin(fields.map(
+        {value: String => "${value.toArray().size}:${value}"}), "")
+    "sha256:${teacherStableHash(canonical)}"
+}
+
+private func teacherV2ValidateExecution(files: Array<TeacherArtifactFile>, prefix: String):
+    (String, String, String, String, String, String, String, String, String) {
     let fixtureRaw = teacherV2File(files, "${prefix}/fixture.json").trimAscii()
     let expected = teacherV2TextArtifact(files, "${prefix}/expected.txt")
     let actual = teacherV2TextArtifact(files, "${prefix}/actual.txt")
@@ -392,6 +412,10 @@ private func teacherV2ValidateExecution(files: Array<TeacherArtifactFile>, prefi
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
         let execution = JsonValue.fromStr(executionRaw).asObject()
+        let executorKind = teacherV2String(execution, "executorKind")
+        let providerHash = teacherV2String(execution, "providerIdentityHash")
+        let modelVersion = teacherV2String(execution, "modelVersion")
+        let exitCode = teacherV2Int(execution, "exitCode")
         if (execution.getFields().size != 13 || teacherV2String(execution, "schemaVersion") !=
             "teacher-candidate-fixture-execution-v1" ||
             teacherV2String(execution, "fixtureId") != value.fixtureId ||
@@ -404,16 +428,60 @@ private func teacherV2ValidateExecution(files: Array<TeacherArtifactFile>, prefi
                 "sha256:${teacherStableHash(actual)}" ||
             teacherV2String(execution, "transcriptHash") !=
                 "sha256:${teacherStableHash(teacherTranscriptSemantic(transcript))}" ||
-            teacherV2Int(execution, "exitCode") != 0 || !teacherV2Bool(execution, "passed") ||
+            exitCode != 0 || !teacherV2Bool(execution, "passed") ||
             expected != actual || !["fake_contract", "student_completion_non_humaneval"].contains(
-                teacherV2String(execution, "executorKind")) ||
-            !teacherV2Hash(teacherV2String(execution, "providerIdentityHash")) ||
-            teacherV2String(execution, "modelVersion").isEmpty()) {
+                executorKind) || !teacherV2Hash(providerHash) || modelVersion.isEmpty()) {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
-        (value.kind, teacherV2String(execution, "transcriptHash"), value.sourceClass)
+        if (executorKind == "student_completion_non_humaneval") {
+            let binding = parseTeacherStudentValidationTranscript(transcript)
+            if (binding.fixtureId != value.fixtureId || binding.validationIdentityHash != providerHash ||
+                binding.exitCode != exitCode || binding.requestHash != teacherV2ValidationRequestHash(
+                    fixtureHash, binding.lane, binding.candidateVisibleHash,
+                    binding.baseCompositeHash, binding.validationIdentityHash) ||
+                binding.responseHash != teacherV2ValidationResponseHash(actual,
+                    binding.verifierEvidenceHash, exitCode)) {
+                throw IllegalArgumentException("candidate_test_evidence_invalid")
+            }
+            return (value.kind, teacherV2String(execution, "transcriptHash"), value.sourceClass,
+                executorKind, providerHash, modelVersion, binding.candidateVisibleHash,
+                binding.baseCompositeHash, binding.lane)
+        }
+        (value.kind, teacherV2String(execution, "transcriptHash"), value.sourceClass,
+            executorKind, providerHash, modelVersion, "", "", "")
     } catch (e: IllegalArgumentException) { throw e }
     catch (_: Exception) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+}
+
+private func teacherV2ValidateExecutionMode(validationLevel: String, baseCompositeHash: String,
+    rules: TeacherContextLaneV2, skills: TeacherContextLaneV2): Unit {
+    let expectedKind = if (validationLevel == "student_validated") {
+        "student_completion_non_humaneval"
+    } else if (validationLevel == "scaffold_contract") { "fake_contract" }
+    else { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+    var identity = ""; var model = ""
+    for (entry in [("rules", rules), ("skills", skills)]) {
+        if (!entry[1].eligible) { continue }
+        var count: Int64 = 0
+        for (file in entry[1].files) {
+            if (!file.path.endsWith("/execution.json")) { continue }
+            let suffix = "/execution.json"; let runes = file.path.toRuneArray()
+            let prefix = String(runes[..runes.size - suffix.toRuneArray().size])
+            let execution = teacherV2ValidateExecution(entry[1].files, prefix); count += 1
+            if (execution[3] != expectedKind || (expectedKind == "student_completion_non_humaneval" &&
+                (execution[6] != entry[1].hash || execution[7] != baseCompositeHash ||
+                execution[8] != entry[0]))) {
+                throw IllegalArgumentException("candidate_test_evidence_invalid")
+            }
+            if (expectedKind == "student_completion_non_humaneval") {
+                if (identity.isEmpty()) { identity = execution[4]; model = execution[5] }
+                else if (identity != execution[4] || model != execution[5]) {
+                    throw IllegalArgumentException("student_validation_identity_mismatch")
+                }
+            }
+        }
+        if (count == 0) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+    }
 }
 
 private func teacherV2SkillTestBundle(files: Array<TeacherArtifactFile>, candidateId: String,
@@ -831,6 +899,8 @@ public func parseTeacherContextCandidateSetDirectoryV2(allowedRoot: String,
         let rules = teacherV2DeriveLane("rules", rulesFiles, object, baseHash, classificationHash, base)
         let skills = teacherV2DeriveLane("skills", skillsFiles, object, baseHash, classificationHash, base)
         let knowledge = teacherV2DeriveKnowledge(knowledgeFiles, object, baseHash, classificationHash, base)
+        teacherV2ValidateExecutionMode(teacherV2String(object, "validationLevel"),
+            baseHash, rules, skills)
         let sealed = teacherSealContextCandidateSetV2(teacherV2String(object, "candidateSetId"),
             teacherV2String(object, "baseCompositeHash"), teacherV2String(object, "validationLevel"),
             teacherV2String(object, "sourceEvidenceManifestHash"),

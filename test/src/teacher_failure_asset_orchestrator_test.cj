@@ -19,25 +19,63 @@ private class S2AtomExecutor <: TeacherCommandExecutor {
 
 private class S2RuleEvidenceExecutor <: TeacherAssetFixtureExecutor {
     private let label: String
-    public init(label: String) { this.label = label }
+    private let identity: TeacherValidationIdentity
+    public init(label: String) {
+        this.label = label
+        this.identity = sealTeacherValidationIdentity("scaffold", "fake-rule-evidence-v1", "scaffold",
+            "sha256:${teacherStableHash("rule-evidence-runtime-${label}")}",
+            "sha256:${teacherStableHash("rule-evidence-control-${label}")}",
+            "sha256:${teacherStableHash("rule-evidence-prompt-${label}")}")
+    }
     public func executorKind(): String { "fake_contract" }
     public func providerIdentityHash(): String {
         "sha256:${teacherStableHash("rule-evidence-${label}")}"
     }
     public func modelVersion(): String { "fake-rule-evidence-v1" }
-    public func execute(fixture: TeacherAssetFixture): (Int64, String, String) {
+    public func validationIdentity(): TeacherValidationIdentity { identity }
+    public func execute(target: TeacherAssetValidationTarget,
+        fixture: TeacherAssetFixture): (Int64, String, String) {
         (0, fixture.expectedEvidence, "${label}-${fixture.fixtureId}\r\n")
     }
 }
 
 private class S2CanonicalTranscriptFixtureExecutor <: TeacherAssetFixtureExecutor {
+    private let identity = sealTeacherValidationIdentity("scaffold", "fake-canonical-transcript-v1", "scaffold",
+        "sha256:${teacherStableHash("canonical-transcript-runtime")}",
+        "sha256:${teacherStableHash("canonical-transcript-control")}",
+        "sha256:${teacherStableHash("canonical-transcript-prompt")}")
     public func executorKind(): String { "fake_contract" }
     public func providerIdentityHash(): String {
         "sha256:${teacherStableHash("canonical-transcript-fixture")}"
     }
     public func modelVersion(): String { "fake-canonical-transcript-v1" }
-    public func execute(fixture: TeacherAssetFixture): (Int64, String, String) {
+    public func validationIdentity(): TeacherValidationIdentity { identity }
+    public func execute(target: TeacherAssetValidationTarget,
+        fixture: TeacherAssetFixture): (Int64, String, String) {
         (0, fixture.expectedEvidence, "${fixture.fixtureId}  \r\n")
+    }
+}
+
+private class R6CandidateAwareFixtureExecutor <: TeacherAssetFixtureExecutor {
+    private let identity: TeacherValidationIdentity
+    public let lanes = ArrayList<String>()
+    public let projectionHashes = ArrayList<String>()
+    public init(label!: String = "primary") {
+        this.identity = sealTeacherValidationIdentity("codex", "gpt-5.6-sol",
+            "claude-code-2.1.0", "sha256:${teacherStableHash("r6-runtime-${label}")}",
+            "sha256:${teacherStableHash("r6-control")}",
+            "sha256:${teacherStableHash("r6-prompt")}")
+    }
+    public func executorKind(): String { "student_completion_non_humaneval" }
+    public func providerIdentityHash(): String { identity.identityHash }
+    public func modelVersion(): String { identity.modelVersion }
+    public func validationIdentity(): TeacherValidationIdentity { identity }
+    public func execute(target: TeacherAssetValidationTarget,
+        fixture: TeacherAssetFixture): (Int64, String, String) {
+        lanes.add(target.lane); projectionHashes.add(target.candidateProjectionHash)
+        let transcript = buildTeacherStudentValidationTranscript(fixture, target,
+            fixture.expectedEvidence, "sha256:${teacherStableHash("verified-${fixture.fixtureId}")}", 0)
+        (0, fixture.expectedEvidence, renderTeacherStudentValidationTranscript(transcript))
     }
 }
 
@@ -988,6 +1026,45 @@ public class TeacherFailureAssetOrchestratorTest {
             @Expect(seed.skills.lineage, "independent")
             @Expect(seed.knowledge.lineage, "independent")
             @Expect(seed.classificationManifestHash, "")
+            // R6-T1-NEG: scaffold execution files cannot be re-labelled student_validated.
+            var relabelDiagnostic = ""
+            try { _ = sealTeacherContextCandidateSetV2("forged-student-seed", "none",
+                "student_validated", "", independentClosure, seed.rules, seed.skills,
+                seed.knowledge, seed.knowledgeTargetVersion) }
+            catch (e: Exception) { relabelDiagnostic = e.message }
+            @Expect(relabelDiagnostic, "candidate_test_evidence_invalid")
+
+            // R6-T1-POS/BND: the real mode seed is validated against both exact lane projections.
+            let realExecutor = R6CandidateAwareFixtureExecutor()
+            let realSeed = buildTeacherIndependentContextSeed(TeacherIndependentSeedRequestV2(
+                independentClosure, ruleProposal, skillProposal, s2FullFixtures("real-seed-rule"),
+                s2FullFixtures("real-seed-skill"), realExecutor,
+                TeacherFailureKnowledgeRequest("g-rune", "compiler missing 'Rune'", independentAtom[0],
+                    independentAtom[1], "${root}/atom-real-seed", []),
+                ScaffoldTeacherFailureKnowledgeAdapter(S2AtomExecutor()), "student-seed-v2",
+                "real-seed-rule", "real-seed-rule-concept", "real-seed-skill",
+                root, "${root}/exports"))
+            @Expect(realSeed.validationLevel, "student_validated")
+            @Expect(realExecutor.lanes.contains("rules"), true)
+            @Expect(realExecutor.lanes.contains("skills"), true)
+            @Expect(realExecutor.projectionHashes.contains(realSeed.rules.hash), true)
+            @Expect(realExecutor.projectionHashes.contains(realSeed.skills.hash), true)
+            @Expect(parseTeacherContextCandidateSetDirectoryV2(root,
+                "${root}/exports/student-seed-v2").validationLevel, "student_validated")
+
+            // R6-T2-NEG: production frozen knowledge cannot execute or trust inline atom/authority input.
+            var frozenAtom = ""
+            try { _ = FrozenTeacherFailureKnowledgeAdapter().buildIndependent(
+                TeacherFailureKnowledgeRequest("frozen", "", independentAtom[0], independentAtom[1],
+                    "", [])) }
+            catch (e: Exception) { frozenAtom = e.message }
+            @Expect(frozenAtom, "failure_knowledge_adapter_invalid")
+            var frozenAuthority = ""
+            try { _ = FrozenTeacherFailureKnowledgeAdapter().buildIndependent(
+                TeacherFailureKnowledgeRequest("frozen", "inline authority", "", independentAtom[1],
+                    "", [])) }
+            catch (e: Exception) { frozenAuthority = e.message }
+            @Expect(frozenAuthority, "failure_knowledge_adapter_invalid")
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
 
         let internal = s2InternalClassification("all_assets_gap", true, true, true, "multiple_reusable_gaps")

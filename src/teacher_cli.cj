@@ -49,6 +49,20 @@ public class TeacherCliOptions {
     public var allowedRoot = ""
     public var sourceRoot = ""
     public var protectedRoot = ""
+    public var validationIdentity = ""
+    public var completionControl = ""
+    public var promptCapability = ""
+    public var runtimeExecutable = ""
+    public var classifierA = ""
+    public var classifierB = ""
+    public var generator = ""
+    public var classifierAHash = ""
+    public var classifierBHash = ""
+    public var generatorHash = ""
+    public var adapterWorkspace = ""
+    public var authority = ""
+    public var gapDescription = ""
+    public var frozenKnowledgeReference = ""
     public init() {}
 }
 
@@ -104,6 +118,20 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
             case "--allowed-root" => out.allowedRoot = value
             case "--source-root" => out.sourceRoot = value
             case "--protected-root" => out.protectedRoot = value
+            case "--validation-identity" => out.validationIdentity = value
+            case "--completion-control" => out.completionControl = value
+            case "--prompt-capability" => out.promptCapability = value
+            case "--provider-runtime" => out.runtimeExecutable = value
+            case "--classifier-a" => out.classifierA = value
+            case "--classifier-b" => out.classifierB = value
+            case "--generator" => out.generator = value
+            case "--classifier-a-hash" => out.classifierAHash = value
+            case "--classifier-b-hash" => out.classifierBHash = value
+            case "--generator-hash" => out.generatorHash = value
+            case "--adapter-workspace" => out.adapterWorkspace = value
+            case "--authority" => out.authority = value
+            case "--gap-description" => out.gapDescription = value
+            case "--frozen-knowledge-reference" => out.frozenKnowledgeReference = value
             case _ => throw IllegalArgumentException("unknown_cli_option")
         }
         i += 2
@@ -125,6 +153,62 @@ private func teacherCliSafeReviewText(value: String): Bool {
 private func teacherCliJsonEscape(value: String): String {
     value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
         .replace("\r", "\\r").replace("\t", "\\t")
+}
+
+private func teacherCliLoadValidationIdentity(options: TeacherCliOptions): TeacherValidationIdentity {
+    if (options.allowedRoot.isEmpty() || options.validationIdentity.isEmpty() ||
+        options.completionControl.isEmpty() || options.promptCapability.isEmpty()) {
+        throw IllegalArgumentException("missing_required_cli_option")
+    }
+    let identityRaw = teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
+        options.validationIdentity))
+    let identity = parseTeacherValidationIdentity(identityRaw)
+    let controlRaw = teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
+        options.completionControl))
+    let control = parseTeacherStudentCompletionControl(controlRaw)
+    let capabilityRaw = teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
+        options.promptCapability))
+    if (identity.completionControlHash != "sha256:${teacherStableHash(controlRaw)}" ||
+        identity.providerPromptCapabilityHash != "sha256:${teacherStableHash(capabilityRaw)}") {
+        throw IllegalArgumentException("student_validation_identity_mismatch")
+    }
+    if (control.completionCommandHash != teacherStudentCompletionCommandHash(identity.modelVersion)) {
+        throw IllegalArgumentException("student_validation_identity_mismatch")
+    }
+    identity
+}
+
+private func teacherCliCreateAdapterWorkspace(options: TeacherCliOptions,
+    name: String): String {
+    if (!teacherArtifactSafeComponent(name)) {
+        throw IllegalArgumentException("artifact_output_invalid")
+    }
+    _ = teacherResolveArtifactInput(options.allowedRoot,
+        options.adapterWorkspace, directory: true)
+    let output = Path(options.adapterWorkspace).join(name)
+    if (exists(output)) { throw IllegalArgumentException("artifact_output_invalid") }
+    Directory.create(output, recursive: false)
+    output.toString()
+}
+
+private func teacherCliCandidateIdentityMatches(candidate: TeacherContextCandidateSetV2,
+    identity: TeacherValidationIdentity): Bool {
+    var found = false
+    for (lane in [candidate.rules, candidate.skills]) {
+        if (!lane.eligible) { continue }
+        for (file in lane.files) {
+            if (!file.path.endsWith("/execution.json")) { continue }
+            try {
+                let object = JsonValue.fromStr(file.content.trimAscii()).asObject()
+                if (teacherCliJsonString(object, "executorKind") !=
+                    "student_completion_non_humaneval" ||
+                    teacherCliJsonString(object, "providerIdentityHash") != identity.identityHash ||
+                    teacherCliJsonString(object, "modelVersion") != identity.modelVersion) { return false }
+                found = true
+            } catch (_: Exception) { return false }
+        }
+    }
+    found
 }
 
 private func runTeacherContextSeedBuild(options: TeacherCliOptions): Int64 {
@@ -164,6 +248,44 @@ private func runTeacherContextSeedBuild(options: TeacherCliOptions): Int64 {
             candidate.candidateSetHash, options.json))
         return 0
     }
+    if (!options.validationIdentity.isEmpty()) {
+        if (options.fixtureRoot.isEmpty() || options.fixtureRootHash.isEmpty() ||
+            options.allowedRoot.isEmpty() || options.sourceRoot.isEmpty() ||
+            options.protectedRoot.isEmpty() || options.outputRoot.isEmpty() || options.runId.isEmpty() ||
+            options.rulesContent.isEmpty() || options.skillsContent.isEmpty() ||
+            options.frozenKnowledgeReference.isEmpty() || options.runtimeExecutable.isEmpty() ||
+            options.adapterWorkspace.isEmpty()) {
+            throw IllegalArgumentException("missing_required_cli_option")
+        }
+        let identity = teacherCliLoadValidationIdentity(options)
+        let closure = loadTeacherContextSourceClosure(options.allowedRoot,
+            options.sourceRoot, options.protectedRoot)
+        if (closure.manifest.sourceKind != "independent_sources") {
+            throw IllegalArgumentException("candidate_lane_lineage_invalid")
+        }
+        let fixtures = teacherCliLoadRawFixtures(options.allowedRoot, options.fixtureRoot,
+            options.fixtureRootHash, scaffold: false)
+        let ruleProposal = parseTeacherFailureAssetGenerationResponse(teacherReadUtf8File(
+            teacherResolveArtifactInput(options.allowedRoot, options.rulesContent)).trimAscii())
+        let skillProposal = parseTeacherFailureAssetGenerationResponse(teacherReadUtf8File(
+            teacherResolveArtifactInput(options.allowedRoot, options.skillsContent)).trimAscii())
+        let reference = teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
+            options.frozenKnowledgeReference)).trimAscii()
+        let studentWorkspace = teacherCliCreateAdapterWorkspace(options, "student-seed-${options.runId}")
+        let candidate = buildTeacherIndependentContextSeed(TeacherIndependentSeedRequestV2(
+            closure, ruleProposal, skillProposal, fixtures, fixtures,
+            StudentCompletionNonHumanEvalExecutor(options.runtimeExecutable,
+                options.allowedRoot, studentWorkspace, options.completionControl, identity,
+                timeoutMillis: options.timeoutMillis),
+            TeacherFailureKnowledgeRequest("frozen-independent-knowledge", "", "", reference,
+                "", closure.protectedArtifacts), FrozenTeacherFailureKnowledgeAdapter(),
+            options.runId, "real-seed-rule", "independent-general-rule",
+            "real-seed-skill", options.allowedRoot, options.outputRoot))
+        println(renderTeacherFailureAssetsBuildOutput(candidate.candidateSetId,
+            candidate.candidateSetHash, options.json, candidate.validationLevel,
+            "rules,skills,knowledge"))
+        return 0
+    }
     if (options.sourceManifest.isEmpty() || options.rulesContent.isEmpty() ||
         options.skillsContent.isEmpty() || options.knowledgeContent.isEmpty() ||
         options.knowledgeVersion.isEmpty() || options.outputRoot.isEmpty() ||
@@ -192,6 +314,12 @@ private func runTeacherFailureAssetsApprove(options: TeacherCliOptions): Int64 {
         options.sourceExport, baseContextRoot: options.baseContextRoot)
     if (candidate.candidateSetHash != options.candidateSetHash) {
         throw IllegalArgumentException("candidate_approval_hash_mismatch")
+    }
+    if (candidate.validationLevel == "student_validated") {
+        let identity = teacherCliLoadValidationIdentity(options)
+        if (!teacherCliCandidateIdentityMatches(candidate, identity)) {
+            throw IllegalArgumentException("student_validation_identity_mismatch")
+        }
     }
     let approval = approveTeacherContextCandidateSetV2(options.allowedRoot, options.sourceExport,
         options.sourceRoot, options.protectedRoot, options.baseContextRoot, options.decision,
@@ -246,13 +374,26 @@ public func renderTeacherFailureAssetsBuildOutput(candidateSetId: String,
     "failure assets built candidateSet=${candidateSetId} validation=scaffold_contract changedLane=rules"
 }
 
+public func renderTeacherFailureAssetsBuildOutput(candidateSetId: String,
+    candidateSetHash: String, json: Bool, validationLevel: String,
+    changedLane: String): String {
+    if (json) { return "{\"ok\":true,\"candidateSetHash\":\"${candidateSetHash}\"}" }
+    "failure assets built candidateSet=${candidateSetId} validation=${validationLevel} changedLane=${changedLane}"
+}
+
 private class TeacherCliFixtureExecutor <: TeacherAssetFixtureExecutor {
     let root: String
+    private let identity = sealTeacherValidationIdentity("scaffold", "fake-scaffold-v2", "scaffold",
+        "sha256:${teacherStableHash("scaffold-fixture-runtime-v2")}",
+        "sha256:${teacherStableHash("scaffold-fixture-control-v2")}",
+        "sha256:${teacherStableHash("scaffold-fixture-prompt-v2")}")
     init(root: String) { this.root = root }
     public func executorKind(): String { "fake_contract" }
     public func providerIdentityHash(): String { "sha256:${teacherStableHash("scaffold-fixture-provider-v2")}" }
     public func modelVersion(): String { "fake-scaffold-v2" }
-    public func execute(fixture: TeacherAssetFixture): (Int64, String, String) {
+    public func validationIdentity(): TeacherValidationIdentity { identity }
+    public func execute(target: TeacherAssetValidationTarget,
+        fixture: TeacherAssetFixture): (Int64, String, String) {
         let fixtureRoot = "${root}/fixtures/${fixture.fixtureId}"
         let exitCode = try { Int64.parse(teacherReadUtf8File("${fixtureRoot}/exit-code.txt").trimAscii()) }
         catch (_: Exception) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
@@ -262,7 +403,7 @@ private class TeacherCliFixtureExecutor <: TeacherAssetFixtureExecutor {
 }
 
 private func teacherCliLoadRawFixtures(allowedRoot: String, fixtureRoot: String,
-    expectedRootHash: String): Array<TeacherAssetFixture> {
+    expectedRootHash: String, scaffold!: Bool = true): Array<TeacherAssetFixture> {
     let root = teacherResolveArtifactInput(allowedRoot, fixtureRoot, directory: true)
     let canonicalAllowed = teacherCanonicalArtifactRoot(allowedRoot)
     if (!teacherCliSha(expectedRootHash) || teacherDirectoryHash(root) != expectedRootHash) {
@@ -284,8 +425,10 @@ private func teacherCliLoadRawFixtures(allowedRoot: String, fixtureRoot: String,
         if (entryInfo.isSymbolicLink() || !entryInfo.isDirectory()) {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
-        let expected = HashSet<String>(["fixture.json", "input.txt", "expected.txt", "actual.txt",
-            "transcript.txt", "exit-code.txt"])
+        let expected = if (scaffold) {
+            HashSet<String>(["fixture.json", "input.txt", "expected.txt", "actual.txt",
+                "transcript.txt", "exit-code.txt"])
+        } else { HashSet<String>(["fixture.json", "input.txt", "expected.txt"]) }
         for (file in Directory.readFrom(entryPath)) {
             if (file.isSymbolicLink() || !file.isRegular() || !expected.contains(file.name)) {
                 throw IllegalArgumentException("candidate_test_evidence_invalid")
@@ -299,7 +442,9 @@ private func teacherCliLoadRawFixtures(allowedRoot: String, fixtureRoot: String,
             let id = teacherCliJsonString(object, "fixtureId")
             let kind = teacherCliJsonString(object, "kind")
             let sourceClass = teacherCliJsonString(object, "sourceClass")
-            let canonical = "{\"schemaVersion\":\"teacher-cli-scaffold-fixture-v2\"," +
+            let schema = if (scaffold) { "teacher-cli-scaffold-fixture-v2" }
+                else { "teacher-cli-real-fixture-v1" }
+            let canonical = "{\"schemaVersion\":\"${schema}\"," +
                 "\"fixtureId\":\"${id}\",\"kind\":\"${kind}\",\"sourceClass\":\"${sourceClass}\"}"
             if (object.getFields().size != 4 || raw != canonical || id != entryName || ids.contains(id) ||
                 sourceClass != "non_humaneval_experiment") {
@@ -411,6 +556,120 @@ private func runTeacherScaffoldFailureAssetsBuild(options: TeacherCliOptions): I
     println(renderTeacherFailureAssetsBuildOutput(candidate.candidateSetId, candidate.candidateSetHash,
         options.json))
     0
+}
+
+private func teacherCliChangedLanes(value: TeacherFailureAssetClassification): String {
+    let out = ArrayList<String>()
+    if (value.rulesEligible) { out.add("rules") }
+    if (value.skillEligible) { out.add("skills") }
+    if (value.knowledgeEligible) { out.add("knowledge") }
+    teacherJoin(out.toArray(), ",")
+}
+
+private func runTeacherRealFailureAssetsBuild(options: TeacherCliOptions): Int64 {
+    if (options.fixtureRoot.isEmpty() || options.fixtureRootHash.isEmpty() ||
+        options.failurePath.isEmpty() || options.expectedHash.isEmpty() ||
+        options.allowedRoot.isEmpty() || options.sourceRoot.isEmpty() ||
+        options.protectedRoot.isEmpty() || options.baseContextRoot.isEmpty() ||
+        options.outputRoot.isEmpty() || options.runId.isEmpty() || options.runtimeExecutable.isEmpty() ||
+        options.classifierA.isEmpty() || options.classifierB.isEmpty() || options.generator.isEmpty() ||
+        options.classifierAHash.isEmpty() || options.classifierBHash.isEmpty() ||
+        options.generatorHash.isEmpty() || options.adapterWorkspace.isEmpty() ||
+        options.authority.isEmpty() || options.gapDescription.isEmpty()) {
+        throw IllegalArgumentException("missing_required_cli_option")
+    }
+    let identity = teacherCliLoadValidationIdentity(options)
+    let failureRaw = teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
+        options.failurePath)).trimAscii()
+    let failure = parseTeacherCompletionFailureInput(failureRaw)
+    if (failure.evidenceHash != options.expectedHash ||
+        renderTeacherCompletionFailureInput(failure) != failureRaw) {
+        throw IllegalArgumentException("candidate_generation_invalid")
+    }
+    let authority = teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
+        options.authority)).trimAscii()
+    let classifierRequest = TeacherFailureAssetClassifierRequest(failure.evidenceHash,
+        failure.failureObservation, "${failure.failureKind}:${failure.baseStatus}:${failure.plusStatus}",
+        authority)
+    _ = renderTeacherFailureAssetClassifierRequest(classifierRequest)
+    let classifierAWorkspace = teacherCliCreateAdapterWorkspace(options,
+        "classifier-a-${options.runId}")
+    let classifierBWorkspace = teacherCliCreateAdapterWorkspace(options,
+        "classifier-b-${options.runId}")
+    let first = parseTeacherFailureAssetClassifierResponse(
+        StrictProcessTeacherFailureAssetClassifier(options.classifierA, options.classifierAHash,
+            options.allowedRoot, classifierAWorkspace, timeoutMillis: options.timeoutMillis)
+            .classify(classifierRequest))
+    let second = parseTeacherFailureAssetClassifierResponse(
+        StrictProcessTeacherFailureAssetClassifier(options.classifierB, options.classifierBHash,
+            options.allowedRoot, classifierBWorkspace, timeoutMillis: options.timeoutMillis)
+            .classify(classifierRequest))
+    let reconciled = reconcileTeacherFailureAssetClassifications(first, second)
+    let closure = loadTeacherContextSourceClosure(options.allowedRoot,
+        options.sourceRoot, options.protectedRoot)
+    if (closure.manifest.sourceKind != "completion_failures") {
+        throw IllegalArgumentException("failure_classification_binding_mismatch")
+    }
+    let base = loadTeacherContextBaseStateV2(options.allowedRoot, options.baseContextRoot)
+    let fixtures = teacherCliLoadRawFixtures(options.allowedRoot, options.fixtureRoot,
+        options.fixtureRootHash, scaffold: false)
+    let generatorWorkspace = teacherCliCreateAdapterWorkspace(options,
+        "generator-${options.runId}")
+    let generator = StrictProcessTeacherFailureAssetGenerator(options.generator,
+        options.generatorHash, options.allowedRoot, generatorWorkspace,
+        timeoutMillis: options.timeoutMillis)
+    let gap = teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
+        options.gapDescription)).trimAscii()
+    let frozenReference = if (reconciled.knowledgeEligible) {
+        if (options.frozenKnowledgeReference.isEmpty() || options.knowledgeContent.isEmpty()) {
+            throw IllegalArgumentException("missing_required_cli_option")
+        }
+        teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
+            options.frozenKnowledgeReference)).trimAscii()
+    } else { "{}" }
+    let missingKnowledge = if (reconciled.knowledgeEligible) {
+        teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
+            options.knowledgeContent)).trimAscii()
+    } else { "unused" }
+    let studentWorkspace = teacherCliCreateAdapterWorkspace(options,
+        "student-failure-${options.runId}")
+    let request = TeacherFailureAssetBuildRequestV2(failure, first, second, gap,
+        generator, fixtures, fixtures,
+        StudentCompletionNonHumanEvalExecutor(options.runtimeExecutable,
+            options.allowedRoot, studentWorkspace, options.completionControl, identity,
+            timeoutMillis: options.timeoutMillis),
+        TeacherFailureKnowledgeRequest(missingKnowledge, "", "", frozenReference, "",
+            closure.protectedArtifacts), FrozenTeacherFailureKnowledgeAdapter(), closure, base,
+        options.runId, "real-rule-${first.classificationEvidenceHash}",
+        "failure-derived-general-rule", "real-skill-${first.classificationEvidenceHash}",
+        "add", "", "add", "", options.allowedRoot, options.outputRoot)
+    let built = buildTeacherFailureAssets(request)
+    let candidate = match (built.candidateSetV2) {
+        case Some(value) => value
+        case None => throw IllegalArgumentException("candidate_generation_invalid")
+    }
+    println(renderTeacherFailureAssetsBuildOutput(candidate.candidateSetId,
+        candidate.candidateSetHash, options.json, candidate.validationLevel,
+        teacherCliChangedLanes(built.classification)))
+    0
+}
+
+private func runTeacherFailureAssetsCommand(options: TeacherCliOptions): Int64 {
+    if (options.scaffoldContract) { return runTeacherScaffoldFailureAssetsBuild(options) }
+    if (options.command == "failure-assets-reexport") {
+        if (options.allowedRoot.isEmpty() || options.baseContextRoot.isEmpty() ||
+            options.sourceExport.isEmpty() || options.outputRoot.isEmpty()) {
+            throw IllegalArgumentException("missing_required_cli_option")
+        }
+        let candidate = parseTeacherContextCandidateSetDirectoryV2(options.allowedRoot,
+            options.sourceExport, baseContextRoot: options.baseContextRoot)
+        _ = exportTeacherContextCandidateSetV2(candidate, options.allowedRoot,
+            options.outputRoot, baseContextRoot: options.baseContextRoot)
+        println(renderTeacherFailureAssetsBuildOutput(candidate.candidateSetId,
+            candidate.candidateSetHash, options.json, candidate.validationLevel, "sealed"))
+        return 0
+    }
+    runTeacherRealFailureAssetsBuild(options)
 }
 
 public func loadTeacherDatasetManifestFile(path: String, checksum: String): TeacherDatasetManifest {
@@ -581,7 +840,7 @@ public func cangjieTeacherCliMain(args: Array<String>): Int64 {
         if (options.command == "context-seed-build") { return runTeacherContextSeedBuild(options) }
         if (options.command == "failure-assets-approve") { return runTeacherFailureAssetsApprove(options) }
         if (options.command == "failure-assets-build" || options.command == "failure-assets-reexport") {
-            return runTeacherScaffoldFailureAssetsBuild(options)
+            return runTeacherFailureAssetsCommand(options)
         }
         println(teacherCliUsage())
         2

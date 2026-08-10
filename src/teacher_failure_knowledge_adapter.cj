@@ -170,3 +170,37 @@ public class UnavailableTeacherFailureKnowledgeAdapter <: TeacherFailureKnowledg
         throw IllegalArgumentException("classification_requires_review")
     }
 }
+
+// Production S6 consumes only a separately precertified and frozen CKB reference.
+// Atom generation/execution remains a prior workflow and cannot be substituted here.
+public class FrozenTeacherFailureKnowledgeAdapter <: TeacherFailureKnowledgeAdapter &
+    TeacherIndependentKnowledgeAdapter {
+    public func build(classification: TeacherFailureAssetClassification,
+        request: TeacherFailureKnowledgeRequest): TeacherFailureKnowledgeAsset {
+        if (!classification.knowledgeEligible || classification.schemaVersion !=
+            "ckb-completion-failure-classification-v2") {
+            throw IllegalArgumentException("failure_knowledge_adapter_invalid")
+        }
+        buildFrozen(request, "humaneval_164_derived")
+    }
+    public func buildIndependent(request: TeacherFailureKnowledgeRequest): TeacherFailureKnowledgeAsset {
+        buildFrozen(request, "independent")
+    }
+    private func buildFrozen(request: TeacherFailureKnowledgeRequest,
+        expectedLineage: String): TeacherFailureKnowledgeAsset {
+        if (!request.atomBundle.isEmpty() || !request.workspaceRoot.isEmpty() ||
+            !request.authorityEvidence.isEmpty()) {
+            throw IllegalArgumentException("failure_knowledge_adapter_invalid")
+        }
+        let reference = parseTeacherFrozenKnowledgeReference(request.frozenReference)
+        if (reference.assetLineage != expectedLineage) {
+            throw IllegalArgumentException("failure_knowledge_adapter_invalid")
+        }
+        let visible = reference.raw + "\n"
+        let audit = auditTextAgainstProtectedArtifacts(visible, request.protectedArtifacts)
+        if (!audit.passed) { throw IllegalArgumentException("protected_asset_combination") }
+        TeacherFailureKnowledgeAsset(reference, [
+            TeacherArtifactFile("knowledge-candidate-reference.json", visible)
+        ], visible, visible)
+    }
+}

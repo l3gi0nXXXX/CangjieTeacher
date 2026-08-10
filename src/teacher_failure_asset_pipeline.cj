@@ -126,6 +126,33 @@ private func teacherPipelineAllPassed(values: Array<TeacherAssetFixtureExecution
     true
 }
 
+// Candidate projection construction uses only fixture inputs and expected public evidence.
+// These provisional rows are never exported; real execution must reproduce the same evidence
+// under the resulting exact student-visible projection before the candidate is rebuilt.
+private func teacherPipelineExpectedExecutions(fixtures: Array<TeacherAssetFixture>,
+    executor: TeacherAssetFixtureExecutor): Array<TeacherAssetFixtureExecution> {
+    let out = ArrayList<TeacherAssetFixtureExecution>()
+    for (fixture in fixtures) {
+        let transcript = "candidate-projection-only"
+        out.add(TeacherAssetFixtureExecution(fixture, teacherAssetFixtureHash(fixture),
+            executor.executorKind(), executor.providerIdentityHash(), executor.modelVersion(),
+            fixture.expectedEvidence, "sha256:${teacherStableHash(transcript)}", 0, true,
+            transcript: transcript))
+    }
+    out.toArray()
+}
+
+private func teacherPipelineValidationTarget(lane: String, visible: String, baseHash: String,
+    executor: TeacherAssetFixtureExecutor): TeacherAssetValidationTarget {
+    let identity = executor.validationIdentity()
+    if (executor.executorKind() == "student_completion_non_humaneval" &&
+        (identity.identityHash != executor.providerIdentityHash() ||
+        identity.modelVersion != executor.modelVersion())) {
+        throw IllegalArgumentException("student_validation_identity_mismatch")
+    }
+    buildTeacherAssetValidationTarget(lane, visible, baseHash, identity)
+}
+
 private func teacherPipelineProposal(proposals: Array<TeacherFailureAssetGenerationResponse>,
     lane: String): TeacherFailureAssetGenerationResponse {
     for (proposal in proposals) { if (proposal.lane == lane) { return proposal } }
@@ -180,11 +207,25 @@ public func buildTeacherFailureAssets(request: TeacherFailureAssetBuildRequestV2
     var knowledgeAudit = ""
 
     if (classification.rulesEligible) {
-        let executions = executeTeacherAssetFixtureBundle(request.ruleFixtures, request.fixtureExecutor)
+        let proposal = teacherPipelineProposal(proposals, "rules")
+        let projected = buildTeacherRuleCandidate(classification, request.ruleId, request.ruleConceptId,
+            proposal.title, proposal.content, proposal.trigger, proposal.scope, proposal.priority,
+            "completion_failure", request.failure.evidenceHash,
+            TeacherRuleTestBundle(teacherPipelineExpectedExecutions(request.ruleFixtures,
+                request.fixtureExecutor)))
+        let projectedOperation = buildTeacherContextAssetOperation("rules", projected.ruleId,
+            request.ruleOperation, request.ruleExpectedOldHash, projected.canonicalHash,
+            request.base.rulesAssets)
+        let projectedSingle = renderTeacherAgentsMarkdown([projected])
+        let projectedFragment = String(projectedSingle.toRuneArray()["# Student Rules\n".toRuneArray().size..])
+        let projectedVisible = teacherContextAssetProjection("rules", applyTeacherContextAssetOperation(
+            request.base.rulesAssets, projectedOperation, projectedFragment, priority: projected.priority))
+        let executions = executeTeacherAssetFixtureBundle(request.ruleFixtures, request.fixtureExecutor,
+            teacherPipelineValidationTarget("rules", projectedVisible, request.base.compositeHash,
+                request.fixtureExecutor))
         if (!teacherPipelineAllPassed(executions)) {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
-        let proposal = teacherPipelineProposal(proposals, "rules")
         let candidate = buildTeacherRuleCandidate(classification, request.ruleId, request.ruleConceptId,
             proposal.title, proposal.content, proposal.trigger, proposal.scope, proposal.priority,
             "completion_failure", request.failure.evidenceHash, TeacherRuleTestBundle(executions))
@@ -196,6 +237,7 @@ public func buildTeacherFailureAssets(request: TeacherFailureAssetBuildRequestV2
         let fragment = String(single.toRuneArray()["# Student Rules\n".toRuneArray().size..])
         let visible = teacherContextAssetProjection("rules", applyTeacherContextAssetOperation(
             request.base.rulesAssets, operation, fragment, priority: candidate.priority))
+        if (visible != projectedVisible) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
         rules = TeacherContextLaneV2(true, "sha256:${teacherStableHash(visible)}",
             teacherContextLaneTreeHashV2(files), request.base.rulesAssets.size +
                 if (request.ruleOperation == "add") { 1 } else { 0 },
@@ -203,18 +245,30 @@ public func buildTeacherFailureAssets(request: TeacherFailureAssetBuildRequestV2
         rulesAudit = visible
     }
     if (classification.skillEligible) {
-        let executions = executeTeacherAssetFixtureBundle(request.skillFixtures, request.fixtureExecutor)
+        let proposal = teacherPipelineProposal(proposals, "skill")
+        let projected = buildTeacherSkillCandidateFromFailureAsset(request.failure, classification,
+            proposal, teacherPipelineExpectedExecutions(request.skillFixtures,
+                request.fixtureExecutor), request.skillId)
+        let projectedOperation = buildTeacherContextAssetOperation("skills", projected.skillId,
+            request.skillOperation, request.skillExpectedOldHash, projected.contentHash,
+            request.base.skillsAssets)
+        let projectedVisible = teacherContextAssetProjection("skills", applyTeacherContextAssetOperation(
+            request.base.skillsAssets, projectedOperation, renderCandidateSkillExport(projected)))
+        let executions = executeTeacherAssetFixtureBundle(request.skillFixtures, request.fixtureExecutor,
+            teacherPipelineValidationTarget("skills", projectedVisible, request.base.compositeHash,
+                request.fixtureExecutor))
         if (!teacherPipelineAllPassed(executions)) {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
         let candidate = buildTeacherSkillCandidateFromFailureAsset(request.failure, classification,
-            teacherPipelineProposal(proposals, "skill"), executions, request.skillId)
+            proposal, executions, request.skillId)
         let operation = buildTeacherContextAssetOperation("skills", candidate.skillId,
             request.skillOperation, request.skillExpectedOldHash, candidate.contentHash,
             request.base.skillsAssets)
         let files = teacherSkillCandidateArtifactFiles(candidate, operation, executions: executions)
         let visible = teacherContextAssetProjection("skills", applyTeacherContextAssetOperation(
             request.base.skillsAssets, operation, renderCandidateSkillExport(candidate)))
+        if (visible != projectedVisible) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
         skills = TeacherContextLaneV2(true, "sha256:${teacherStableHash(visible)}",
             teacherContextLaneTreeHashV2(files), request.base.skillsAssets.size +
                 if (request.skillOperation == "add") { 1 } else { 0 },
@@ -271,8 +325,21 @@ public func buildTeacherIndependentContextSeed(request: TeacherIndependentSeedRe
     } else if (request.fixtureExecutor.executorKind() == "student_completion_non_humaneval") {
         "student_validated"
     } else { throw IllegalArgumentException("candidate_test_evidence_invalid") }
-    let ruleExecutions = executeTeacherAssetFixtureBundle(request.ruleFixtures, request.fixtureExecutor)
-    let skillExecutions = executeTeacherAssetFixtureBundle(request.skillFixtures, request.fixtureExecutor)
+    let projectedRule = buildTeacherIndependentRuleCandidate(request.ruleId, request.ruleConceptId,
+        request.ruleProposal.title, request.ruleProposal.content, request.ruleProposal.trigger,
+        request.ruleProposal.scope, request.ruleProposal.priority,
+        request.sourceClosure.manifest.sourceManifestHash,
+        TeacherRuleTestBundle(teacherPipelineExpectedExecutions(request.ruleFixtures,
+            request.fixtureExecutor)))
+    let projectedRuleVisible = renderTeacherAgentsMarkdown([projectedRule])
+    let projectedSkill = buildTeacherIndependentSkillCandidate(request.skillId,
+        request.skillProposal, teacherPipelineExpectedExecutions(request.skillFixtures,
+            request.fixtureExecutor))
+    let projectedSkillVisible = renderCandidateSkillExport(projectedSkill)
+    let ruleExecutions = executeTeacherAssetFixtureBundle(request.ruleFixtures, request.fixtureExecutor,
+        teacherPipelineValidationTarget("rules", projectedRuleVisible, "none", request.fixtureExecutor))
+    let skillExecutions = executeTeacherAssetFixtureBundle(request.skillFixtures, request.fixtureExecutor,
+        teacherPipelineValidationTarget("skills", projectedSkillVisible, "none", request.fixtureExecutor))
     if (!teacherPipelineAllPassed(ruleExecutions) || !teacherPipelineAllPassed(skillExecutions)) {
         throw IllegalArgumentException("candidate_test_evidence_invalid")
     }
@@ -284,6 +351,7 @@ public func buildTeacherIndependentContextSeed(request: TeacherIndependentSeedRe
         rule.canonicalHash, [])
     let ruleFiles = teacherRuleCandidateArtifactFiles(rule, ruleOperation)
     let ruleVisible = renderTeacherAgentsMarkdown([rule])
+    if (ruleVisible != projectedRuleVisible) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
     let rules = TeacherContextLaneV2(true, "sha256:${teacherStableHash(ruleVisible)}",
         teacherContextLaneTreeHashV2(ruleFiles), 1, "independent",
         ruleVisible, ruleFiles)
@@ -295,6 +363,7 @@ public func buildTeacherIndependentContextSeed(request: TeacherIndependentSeedRe
     let skillFiles = teacherSkillCandidateArtifactFiles(skill, skillOperation,
         executions: skillExecutions)
     let skillVisible = renderCandidateSkillExport(skill)
+    if (skillVisible != projectedSkillVisible) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
     let skills = TeacherContextLaneV2(true, "sha256:${teacherStableHash(skillVisible)}",
         teacherContextLaneTreeHashV2(skillFiles), 1, "independent",
         skillVisible, skillFiles)

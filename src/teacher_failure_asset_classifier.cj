@@ -1,5 +1,6 @@
 package cangjie_teacher
 
+import std.fs.*
 import stdx.encoding.json.*
 
 public class TeacherFailureAssetClassifierRequest {
@@ -15,6 +16,62 @@ public class TeacherFailureAssetClassifierRequest {
 
 public interface TeacherFailureAssetClassifier {
     func classify(request: TeacherFailureAssetClassifierRequest): String
+}
+
+private func teacherFailureAdapterExecutable(value: String, expectedHash: String): Bool {
+    let path = Path(value)
+    if (!path.isAbsolute() || !exists(path) || !expectedHash.startsWith("sha256:")) { return false }
+    try {
+        !FileInfo(path).isSymbolicLink() && FileInfo(path).isRegular() &&
+            canonicalize(path).toString() == value &&
+            teacherValidationExecutableHash(value) == expectedHash
+    } catch (_: Exception) { false }
+}
+
+// The process is a frozen classifier adapter. It receives only the canonical sanitized
+// request file and must write one strict classifier response to the supplied output path.
+public class StrictProcessTeacherFailureAssetClassifier <: TeacherFailureAssetClassifier {
+    private let executable: String
+    private let executableHash: String
+    private let workspaceRoot: String
+    private let executor: TeacherCommandExecutor
+    private let timeoutMillis: Int64
+    public init(executable: String, executableHash: String, allowedRoot: String,
+        workspaceRoot: String, executor!: TeacherCommandExecutor = NativeTeacherCommandExecutor(),
+        timeoutMillis!: Int64 = 600000) {
+        if (!teacherFailureAdapterExecutable(executable, executableHash) || timeoutMillis < 1 ||
+            timeoutMillis > 3600000) {
+            throw IllegalArgumentException("classification_requires_review")
+        }
+        this.executable = executable; this.executableHash = executableHash
+        this.workspaceRoot = teacherResolveArtifactInput(allowedRoot, workspaceRoot, directory: true)
+        this.executor = executor; this.timeoutMillis = timeoutMillis
+    }
+    public func classify(request: TeacherFailureAssetClassifierRequest): String {
+        let canonicalRequest = renderTeacherFailureAssetClassifierRequest(request)
+        let requestHash = teacherStableHash(canonicalRequest)
+        let runRoot = Path(workspaceRoot).join("classification-${requestHash}")
+        if (exists(runRoot)) { throw IllegalArgumentException("classification_requires_review") }
+        Directory.create(runRoot, recursive: true)
+        let requestPath = runRoot.join("request.json").toString()
+        let outputPath = runRoot.join("response.json").toString()
+        _ = teacherAtomicWrite(requestPath, canonicalRequest + "\n")
+        let result = executor.execute(TeacherCommandSpec(executable,
+            ["--request", requestPath, "--output", outputPath], runRoot.toString(),
+            env: [("CANGJIE_TEACHER_ADAPTER_EXECUTABLE_HASH", executableHash)],
+            timeoutMillis: timeoutMillis))
+        if (result.timedOut || result.exitCode != 0 || !exists(Path(outputPath))) {
+            throw IllegalArgumentException("classification_requires_review")
+        }
+        let raw = teacherReadUtf8File(outputPath).trimAscii()
+        if (raw.toArray().size > 32768) { throw IllegalArgumentException("classification_requires_review") }
+        let parsed = parseTeacherFailureAssetClassifierResponse(raw)
+        if (parsed.failureEvidenceHash != request.failureEvidenceHash ||
+            raw != renderTeacherFailureAssetClassifierResponse(parsed)) {
+            throw IllegalArgumentException("classification_requires_review")
+        }
+        raw
+    }
 }
 
 private func teacherClassifierEscape(value: String): String {

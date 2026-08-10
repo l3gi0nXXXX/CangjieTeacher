@@ -1,6 +1,7 @@
 package cangjie_teacher
 
 import std.collection.*
+import std.fs.*
 import stdx.encoding.json.*
 
 public class TeacherFailureAssetGenerationRequest {
@@ -34,6 +35,59 @@ public class TeacherFailureAssetGenerationResponse {
 
 public interface TeacherFailureAssetGenerator {
     func generate(request: TeacherFailureAssetGenerationRequest): String
+}
+
+private func teacherGeneratorExecutable(value: String, expectedHash: String): Bool {
+    let path = Path(value)
+    if (!path.isAbsolute() || !exists(path) || !expectedHash.startsWith("sha256:")) { return false }
+    try {
+        !FileInfo(path).isSymbolicLink() && FileInfo(path).isRegular() &&
+            canonicalize(path).toString() == value &&
+            teacherValidationExecutableHash(value) == expectedHash
+    } catch (_: Exception) { false }
+}
+
+// The frozen generator adapter receives one canonical sanitized lane request and writes
+// one strict proposal response. Provider console output is never treated as evidence.
+public class StrictProcessTeacherFailureAssetGenerator <: TeacherFailureAssetGenerator {
+    private let executable: String
+    private let executableHash: String
+    private let workspaceRoot: String
+    private let executor: TeacherCommandExecutor
+    private let timeoutMillis: Int64
+    public init(executable: String, executableHash: String, allowedRoot: String,
+        workspaceRoot: String, executor!: TeacherCommandExecutor = NativeTeacherCommandExecutor(),
+        timeoutMillis!: Int64 = 600000) {
+        if (!teacherGeneratorExecutable(executable, executableHash) || timeoutMillis < 1 ||
+            timeoutMillis > 3600000) { throw IllegalArgumentException("candidate_generation_invalid") }
+        this.executable = executable; this.executableHash = executableHash
+        this.workspaceRoot = teacherResolveArtifactInput(allowedRoot, workspaceRoot, directory: true)
+        this.executor = executor; this.timeoutMillis = timeoutMillis
+    }
+    public func generate(request: TeacherFailureAssetGenerationRequest): String {
+        let canonicalRequest = renderTeacherFailureAssetGenerationRequest(request)
+        let requestHash = teacherStableHash(canonicalRequest)
+        let runRoot = Path(workspaceRoot).join("generation-${request.lane}-${requestHash}")
+        if (exists(runRoot)) { throw IllegalArgumentException("candidate_generation_invalid") }
+        Directory.create(runRoot, recursive: true)
+        let requestPath = runRoot.join("request.json").toString()
+        let outputPath = runRoot.join("response.json").toString()
+        _ = teacherAtomicWrite(requestPath, canonicalRequest + "\n")
+        let result = executor.execute(TeacherCommandSpec(executable,
+            ["--request", requestPath, "--output", outputPath], runRoot.toString(),
+            env: [("CANGJIE_TEACHER_ADAPTER_EXECUTABLE_HASH", executableHash)],
+            timeoutMillis: timeoutMillis))
+        if (result.timedOut || result.exitCode != 0 || !exists(Path(outputPath))) {
+            throw IllegalArgumentException("candidate_generation_invalid")
+        }
+        let raw = teacherReadUtf8File(outputPath).trimAscii()
+        if (raw.toArray().size > 32768) { throw IllegalArgumentException("candidate_generation_invalid") }
+        let parsed = parseTeacherFailureAssetGenerationResponse(raw)
+        if (parsed.lane != request.lane || raw != renderTeacherFailureAssetGenerationResponse(parsed)) {
+            throw IllegalArgumentException("candidate_generation_invalid")
+        }
+        raw
+    }
 }
 
 private func teacherGenerationEscape(value: String): String {

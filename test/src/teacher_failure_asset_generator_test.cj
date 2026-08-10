@@ -1,7 +1,19 @@
 package cangjie_teacher_test
 
 import std.unittest.testmacro.*
+import std.fs.*
+import std.time.*
 import cangjie_teacher.*
+
+private class R6GeneratorProcess <: TeacherCommandExecutor {
+    public let response: String
+    public var calls: Int64 = 0
+    public init(response: String) { this.response = response }
+    public func execute(spec: TeacherCommandSpec): TeacherProcessResult {
+        calls += 1; _ = teacherAtomicWrite(spec.args[3], response + "\n")
+        TeacherProcessResult(0, "ignored generator console output")
+    }
+}
 
 class S2Generator <: TeacherFailureAssetGenerator {
     public func generate(request: TeacherFailureAssetGenerationRequest): String {
@@ -33,6 +45,37 @@ class S2DuplicateGenerator <: TeacherFailureAssetGenerator {
 
 @Test
 public class TeacherFailureAssetGeneratorTest {
+    // R6-T2-UT/POS/NEG: generator process response is lane-bound and canonical.
+    @TestCase public func r6T2StrictGeneratorProcessContract(): Unit {
+        let root = "/tmp/teacher-r6-generator-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            Directory.create(Path("${root}/workspace"), recursive: true)
+            _ = teacherAtomicWrite("${root}/generator", "deterministic generator adapter\n")
+            let canonical = canonicalize(Path(root)).toString()
+            let executable = "${canonical}/generator"
+            let request = TeacherFailureAssetGenerationRequest(
+                String(Array<Rune>(64, repeat: r'a')), String(Array<Rune>(64, repeat: r'b')),
+                "rules", "Unicode边界🙂 reusable gap")
+            let response = S2Generator().generate(request)
+            let process = R6GeneratorProcess(response)
+            let adapter = StrictProcessTeacherFailureAssetGenerator(executable,
+                teacherValidationExecutableHash(executable), canonical, "${canonical}/workspace",
+                executor: process)
+            @Expect(adapter.generate(request), response); @Expect(process.calls, 1)
+
+            Directory.create(Path("${root}/workspace-wrong"), recursive: true)
+            let wrong = S2Generator().generate(TeacherFailureAssetGenerationRequest(
+                request.failureEvidenceHash, request.classificationEvidenceHash,
+                "skill", request.gapDescription))
+            var diagnostic = ""
+            try { _ = StrictProcessTeacherFailureAssetGenerator(executable,
+                teacherValidationExecutableHash(executable), canonical,
+                "${canonical}/workspace-wrong", executor: R6GeneratorProcess(wrong)).generate(request) }
+            catch (e: Exception) { diagnostic = e.message }
+            @Expect(diagnostic, "candidate_generation_invalid")
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     @TestCase public func failureAssetGeneratorProducesOnlyEligibleDistinctProposals(): Unit {
         let internal = s2InternalClassification("all_assets_gap", true, true, true, "multiple_reusable_gaps")
         let shared = reconcileTeacherFailureAssetClassifications(internal, internal)
