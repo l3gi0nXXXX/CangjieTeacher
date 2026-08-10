@@ -43,6 +43,9 @@ private class R6StudentVerifierRunner <: TeacherStudentRuntimeExecutor {
     public var tamperFixture = false
     public var invalidEncoding = false
     public var malformed = false
+    public var streamArray = false
+    public var duplicateTerminal = false
+    public var trailingAfterTerminal = false
     public var exitCode: Int64 = 0
     public func execute(spec: TeacherStudentRuntimeSpec): TeacherStudentRuntimeResult {
         calls += 1
@@ -55,7 +58,12 @@ private class R6StudentVerifierRunner <: TeacherStudentRuntimeExecutor {
         } else { "{\"solution_cj\":\"positive_passed\"}" }
         let envelope = "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false," +
             "\"modelUsage\":{\"gpt-5.6-sol\":{}},\"structured_output\":${structured}}"
-        let output = if (malformed) { "{malformed" } else { envelope }
+        let initEvent = "{\"type\":\"system\",\"subtype\":\"init\"}"
+        let output = if (malformed) { "{malformed" }
+            else if (duplicateTerminal) { "[${initEvent},${envelope},${envelope}]" }
+            else if (trailingAfterTerminal) { "[${initEvent},${envelope},${initEvent}]" }
+            else if (streamArray) { "[${initEvent},${envelope}]" }
+            else { envelope }
         if (invalidEncoding) {
             File.writeTo(Path("${spec.cwd}/transcript.json"), [UInt8(0xff)])
         }
@@ -131,7 +139,8 @@ public class TeacherFailureAssetTestExecutorTest {
             let runtime = "${canonical}/runtime"
             let control = r6Control("gpt-5.6-sol")
             _ = teacherAtomicWrite("${root}/completion-control.json", control)
-            let runner = R6StudentVerifierRunner(); let identity = r6Identity(runtime, control)
+            let runner = R6StudentVerifierRunner(); runner.streamArray = true
+            let identity = r6Identity(runtime, control)
             let executor = StudentCompletionNonHumanEvalExecutor(runtime, canonical, "${canonical}/workspace",
                 "${canonical}/completion-control.json", identity, executor: runner)
             let projection = "# Student Rules\n\nKeep 中文🙂 on Rune boundaries.\n"
@@ -241,6 +250,28 @@ public class TeacherFailureAssetTestExecutorTest {
                 buildTeacherAssetValidationTarget("rules", "malformed-bound", "none", identity)) }
             catch (e: Exception) { malformed = e.message }
             @Expect(malformed, "malformed_json")
+
+            Directory.create(Path("${root}/workspace-duplicate-terminal"), recursive: true)
+            let duplicateRunner = R6StudentVerifierRunner(); duplicateRunner.duplicateTerminal = true
+            let duplicateExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+                "${canonical}/workspace-duplicate-terminal", "${canonical}/completion-control.json",
+                identity, executor: duplicateRunner)
+            var duplicate = ""
+            try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], duplicateExecutor,
+                buildTeacherAssetValidationTarget("rules", "duplicate-terminal", "none", identity)) }
+            catch (e: Exception) { duplicate = e.message }
+            @Expect(duplicate, "candidate_test_evidence_invalid")
+
+            Directory.create(Path("${root}/workspace-trailing-terminal"), recursive: true)
+            let trailingRunner = R6StudentVerifierRunner(); trailingRunner.trailingAfterTerminal = true
+            let trailingExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+                "${canonical}/workspace-trailing-terminal", "${canonical}/completion-control.json",
+                identity, executor: trailingRunner)
+            var trailing = ""
+            try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], trailingExecutor,
+                buildTeacherAssetValidationTarget("rules", "trailing-terminal", "none", identity)) }
+            catch (e: Exception) { trailing = e.message }
+            @Expect(trailing, "candidate_test_evidence_invalid")
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 

@@ -452,9 +452,34 @@ public class NativeTeacherStudentRuntimeExecutor <: TeacherStudentRuntimeExecuto
     }
 }
 
+private func teacherStudentClaudeTerminal(raw: String): JsonObject {
+    let value = JsonValue.fromStr(raw)
+    try { return value.asObject() } catch (_: Exception) {}
+    let items = try { value.asArray().getItems() }
+        catch (_: Exception) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+    var terminal: Option<JsonObject> = None
+    for (index in 0..items.size) {
+        let item = try { items[index].asObject() }
+            catch (_: Exception) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+        if (teacherValidationString(item, "type") != "result") { continue }
+        match (terminal) {
+            case Some(_) => throw IllegalArgumentException("candidate_test_evidence_invalid")
+            case None => ()
+        }
+        if (index != items.size - 1) {
+            throw IllegalArgumentException("candidate_test_evidence_invalid")
+        }
+        terminal = Some<JsonObject>(item)
+    }
+    match (terminal) {
+        case Some(item) => item
+        case None => throw IllegalArgumentException("candidate_test_evidence_invalid")
+    }
+}
+
 private func teacherStudentClaudeSolution(raw: String, model: String): String {
     try {
-        let terminal = JsonValue.fromStr(raw).asObject()
+        let terminal = teacherStudentClaudeTerminal(raw)
         if (teacherValidationString(terminal, "type") != "result" ||
             teacherValidationString(terminal, "subtype") != "success") {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
