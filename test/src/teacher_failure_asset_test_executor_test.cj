@@ -46,6 +46,7 @@ private class R6StudentVerifierRunner <: TeacherStudentRuntimeExecutor {
     public var streamArray = false
     public var duplicateTerminal = false
     public var trailingAfterTerminal = false
+    public var invalidNestedEvidence = false
     public var exitCode: Int64 = 0
     public func execute(spec: TeacherStudentRuntimeSpec): TeacherStudentRuntimeResult {
         calls += 1
@@ -55,7 +56,11 @@ private class R6StudentVerifierRunner <: TeacherStudentRuntimeExecutor {
         sandboxProfile = teacherReadUtf8File("${spec.cwd}/sandbox.sb")
         let structured = if (tamperFixture) {
             "{\"solution_cj\":\"positive_passed\",\"extra\":true}"
-        } else { "{\"solution_cj\":\"positive_passed\"}" }
+        } else if (invalidNestedEvidence) {
+            "{\"solution_cj\":\"{\\\"actualEvidence\\\":\\\"positive_passed\\\",\\\"extra\\\":true}\"}"
+        } else {
+            "{\"solution_cj\":\"{\\\"actualEvidence\\\":\\\"positive_passed\\\"}\"}"
+        }
         let envelope = "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false," +
             "\"modelUsage\":{\"gpt-5.6-sol\":{}},\"structured_output\":${structured}}"
         let initEvent = "{\"type\":\"system\",\"subtype\":\"init\"}"
@@ -272,6 +277,17 @@ public class TeacherFailureAssetTestExecutorTest {
                 buildTeacherAssetValidationTarget("rules", "trailing-terminal", "none", identity)) }
             catch (e: Exception) { trailing = e.message }
             @Expect(trailing, "candidate_test_evidence_invalid")
+
+            Directory.create(Path("${root}/workspace-invalid-nested"), recursive: true)
+            let nestedRunner = R6StudentVerifierRunner(); nestedRunner.invalidNestedEvidence = true
+            let nestedExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+                "${canonical}/workspace-invalid-nested", "${canonical}/completion-control.json",
+                identity, executor: nestedRunner)
+            var nested = ""
+            try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], nestedExecutor,
+                buildTeacherAssetValidationTarget("rules", "invalid-nested", "none", identity)) }
+            catch (e: Exception) { nested = e.message }
+            @Expect(nested, "candidate_test_evidence_invalid")
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 

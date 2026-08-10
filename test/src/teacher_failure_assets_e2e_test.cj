@@ -134,7 +134,7 @@ private func r6ProviderRuntimeScript(): String {
         "[[ \"$prompt\" != *expectedEvidence* && \"$prompt\" != *'\\\"passed\\\"'* ]] || exit 27\n" +
         "print -r -- \"{\\\"type\\\":\\\"result\\\",\\\"subtype\\\":\\\"success\\\"," +
         "\\\"is_error\\\":false,\\\"modelUsage\\\":{\\\"${"$"}{model}\\\":{}}," +
-        "\\\"structured_output\\\":{\\\"solution_cj\\\":\\\"passed\\\"}}\"\n"
+        "\\\"structured_output\\\":{\\\"solution_cj\\\":\\\"{\\\\\\\"actualEvidence\\\\\\\":\\\\\\\"passed\\\\\\\"}\\\"}}\"\n"
 }
 
 private func r6FixedAdapterScript(response: String): String {
