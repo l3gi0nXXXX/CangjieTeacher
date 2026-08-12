@@ -277,10 +277,14 @@ public func buildTeacherFailureAssets(request: TeacherFailureAssetBuildRequestV2
     }
     if (classification.knowledgeEligible) {
         let proposal = teacherPipelineProposal(proposals, "knowledge")
-        if (proposal.content != request.knowledgeRequest.missingKnowledge) {
-            throw IllegalArgumentException("failure_knowledge_adapter_invalid")
-        }
-        let asset = request.knowledgeAdapter.build(classification, request.knowledgeRequest)
+        // The provider-generated proposal is the single source of truth for the
+        // knowledge gap. Requiring a second caller-authored copy makes a real
+        // provider response impossible to bind byte-for-byte.
+        let knowledgeRequest = TeacherFailureKnowledgeRequest(proposal.content,
+            request.knowledgeRequest.authorityEvidence, request.knowledgeRequest.atomBundle,
+            request.knowledgeRequest.frozenReference, request.knowledgeRequest.workspaceRoot,
+            request.knowledgeRequest.protectedArtifacts)
+        let asset = request.knowledgeAdapter.build(classification, knowledgeRequest)
         knowledge = TeacherContextLaneV2(true, asset.reference.knowledgeCandidateHash,
             teacherContextLaneTreeHashV2(asset.files), 1, "humaneval_164_derived",
             asset.visibleContent, asset.files)

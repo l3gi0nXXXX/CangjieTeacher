@@ -17,6 +17,17 @@ private class S2AtomExecutor <: TeacherCommandExecutor {
     }
 }
 
+private class S2RecordingKnowledgeAdapter <: TeacherFailureKnowledgeAdapter {
+    public var observedMissingKnowledge = ""
+    private let delegate: TeacherFailureKnowledgeAdapter
+    public init(delegate: TeacherFailureKnowledgeAdapter) { this.delegate = delegate }
+    public func build(classification: TeacherFailureAssetClassification,
+        request: TeacherFailureKnowledgeRequest): TeacherFailureKnowledgeAsset {
+        observedMissingKnowledge = request.missingKnowledge
+        delegate.build(classification, request)
+    }
+}
+
 private class S2RuleEvidenceExecutor <: TeacherAssetFixtureExecutor {
     private let label: String
     private let identity: TeacherValidationIdentity
@@ -802,19 +813,24 @@ public class TeacherFailureAssetOrchestratorTest {
                 let internal = s2InternalClassification(kind, knowledgeEligible, skillEligible,
                     rulesEligible, reason)
                 let atomExecutor = S2AtomExecutor()
+                let knowledgeAdapter = S2RecordingKnowledgeAdapter(
+                    ScaffoldTeacherFailureKnowledgeAdapter(atomExecutor))
                 let request = TeacherFailureAssetBuildRequestV2(failure, internal, internal,
                     "Reusable Unicode boundary gap 中文🙂", S2Generator(),
                     s2FullFixtures("rule-${kind.replace("_", "-")}"),
                     s2FullFixtures("skill-${kind.replace("_", "-")}"),
                     S2CanonicalTranscriptFixtureExecutor(),
-                    TeacherFailureKnowledgeRequest("g-rune", "compiler missing 'Rune'", atom[0], atom[1],
+                    TeacherFailureKnowledgeRequest("caller-stale-gap", "compiler missing 'Rune'", atom[0], atom[1],
                         "${root}/atom-${kind.replace("_", "-")}", closure.protectedArtifacts),
-                    ScaffoldTeacherFailureKnowledgeAdapter(atomExecutor), closure, s2Base(root),
+                    knowledgeAdapter, closure, s2Base(root),
                     "candidate-${kind.replace("_", "-")}", "rule-${kind.replace("_", "-")}",
                     "concept-${kind.replace("_", "-")}", "skill-${kind.replace("_", "-")}",
                     "add", "", "add", "", root, "${root}/exports")
                 let built = buildTeacherFailureAssets(request)
                 @Expect(built.proposals.size, expectedLanes)
+                if (knowledgeEligible) {
+                    @Expect(knowledgeAdapter.observedMissingKnowledge, "g-rune")
+                }
                 match (built.candidateSetV2) {
                     case Some(candidate) =>
                         @Expect(expectedLanes > 0, true)

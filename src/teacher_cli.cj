@@ -621,16 +621,12 @@ private func runTeacherRealFailureAssetsBuild(options: TeacherCliOptions): Int64
     let gap = teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
         options.gapDescription)).trimAscii()
     let frozenReference = if (reconciled.knowledgeEligible) {
-        if (options.frozenKnowledgeReference.isEmpty() || options.knowledgeContent.isEmpty()) {
+        if (options.frozenKnowledgeReference.isEmpty()) {
             throw IllegalArgumentException("missing_required_cli_option")
         }
         teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
             options.frozenKnowledgeReference)).trimAscii()
     } else { "{}" }
-    let missingKnowledge = if (reconciled.knowledgeEligible) {
-        teacherReadUtf8File(teacherResolveArtifactInput(options.allowedRoot,
-            options.knowledgeContent)).trimAscii()
-    } else { "unused" }
     let studentWorkspace = teacherCliCreateAdapterWorkspace(options,
         "student-failure-${options.runId}")
     let request = TeacherFailureAssetBuildRequestV2(failure, first, second, gap,
@@ -638,7 +634,7 @@ private func runTeacherRealFailureAssetsBuild(options: TeacherCliOptions): Int64
         StudentCompletionNonHumanEvalExecutor(options.runtimeExecutable,
             options.allowedRoot, studentWorkspace, options.completionControl, identity,
             timeoutMillis: options.timeoutMillis),
-        TeacherFailureKnowledgeRequest(missingKnowledge, "", "", frozenReference, "",
+        TeacherFailureKnowledgeRequest("unused", "", "", frozenReference, "",
             closure.protectedArtifacts), FrozenTeacherFailureKnowledgeAdapter(), closure, base,
         options.runId, "real-rule-${first.classificationEvidenceHash}",
         "failure-derived-general-rule", "real-skill-${first.classificationEvidenceHash}",
