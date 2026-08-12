@@ -120,7 +120,7 @@ public class TeacherFailureAssetTestExecutorTest {
     @TestCase public func r6T1IdentityAndTranscriptContract(): Unit {
         // Frozen against CKB ckbStudentCompletionCommandHash("GLM-5.2").
         @Expect(teacherStudentCompletionCommandHash("GLM-5.2"),
-            "sha256:f459b295757aad5f6b192b9117a0097e6deb94b2043070f6a74e2155cfe64ce0")
+            "sha256:314643ecc3a5aeadbf2ca066c3e02542f57cc5a9da11ce4e76378067cf93120f")
         let identity = sealTeacherValidationIdentity("codex", "gpt-5.6-sol", "claude-code-2.1.0",
             "sha256:${teacherStableHash("runtime")}", "sha256:${teacherStableHash("control")}",
             "sha256:${teacherStableHash("prompt")}")

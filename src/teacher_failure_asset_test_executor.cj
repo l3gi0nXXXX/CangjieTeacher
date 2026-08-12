@@ -160,6 +160,8 @@ public func teacherStudentCompletionCommand(groupRoot: String, runtimeHome: Stri
         " XDG_CONFIG_HOME=" + teacherStudentShellQuote("${runtimeHome}/xdg-config") +
         " XDG_CACHE_HOME=" + teacherStudentShellQuote("${runtimeHome}/xdg-cache") +
         " CLAUDE_CONFIG_DIR=" + teacherStudentShellQuote("${runtimeHome}/claude-config") +
+        " ANTHROPIC_AUTH_TOKEN=\"$GLM_API_KEY\" ANTHROPIC_BASE_URL=\"$GLM_BASE_URL\"" +
+        " ANTHROPIC_MODEL=" + teacherStudentShellQuote(model) +
         " ANTHROPIC_MAX_RETRIES=0 CLAUDE_CODE_MAX_RETRIES=0 sandbox-exec -f " +
         teacherStudentShellQuote(profile) + " " + teacherStudentShellQuote(runtime) +
         " -p --bare --tools '' --disable-slash-commands --setting-sources '' --max-turns 1" +
