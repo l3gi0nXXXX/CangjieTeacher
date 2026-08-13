@@ -135,7 +135,7 @@ private func teacherFailureBool(value: JsonObject, key: String): Bool {
 }
 
 private func teacherFailureObservationSafe(value: String): Bool {
-    if (value.isEmpty() || value.toRuneArray().size > 512) { return false }
+    if (value.isEmpty() || value.toArray().size > 1024) { return false }
     if (!teacherSkillCandidateTextSafe(value)) { return false }
     let lower = value.toAsciiLower()
     for (marker in ["token", "assertion line"]) {

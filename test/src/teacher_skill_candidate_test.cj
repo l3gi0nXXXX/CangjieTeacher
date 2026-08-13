@@ -7,6 +7,17 @@ import std.time.*
 import cangjie_teacher.*
 
 private let FAILURE_FIXTURE = "{\"schemaVersion\":\"ckb-completion-failure-v1\",\"runId\":\"recert-fixture-run\",\"caseId\":\"CJ-HUMANEVAL-007\",\"datasetVersion\":\"cangjie-humaneval-164-v1\",\"generationProtocol\":\"completion-only-v1\",\"completionHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"baseStatus\":\"failed\",\"plusStatus\":\"failed\",\"failureKind\":\"test_failure\",\"failureObservation\":\"student_completion_test_failed 中文😀\",\"assetLineage\":\"independent\",\"evidenceHash\":\"f08453591302a46c4acc04c43d9bdf456679fae27b354bbca7ebecb194c1e773\"}"
+
+private func teacherFailureInputWithObservation(observation: String): String {
+    let escaped = observation.replace("\\", "\\\\").replace("\"", "\\\"")
+    let evidence = "{\"schemaVersion\":\"ckb-completion-failure-v1\",\"runId\":\"boundary-run\"," +
+        "\"caseId\":\"CJ-HUMANEVAL-007\",\"datasetVersion\":\"dataset-v1\"," +
+        "\"generationProtocol\":\"completion-only-v1\",\"completionHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"," +
+        "\"baseStatus\":\"failed\",\"plusStatus\":\"failed\",\"failureKind\":\"compile_error\"," +
+        "\"failureObservation\":\"${escaped}\",\"assetLineage\":\"humaneval_164_derived\"}"
+    let runes = evidence.toRuneArray()
+    String(runes[..runes.size - 1]) + ",\"evidenceHash\":\"${teacherStableHash(evidence)}\"}"
+}
 private let CLASSIFICATION_FIXTURE = "{\"schemaVersion\":\"ckb-completion-failure-classification-v1\",\"failureEvidenceHash\":\"f08453591302a46c4acc04c43d9bdf456679fae27b354bbca7ebecb194c1e773\",\"gapKind\":\"mixed_gap\",\"knowledgeEligible\":true,\"skillEligible\":true,\"classificationEvidenceHash\":\"1ff85ffec78c69504a2f98146daebb75557d340b6366e92875c4c1acd4b44a16\"}"
 
 private func failureAssetFixture(gapKind: String, knowledge: Bool, skill: Bool, rules: Bool,
@@ -243,6 +254,16 @@ public class TeacherSkillCandidateTest {
         let utf8 = teacherReadUtf8File("${FAILURE_ASSET_FIXTURE_ROOT}/completion-failure-v1-utf8.json").trimAscii()
         @Expect(parseTeacherCompletionFailureInput(utf8).failureObservation,
             "student_completion_test_failed 中文😀")
+        let boundaryObservation = "中" * 340 + "🙂"
+        let boundary = teacherFailureInputWithObservation(boundaryObservation)
+        @Expect(boundaryObservation.toArray().size, 1024)
+        @Expect(parseTeacherCompletionFailureInput(boundary).failureObservation,
+            boundaryObservation)
+        var oversizedRejected = false
+        try { _ = parseTeacherCompletionFailureInput(
+            teacherFailureInputWithObservation(boundaryObservation + "a")) }
+        catch (e: Exception) { oversizedRejected = e.message == "completion_failure_contract_invalid" }
+        @Expect(oversizedRejected, true)
         let legacy = failureAssetFixtureLines("classification-v1-compatibility.jsonl")
         @Expect(legacy.size, 1)
         let parsedLegacy = parseTeacherFailureClassification(legacy[0])
