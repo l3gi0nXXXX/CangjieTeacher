@@ -4,6 +4,8 @@ import std.fs.*
 import stdx.encoding.json.*
 
 private let FAILURE_CLAUDE_MODEL = "GLM-5.2"
+private let FAILURE_CLAUDE_REQUEST_MAX_BYTES: Int64 = 262144
+private let FAILURE_CLAUDE_OUTPUT_MAX_BYTES: Int64 = 1048576
 public let FAILURE_CLAUDE_CLASSIFIER_TIMEOUT_MILLIS: Int64 = 600000
 
 public func runTeacherFailureClaudeClassifier(args: Array<String>,
@@ -56,15 +58,19 @@ public func executeTeacherFailureClaudeClassifier(args: Array<String>,
     let raw = try { String.fromUtf8(File.readFrom(Path(request))) } catch (_: Exception) {
         result.diagnostic = "invalid_request_encoding"; return result
     }
-    if (raw.toArray().size > 262144) { result.diagnostic = "request_too_large"; return result }
+    if (raw.toArray().size > FAILURE_CLAUDE_REQUEST_MAX_BYTES) { result.diagnostic = "request_too_large"; return result }
     let hash = try { failureClaudeRequestHash(raw.trimAscii()) } catch (e: IllegalArgumentException) {
         result.diagnostic = e.message; return result
     }
     let workspace = canonicalize(Path(request).parent).toString()
     let schema = failureClaudeSchema()
     let prompt = "Classify this sanitized Cangjie Student failure. Return only the schema object. " +
-        "Use infrastructure_failure/infrastructure_only for provider timeout, protocol, runner, or environment " +
-        "failures. Never reveal case identifiers, hidden tests, reference solutions, credentials, or local paths.\n" + raw.trimAscii()
+        "Choose exactly one valid gapKind/eligibility/reason combination. Reusable missing facts use " +
+        "knowledge_gap/missing_versioned_fact; reusable procedures use procedure_gap/missing_reusable_procedure; " +
+        "global behavioral constraints use rules_gap/missing_global_invariant; combinations use the matching " +
+        "combined gap and multiple_reusable_gaps. Use infrastructure_failure/infrastructure_only for provider, " +
+        "timeout, protocol, runner, or environment failures. Never reveal case identifiers, hidden tests, reference " +
+        "solutions, credentials, or local paths. Request:\n" + raw.trimAscii()
     let process = executor.execute(TeacherCommandSpec(claudeExecutable,
         ["-p", prompt, "--bare", "--tools", "", "--disable-slash-commands",
          "--setting-sources", "", "--max-turns", "1", "--verbose",
@@ -75,7 +81,7 @@ public func executeTeacherFailureClaudeClassifier(args: Array<String>,
     if (process.timedOut) { result.diagnostic = "classifier_timeout"; return result }
     if (process.exitCode != 0) { result.diagnostic = "classifier_process_failed"; return result }
     if (process.output == "invalid_response_encoding") { result.diagnostic = "invalid_response_encoding"; return result }
-    if (process.output.toArray().size > 262144) { result.diagnostic = "classifier_output_too_large"; return result }
+    if (process.output.toArray().size > FAILURE_CLAUDE_OUTPUT_MAX_BYTES) { result.diagnostic = "classifier_output_too_large"; return result }
     let model = try { failureClaudeTerminal(process.output) } catch (e: IllegalArgumentException) {
         result.diagnostic = e.message; return result
     }

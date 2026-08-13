@@ -16,6 +16,11 @@ private class FailureProviderFake <: TeacherCommandExecutor {
         observedArgs = spec.args
         if (mode == "timeout") { return TeacherProcessResult(124, "", timedOut: true) }
         if (mode == "nonzero") { return TeacherProcessResult(9, "provider secret must not propagate") }
+        if (mode == "large_output") {
+            let builder = StringBuilder()
+            for (_ in 0..1048577) { builder.append(r'x') }
+            return TeacherProcessResult(0, builder.toString())
+        }
         if (spec.executable.contains("codex")) {
             var path = ""
             for (i in 0..spec.args.size) {
@@ -107,6 +112,12 @@ public class TeacherFailureProviderClassifierTest {
                 @Expect(provider.observedArgs.contains(value), true)
             }
             @Expect(provider.observedArgs.contains("--effort"), false)
+            let prompt = provider.observedArgs[1]
+            for (mapping in ["knowledge_gap/missing_versioned_fact",
+                "procedure_gap/missing_reusable_procedure", "rules_gap/missing_global_invariant",
+                "combined gap and multiple_reusable_gaps", "infrastructure_failure/infrastructure_only"]) {
+                @Expect(prompt.contains(mapping), true)
+            }
         } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
     }
 
@@ -210,6 +221,19 @@ public class TeacherFailureProviderClassifierTest {
                 } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
             }
         }
+    }
+
+    @TestCase public func claudeVerboseOutputRetainsControlledOneMegabyteLimit(): Unit {
+        let fixture = prepareFailureRoot("claude-large-output")
+        try {
+            let result = executeTeacherFailureClaudeClassifier(
+                ["--request", fixture[1], "--output", fixture[2]],
+                executor: FailureProviderFake(mode: "large_output"), claudeExecutable: "/fake/claude",
+                timeoutMillis: 1000)
+            @Expect(result.ok, false)
+            @Expect(result.diagnostic, "classifier_output_too_large")
+            @Expect(exists(Path(fixture[2])), false)
+        } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
     }
 
     @TestCase public func requestEncodingSizeSecretAndCaseLeakageFailClosed(): Unit {
