@@ -277,7 +277,7 @@ public func loadTeacherContextBaseStateV2(allowedRoot: String,
             teacherBaseInt(object, "rulesCount"), teacherBaseString(object, "rulesAssetLineage"),
             rulesVisible, rules[2], teacherBaseString(object, "skillProjectionHash"),
             teacherBaseInt(object, "skillCount"), teacherBaseString(object, "skillAssetLineage"),
-            skillsVisible, skills[2], knowledge.knowledgeContentHash, knowledge.knowledgeVersion,
+            skillsVisible, skills[2], knowledge.knowledgeCandidateHash, knowledge.knowledgeVersion,
             knowledge.assetLineage, knowledgeRaw + "\n", closureBindings: closureBindings,
             baseInputRoot: baseContextRoot, baseRoot: root.toString())
     } catch (e: IllegalArgumentException) { throw e }

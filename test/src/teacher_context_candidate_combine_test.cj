@@ -58,6 +58,11 @@ private func combineClassification(hash: String): TeacherFailureAssetClassificat
 
 private func combinePrepare(root: String): (TeacherContextBaseStateV2, TeacherContextSourceClosure) {
     teacherCopyTree("fixtures/failure_assets_e2e/base-context", "${root}/base-context")
+    let knowledgeCandidateHash = "sha256:${String(Array<Rune>(64, repeat: r'5'))}"
+    _ = teacherAtomicWrite("${root}/base-context/knowledge-reference.json",
+        teacherReadUtf8File("${root}/base-context/knowledge-reference.json").replace(
+            "\"knowledgeCandidateHash\":\"sha256:39c400fb1e29b16784f5305012430e3cdcc35e7d4b2c6aceb37b4e6892d29ece\"",
+            "\"knowledgeCandidateHash\":\"${knowledgeCandidateHash}\""))
     teacherCopyTree("fixtures/failure_assets_e2e/scaffold-delta/source-root", "${root}/source-root")
     teacherCopyTree("fixtures/failure_assets_e2e/scaffold-delta/protected-root", "${root}/protected-root")
     Directory.create(Path("${root}/exports"), recursive: true)
@@ -122,6 +127,8 @@ public class TeacherContextCandidateCombineTest {
             let combined = combineTeacherContextCandidateSetsV2(TeacherContextCandidateCombineRequestV2(
                 root, siblings, "${root}/base-context", prepared[1], combineFixtures(), executor,
                 "combined-three-rules", "${root}/exports"))
+            @Expect(prepared[0].knowledgeHash, "sha256:${String(Array<Rune>(64, repeat: r'5'))}")
+            @Expect(combined.knowledge.hash, prepared[0].knowledgeHash)
             @Expect(combined.rules.count, prepared[0].rulesCount + 3)
             @Expect(combined.rules.visibleContent.contains("中文🙂"), true)
             @Expect(executor.calls, combineFixtures().size)
