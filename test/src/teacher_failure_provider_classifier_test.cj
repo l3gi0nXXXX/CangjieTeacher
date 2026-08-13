@@ -62,6 +62,20 @@ private func prepareFailureRoot(tag: String): (String, String, String) {
 
 @Test
 public class TeacherFailureProviderClassifierTest {
+    @TestCase public func claudeAdapterUsesTenMinuteBudgetAndPersistsTimeoutDiagnostic(): Unit {
+        @Expect(FAILURE_CLAUDE_CLASSIFIER_TIMEOUT_MILLIS, 600000)
+        let fixture = prepareFailureRoot("claude-timeout-sidecar")
+        try {
+            @Expect(runTeacherFailureClaudeClassifier(
+                ["--request", fixture[1], "--output", fixture[2]],
+                executor: FailureProviderFake(mode: "timeout"),
+                claudeExecutable: "/fake/claude"), 1)
+            @Expect(teacherReadUtf8File("${fixture[0]}/classifier-diagnostic.json"),
+                "{\"schemaVersion\":\"cangjie-teacher-classifier-diagnostic-v1\",\"diagnostic\":\"classifier_timeout\"}\n")
+            @Expect(exists(Path(fixture[2])), false)
+        } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
+    }
+
     @TestCase public func codexAndClaudeSealCanonicalRulesAndInfrastructure(): Unit {
         let a = prepareFailureRoot("valid-codex")
         let b = prepareFailureRoot("valid-claude")

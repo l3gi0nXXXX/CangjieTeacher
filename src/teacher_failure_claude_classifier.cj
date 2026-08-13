@@ -4,13 +4,37 @@ import std.fs.*
 import stdx.encoding.json.*
 
 private let FAILURE_CLAUDE_MODEL = "GLM-5.2"
+public let FAILURE_CLAUDE_CLASSIFIER_TIMEOUT_MILLIS: Int64 = 600000
 
 public func runTeacherFailureClaudeClassifier(args: Array<String>,
     executor!: TeacherCommandExecutor = NativeTeacherCommandExecutor(),
-    claudeExecutable!: String = "claude", timeoutMillis!: Int64 = 300000): Int64 {
+    claudeExecutable!: String = "claude",
+    timeoutMillis!: Int64 = FAILURE_CLAUDE_CLASSIFIER_TIMEOUT_MILLIS): Int64 {
     let result = executeTeacherFailureClaudeClassifier(args, executor: executor,
         claudeExecutable: claudeExecutable, timeoutMillis: timeoutMillis)
-    if (result.ok) { 0 } else { 1 }
+    if (result.ok) { return 0 }
+    let parsed = failureClaudeOptions(args)
+    if (parsed[2] == "ok") {
+        let safe = if (failureClaudeDiagnosticAllowed(result.diagnostic)) {
+            result.diagnostic
+        } else {
+            "classifier_failure_unknown"
+        }
+        try {
+            _ = teacherAtomicWrite(Path(parsed[0]).parent.join("classifier-diagnostic.json").toString(),
+                "{\"schemaVersion\":\"cangjie-teacher-classifier-diagnostic-v1\",\"diagnostic\":\"${safe}\"}\n")
+        } catch (_: Exception) {}
+    }
+    1
+}
+
+private func failureClaudeDiagnosticAllowed(value: String): Bool {
+    ["invalid_adapter_arguments", "adapter_identity_invalid", "adapter_path_invalid",
+        "invalid_request_encoding", "request_too_large", "request_contract_invalid",
+        "classifier_timeout", "classifier_process_failed", "invalid_response_encoding",
+        "classifier_output_too_large", "malformed_json", "provider_identity_mismatch",
+        "response_contract_invalid", "response_contains_forbidden_data",
+        "response_write_failed"].contains(value)
 }
 
 public func executeTeacherFailureClaudeClassifier(args: Array<String>,
