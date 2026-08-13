@@ -292,10 +292,21 @@ public class TeacherFailureAssetTestExecutorTest {
             @Expect(trailing, "candidate_test_evidence_invalid")
 
             Directory.create(Path("${root}/workspace-over-budget"), recursive: true)
-            let overBudgetRunner = R6StudentVerifierRunner(); overBudgetRunner.streamArray = true
-            overBudgetRunner.streamPaddingSize = 70000
-            let overBudgetExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+            let verboseRunner = R6StudentVerifierRunner(); verboseRunner.streamArray = true
+            verboseRunner.streamPaddingSize = 70000
+            let verboseExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
                 "${canonical}/workspace-over-budget", "${canonical}/completion-control.json",
+                identity, executor: verboseRunner)
+            let verboseResult = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], verboseExecutor,
+                buildTeacherAssetValidationTarget("rules", "over-budget", "none", identity))
+            @Expect(verboseResult.size, Int64(1))
+            @Expect(verboseResult[0].actualEvidence, "positive_passed")
+
+            Directory.create(Path("${root}/workspace-over-response-limit"), recursive: true)
+            let overBudgetRunner = R6StudentVerifierRunner(); overBudgetRunner.streamArray = true
+            overBudgetRunner.streamPaddingSize = 1048577
+            let overBudgetExecutor = StudentCompletionNonHumanEvalExecutor(runtime, canonical,
+                "${canonical}/workspace-over-response-limit", "${canonical}/completion-control.json",
                 identity, executor: overBudgetRunner)
             var overBudget = ""
             try { _ = executeTeacherAssetFixtureBundle([s2Fixtures()[0]], overBudgetExecutor,

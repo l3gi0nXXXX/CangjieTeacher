@@ -11,6 +11,8 @@ import std.core.StringBuilder
 import stdx.crypto.digest.SHA256
 import stdx.encoding.json.*
 
+private let STUDENT_VALIDATION_RESPONSE_MAX_BYTES: Int64 = 1048576
+
 public class TeacherValidationIdentity {
     public let provider: String
     public let modelVersion: String
@@ -619,7 +621,7 @@ public class StudentCompletionNonHumanEvalExecutor <: TeacherAssetFixtureExecuto
             else if (exists(Path(transcriptPath))) { teacherReadUtf8File(transcriptPath).trimAscii() }
             else { "" }
         if (raw == "invalid_response_encoding") { throw IllegalArgumentException("invalid_response_encoding") }
-        if (raw.toArray().size > control.effectivePromptByteBudget) {
+        if (raw.toArray().size > STUDENT_VALIDATION_RESPONSE_MAX_BYTES) {
             throw IllegalArgumentException("candidate_test_evidence_invalid")
         }
         try {
