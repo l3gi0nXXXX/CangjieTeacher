@@ -25,6 +25,7 @@ public class TeacherCliOptions {
     public var authorityGap = ""
     public var outputRoot = ""
     public var sourceExport = ""
+    public let sourceExports = ArrayList<String>()
     public var extractor = "codex"
     public var sourceManifest = ""
     public var failurePath = ""
@@ -77,6 +78,10 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
         if (args[i] == "--json") { if (seen.contains(args[i])) { throw IllegalArgumentException("duplicate_cli_option") }; seen.add(args[i]); out.json = true; i += 1; continue }
         if (args[i] == "--scaffold-contract") { if (seen.contains(args[i])) { throw IllegalArgumentException("duplicate_cli_option") }; seen.add(args[i]); out.scaffoldContract = true; i += 1; continue }
         if (i + 1 >= args.size) { throw IllegalArgumentException("missing_cli_option_value") }
+        if (args[i] == "--source-export" && out.command == "candidate-combine") {
+            if (args[i + 1].isEmpty()) { throw IllegalArgumentException("missing_cli_option_value") }
+            out.sourceExports.add(args[i + 1]); i += 2; continue
+        }
         if (seen.contains(args[i])) { throw IllegalArgumentException("duplicate_cli_option") }
         seen.add(args[i])
         let value = args[i + 1]
@@ -668,6 +673,31 @@ private func runTeacherFailureAssetsCommand(options: TeacherCliOptions): Int64 {
     runTeacherRealFailureAssetsBuild(options)
 }
 
+private func runTeacherCandidateCombine(options: TeacherCliOptions): Int64 {
+    if (options.sourceExports.size < 2 || options.allowedRoot.isEmpty() ||
+        options.sourceRoot.isEmpty() || options.protectedRoot.isEmpty() ||
+        options.baseContextRoot.isEmpty() || options.outputRoot.isEmpty() ||
+        options.runId.isEmpty() || options.fixtureRoot.isEmpty() ||
+        options.fixtureRootHash.isEmpty() || options.runtimeExecutable.isEmpty() ||
+        options.adapterWorkspace.isEmpty()) {
+        throw IllegalArgumentException("missing_required_cli_option")
+    }
+    let identity = teacherCliLoadValidationIdentity(options)
+    let fixtures = teacherCliLoadRawFixtures(options.allowedRoot, options.fixtureRoot,
+        options.fixtureRootHash, scaffold: false)
+    let closure = loadTeacherContextSourceClosure(options.allowedRoot,
+        options.sourceRoot, options.protectedRoot)
+    let workspace = teacherCliCreateAdapterWorkspace(options, "student-combine-${options.runId}")
+    let candidate = combineTeacherContextCandidateSetsV2(TeacherContextCandidateCombineRequestV2(
+        options.allowedRoot, options.sourceExports.toArray(), options.baseContextRoot, closure,
+        fixtures, StudentCompletionNonHumanEvalExecutor(options.runtimeExecutable,
+            options.allowedRoot, workspace, options.completionControl, identity,
+            timeoutMillis: options.timeoutMillis), options.runId, options.outputRoot))
+    println(renderTeacherFailureAssetsBuildOutput(candidate.candidateSetId,
+        candidate.candidateSetHash, options.json, candidate.validationLevel, "rules"))
+    0
+}
+
 public func loadTeacherDatasetManifestFile(path: String, checksum: String): TeacherDatasetManifest {
     let text = teacherReadUtf8File(path)
     let lines = ArrayList<String>()
@@ -834,6 +864,7 @@ public func cangjieTeacherCliMain(args: Array<String>): Int64 {
             return runTeacherCandidateReexport(options)
         }
         if (options.command == "context-seed-build") { return runTeacherContextSeedBuild(options) }
+        if (options.command == "candidate-combine") { return runTeacherCandidateCombine(options) }
         if (options.command == "failure-assets-approve") { return runTeacherFailureAssetsApprove(options) }
         if (options.command == "failure-assets-build" || options.command == "failure-assets-reexport") {
             return runTeacherFailureAssetsCommand(options)
@@ -847,5 +878,5 @@ public func cangjieTeacherCliMain(args: Array<String>): Int64 {
 }
 
 private func teacherCliUsage(): String {
-    "usage: cangjie_teacher <manifest-check|hash-directory|run|candidate-build|candidate-reexport|context-seed-build|failure-assets-build|failure-assets-reexport|failure-assets-approve> [options]"
+    "usage: cangjie_teacher <manifest-check|hash-directory|run|candidate-build|candidate-reexport|context-seed-build|candidate-combine|failure-assets-build|failure-assets-reexport|failure-assets-approve> [options]"
 }

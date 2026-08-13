@@ -60,6 +60,25 @@ public class TeacherContextCandidateSetV2 {
     }
 }
 
+public class TeacherContextCandidateCombineRequestV2 {
+    public let allowedRoot: String
+    public let sourceExports: Array<String>
+    public let baseContextRoot: String
+    public let sourceClosure: TeacherContextSourceClosure
+    public let fixtures: Array<TeacherAssetFixture>
+    public let fixtureExecutor: TeacherAssetFixtureExecutor
+    public let candidateSetId: String
+    public let outputRoot: String
+    public init(allowedRoot: String, sourceExports: Array<String>, baseContextRoot: String,
+        sourceClosure: TeacherContextSourceClosure, fixtures: Array<TeacherAssetFixture>,
+        fixtureExecutor: TeacherAssetFixtureExecutor, candidateSetId: String, outputRoot: String) {
+        this.allowedRoot = allowedRoot; this.sourceExports = sourceExports
+        this.baseContextRoot = baseContextRoot; this.sourceClosure = sourceClosure
+        this.fixtures = fixtures; this.fixtureExecutor = fixtureExecutor
+        this.candidateSetId = candidateSetId; this.outputRoot = outputRoot
+    }
+}
+
 private func teacherV2Hash(value: String): Bool {
     let runes = value.toRuneArray()
     if (!value.startsWith("sha256:") || runes.size != 71) { return false }
@@ -970,6 +989,180 @@ public func exportTeacherContextCandidateSetV2(value: TeacherContextCandidateSet
         throw e
     }
     manifest
+}
+
+private func teacherV2CombineClassificationHash(values: Array<String>): String {
+    let sorted = values.clone(); sort(sorted); let seen = HashSet<String>(); var inventory = ""
+    for (value in sorted) {
+        if (!teacherV2Hash(value)) {
+            throw IllegalArgumentException("candidate_classification_conflict")
+        }
+        if (seen.contains(value)) { continue }
+        seen.add(value); inventory += "${String(value.toRuneArray()[7..])}  classification-${seen.size}.json\n"
+    }
+    "sha256:${teacherStableHash(inventory)}"
+}
+
+private func teacherV2CombineRuleFromFiles(files: Array<TeacherArtifactFile>, id: String,
+    executions: Array<TeacherAssetFixtureExecution>): (TeacherRuleCandidate, TeacherContextAssetOperation) {
+    try {
+        let raw = teacherV2File(files, "${id}/candidate-manifest.json").trimAscii()
+        let object = JsonValue.fromStr(raw).asObject()
+        let operationRaw = teacherV2File(files, "${id}/operation.json").trimAscii()
+        let operationObject = JsonValue.fromStr(operationRaw).asObject()
+        let sourceHash = teacherV2String(object, "sourceEvidenceHash")
+        let evidence = if (sourceHash.startsWith("sha256:")) {
+            String(sourceHash.toRuneArray()[7..])
+        } else { sourceHash }
+        let classification = sealTeacherFailureAssetClassification(TeacherFailureAssetClassification(
+            "ckb-completion-failure-classification-v2", evidence, "rules_gap", false, false, true,
+            "missing_global_invariant", ""))
+        let candidate = buildTeacherRuleCandidate(classification, id,
+            teacherV2String(object, "conceptId"), teacherV2String(object, "title"),
+            teacherV2String(object, "body"), teacherV2String(object, "trigger"),
+            teacherV2String(object, "scope"), teacherV2Int(object, "priority"),
+            teacherV2String(object, "sourceEvidenceKind"), sourceHash,
+            TeacherRuleTestBundle(executions))
+        let operation = TeacherContextAssetOperation("rules", id,
+            teacherV2String(operationObject, "operation"),
+            teacherV2String(operationObject, "expectedOldHash"), candidate.canonicalHash)
+        (candidate, operation)
+    } catch (e: IllegalArgumentException) { throw e }
+    catch (_: Exception) { throw IllegalArgumentException("candidate_lane_hash_mismatch") }
+}
+
+private func teacherV2CombineExecutionsPassed(values: Array<TeacherAssetFixtureExecution>): Bool {
+    if (values.isEmpty()) { return false }
+    for (value in values) {
+        if (!value.passed || value.exitCode != 0 || value.actualEvidence != value.fixture.expectedEvidence) {
+            return false
+        }
+    }
+    true
+}
+
+// Combines only sibling rule deltas. Skills and knowledge must remain inherited; this keeps
+// the operation merge unambiguous while still producing one freshly validated projection.
+public func combineTeacherContextCandidateSetsV2(
+    request: TeacherContextCandidateCombineRequestV2): TeacherContextCandidateSetV2 {
+    if (request.sourceExports.size < 2 || request.sourceExports.size > 16 ||
+        request.fixtureExecutor.executorKind() != "student_completion_non_humaneval" ||
+        !teacherArtifactSafeComponent(request.candidateSetId)) {
+        throw IllegalArgumentException("candidate_combine_invalid")
+    }
+    let base = loadTeacherContextBaseStateV2(request.allowedRoot, request.baseContextRoot)
+    let closure = bindTeacherContextSourceClosureToBase(request.sourceClosure, base.closureBindings)
+    if (closure.manifest.sourceKind != "completion_failures") {
+        throw IllegalArgumentException("candidate_lane_lineage_invalid")
+    }
+    let identity = request.fixtureExecutor.validationIdentity()
+    if (identity.identityHash != request.fixtureExecutor.providerIdentityHash() ||
+        identity.modelVersion != request.fixtureExecutor.modelVersion()) {
+        throw IllegalArgumentException("student_validation_identity_mismatch")
+    }
+    let sourceSeen = HashSet<String>(); let ids = HashSet<String>()
+    let sourceRules = ArrayList<(Array<TeacherArtifactFile>, String)>()
+    let classifications = ArrayList<String>()
+    for (source in request.sourceExports) {
+        let canonical = teacherResolveArtifactInput(request.allowedRoot, source, directory: true)
+        if (sourceSeen.contains(canonical)) { throw IllegalArgumentException("candidate_combine_invalid") }
+        sourceSeen.add(canonical)
+        try {
+            let sourceManifest = JsonValue.fromStr(teacherReadUtf8File(
+                "${canonical}/candidate-set-manifest.json").trimAscii()).asObject()
+            if (teacherV2String(sourceManifest, "baseCompositeHash") != base.compositeHash) {
+                throw IllegalArgumentException("candidate_base_composite_mismatch")
+            }
+        } catch (e: IllegalArgumentException) { throw e }
+        catch (_: Exception) { throw IllegalArgumentException("candidate_set_schema_invalid") }
+        let candidate = parseTeacherContextCandidateSetDirectoryV2(request.allowedRoot, source,
+            baseContextRoot: request.baseContextRoot)
+        if (candidate.validationLevel != "student_validated" ||
+            candidate.baseCompositeHash != base.compositeHash || !candidate.rules.eligible ||
+            candidate.skills.eligible || candidate.knowledge.eligible ||
+            candidate.skills.hash != base.skillsHash || candidate.knowledge.hash != base.knowledgeHash ||
+            candidate.knowledgeTargetVersion != base.knowledgeVersion) {
+            throw IllegalArgumentException("candidate_base_composite_mismatch")
+        }
+        classifications.add(candidate.classificationManifestHash)
+        let localIds = HashSet<String>()
+        for (file in candidate.rules.files) {
+            let parts = file.path.split("/")
+            if (!parts.isEmpty()) { localIds.add(parts[0]) }
+            if (file.path.endsWith("/execution.json")) {
+                let execution = JsonValue.fromStr(file.content.trimAscii()).asObject()
+                if (teacherV2String(execution, "providerIdentityHash") != identity.identityHash ||
+                    teacherV2String(execution, "modelVersion") != identity.modelVersion) {
+                    throw IllegalArgumentException("student_validation_identity_mismatch")
+                }
+            }
+        }
+        for (id in localIds) {
+            if (ids.contains(id)) { throw IllegalArgumentException("candidate_operation_conflict") }
+            let ruleManifest = JsonValue.fromStr(teacherV2File(candidate.rules.files,
+                "${id}/candidate-manifest.json").trimAscii()).asObject()
+            if (!closure.manifest.sourceHashes.contains(
+                teacherV2String(ruleManifest, "sourceEvidenceHash"))) {
+                throw IllegalArgumentException("candidate_source_closure_mismatch")
+            }
+            ids.add(id); sourceRules.add((candidate.rules.files, id))
+        }
+    }
+    if (ids.isEmpty()) { throw IllegalArgumentException("candidate_combine_invalid") }
+
+    // Build the exact final projection from sibling semantic content before any new execution.
+    var projectedAssets = base.rulesAssets
+    for (entry in sourceRules) {
+        let oldOperation = JsonValue.fromStr(
+            teacherV2File(entry[0], "${entry[1]}/operation.json").trimAscii()).asObject()
+        let oldManifest = JsonValue.fromStr(
+            teacherV2File(entry[0], "${entry[1]}/candidate-manifest.json").trimAscii()).asObject()
+        let operation = buildTeacherContextAssetOperation("rules", entry[1],
+            teacherV2String(oldOperation, "operation"), teacherV2String(oldOperation, "expectedOldHash"),
+            teacherV2String(oldOperation, "newHash"), base.rulesAssets)
+        let single = teacherV2File(entry[0], "${entry[1]}/AGENTS.md")
+        let fragment = String(single.toRuneArray()["# Student Rules\n".toRuneArray().size..])
+        projectedAssets = applyTeacherContextAssetOperation(projectedAssets, operation, fragment,
+            priority: teacherV2Int(oldManifest, "priority"))
+    }
+    let projectedVisible = teacherContextAssetProjection("rules", projectedAssets)
+    let executions = executeTeacherAssetFixtureBundle(request.fixtures, request.fixtureExecutor,
+        buildTeacherAssetValidationTarget("rules", projectedVisible, base.compositeHash, identity))
+    if (!teacherV2CombineExecutionsPassed(executions)) {
+        throw IllegalArgumentException("candidate_test_evidence_invalid")
+    }
+
+    let files = ArrayList<TeacherArtifactFile>(); var finalAssets = base.rulesAssets
+    for (entry in sourceRules) {
+        let rebuilt = teacherV2CombineRuleFromFiles(entry[0], entry[1], executions)
+        let operation = buildTeacherContextAssetOperation("rules", entry[1], rebuilt[1].operation,
+            rebuilt[1].expectedOldHash, rebuilt[0].canonicalHash, base.rulesAssets)
+        for (file in teacherRuleCandidateArtifactFiles(rebuilt[0], operation)) { files.add(file) }
+        let single = renderTeacherAgentsMarkdown([rebuilt[0]])
+        let fragment = String(single.toRuneArray()["# Student Rules\n".toRuneArray().size..])
+        finalAssets = applyTeacherContextAssetOperation(finalAssets, operation, fragment,
+            priority: rebuilt[0].priority)
+    }
+    let visible = teacherContextAssetProjection("rules", finalAssets)
+    if (visible != projectedVisible) { throw IllegalArgumentException("candidate_test_evidence_invalid") }
+    let rules = TeacherContextLaneV2(true, "sha256:${teacherStableHash(visible)}",
+        teacherContextLaneTreeHashV2(files.toArray()), finalAssets.size,
+        "humaneval_164_derived", visible, files.toArray())
+    let skills = TeacherContextLaneV2(false, base.skillsHash, teacherContextLaneTreeHashV2([]),
+        base.skillsCount, base.skillsLineage, base.skillsVisible, [])
+    let knowledge = TeacherContextLaneV2(false, base.knowledgeHash, teacherContextLaneTreeHashV2([]),
+        1, base.knowledgeLineage, base.knowledgeVisible, [])
+    let protected = ArrayList<String>()
+    for (value in closure.protectedArtifacts) { protected.add(value) }
+    for (value in base.protectedArtifacts) { protected.add(value) }
+    if (!auditTeacherAssetCombinationLeakage(visible, base.skillsVisible, "",
+        protected.toArray()).passed) { throw IllegalArgumentException("protected_asset_combination") }
+    let candidate = sealTeacherContextCandidateSetV2(request.candidateSetId, base.compositeHash,
+        "student_validated", teacherV2CombineClassificationHash(classifications.toArray()),
+        closure, rules, skills, knowledge, base.knowledgeVersion)
+    _ = exportTeacherContextCandidateSetV2(candidate, request.allowedRoot, request.outputRoot,
+        baseContextRoot: request.baseContextRoot)
+    candidate
 }
 
 private func teacherV2ApprovalEscape(value: String): String {
