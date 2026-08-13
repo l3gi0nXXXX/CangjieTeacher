@@ -33,6 +33,9 @@ private func failureClaudeDiagnosticAllowed(value: String): Bool {
         "invalid_request_encoding", "request_too_large", "request_contract_invalid",
         "classifier_timeout", "classifier_process_failed", "invalid_response_encoding",
         "classifier_output_too_large", "malformed_json", "provider_identity_mismatch",
+        "malformed_terminal_json", "classifier_unsuccessful_result",
+        "observed_model_mismatch", "malformed_structured_output",
+        "missing_init", "duplicate_init", "missing_or_duplicate_terminal_result",
         "response_contract_invalid", "response_contains_forbidden_data",
         "response_write_failed"].contains(value)
 }
@@ -122,7 +125,10 @@ private func failureClaudeRequestHash(raw: String): String {
 
 private func failureClaudeTerminal(raw: String): String {
     try {
-        let object = JsonValue.fromStr(raw).asObject()
+        let value = JsonValue.fromStr(raw)
+        let object = try { value.asObject() } catch (_: Exception) {
+            failureClaudeVerboseTerminal(value)
+        }
         if (failureClaudeString(object, "type") != "result" ||
             failureClaudeString(object, "subtype") != "success" || failureClaudeBool(object, "is_error")) {
             throw IllegalArgumentException("classifier_unsuccessful_result")
@@ -136,6 +142,34 @@ private func failureClaudeTerminal(raw: String): String {
         }
     } catch (e: IllegalArgumentException) { throw e }
     catch (_: Exception) { throw IllegalArgumentException("malformed_terminal_json") }
+}
+
+private func failureClaudeVerboseTerminal(value: JsonValue): JsonObject {
+    let items = value.asArray().getItems()
+    var initialized = false
+    var terminal: ?JsonObject = None
+    for (item in items) {
+        let object = item.asObject()
+        let kind = failureClaudeString(object, "type")
+        let subtype = failureClaudeString(object, "subtype")
+        if (kind == "system" && subtype == "init") {
+            if (initialized) { throw IllegalArgumentException("duplicate_init") }
+            initialized = true
+            if (failureClaudeString(object, "model") != FAILURE_CLAUDE_MODEL) {
+                throw IllegalArgumentException("observed_model_mismatch")
+            }
+        } else if (kind == "result") {
+            match (terminal) {
+                case Some(_) => throw IllegalArgumentException("missing_or_duplicate_terminal_result")
+                case None => terminal = Some<JsonObject>(object)
+            }
+        }
+    }
+    if (!initialized) { throw IllegalArgumentException("missing_init") }
+    match (terminal) {
+        case Some(object) => object
+        case None => throw IllegalArgumentException("missing_or_duplicate_terminal_result")
+    }
 }
 
 private func failureClaudeSeal(hash: String, raw: String): String {

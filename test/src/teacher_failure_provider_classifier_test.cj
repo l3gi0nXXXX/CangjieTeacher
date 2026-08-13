@@ -27,8 +27,21 @@ private class FailureProviderFake <: TeacherCommandExecutor {
         }
         let structured = if (mode == "malformed") { "{" } else { classification }
         if (mode == "invalid_utf8") { return TeacherProcessResult(0, "invalid_response_encoding") }
-        TeacherProcessResult(0, "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false," +
-            "\"modelUsage\":{\"GLM-5.2\":{}},\"structured_output\":${structured}}")
+        let terminal = "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false," +
+            "\"modelUsage\":{\"GLM-5.2\":{}},\"structured_output\":${structured}}"
+        if (mode.startsWith("verbose")) {
+            let initModel = if (mode == "verbose_wrong_model") { "wrong-model" } else { "GLM-5.2" }
+            let initEvent = "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"${initModel}\"}"
+            if (mode == "verbose_missing_init") {
+                return TeacherProcessResult(0, "[{\"type\":\"assistant\"},${terminal}]")
+            }
+            if (mode == "verbose_duplicate_result") {
+                return TeacherProcessResult(0, "[${initEvent},${terminal},${terminal}]")
+            }
+            return TeacherProcessResult(0,
+                "[${initEvent},{\"type\":\"assistant\"},${terminal}]")
+        }
+        TeacherProcessResult(0, terminal)
     }
 }
 
@@ -95,6 +108,39 @@ public class TeacherFailureProviderClassifierTest {
             }
             @Expect(provider.observedArgs.contains("--effort"), false)
         } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
+    }
+
+    @TestCase public func claudeAdapterAcceptsVerboseJsonArrayWithBoundInitAndTerminal(): Unit {
+        let fixture = prepareFailureRoot("claude-verbose-array")
+        try {
+            let result = executeTeacherFailureClaudeClassifier(
+                ["--request", fixture[1], "--output", fixture[2]],
+                executor: FailureProviderFake(mode: "verbose"), claudeExecutable: "/fake/claude",
+                timeoutMillis: 1000)
+            @Expect(result.ok, true)
+            @Expect(result.diagnostic, "ok")
+            @Expect(parseTeacherFailureAssetClassifierResponse(
+                teacherReadUtf8File(fixture[2]).trimAscii()).gapKind, "rules_gap")
+        } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
+    }
+
+    @TestCase public func claudeVerboseJsonArrayFailsClosedWithoutUniqueBoundEvidence(): Unit {
+        for ((mode, expected) in [
+            ("verbose_wrong_model", "observed_model_mismatch"),
+            ("verbose_missing_init", "missing_init"),
+            ("verbose_duplicate_result", "missing_or_duplicate_terminal_result")
+        ]) {
+            let fixture = prepareFailureRoot("claude-${mode}")
+            try {
+                let result = executeTeacherFailureClaudeClassifier(
+                    ["--request", fixture[1], "--output", fixture[2]],
+                    executor: FailureProviderFake(mode: mode), claudeExecutable: "/fake/claude",
+                    timeoutMillis: 1000)
+                @Expect(result.ok, false)
+                @Expect(result.diagnostic, expected)
+                @Expect(exists(Path(fixture[2])), false)
+            } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
+        }
     }
 
     @TestCase public func codexAndClaudeSealCanonicalRulesAndInfrastructure(): Unit {
