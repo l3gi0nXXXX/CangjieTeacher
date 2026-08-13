@@ -119,10 +119,27 @@ private func failureGeneratorParseRequest(raw: String): TeacherFailureAssetGener
 private func failureGeneratorSealResponse(raw: String, expectedLane: String): String {
     if (failureGeneratorForbidden(raw)) { throw IllegalArgumentException("forbidden_data") }
     try {
-        let parsed = parseTeacherFailureAssetGenerationResponse(raw)
-        if (parsed.lane != expectedLane) { throw IllegalArgumentException("lane_mismatch") }
-        let canonical = renderTeacherFailureAssetGenerationResponse(parsed)
-        if (raw != canonical) { throw IllegalArgumentException("response_contract_invalid") }
+        let object = JsonValue.fromStr(raw).asObject()
+        if (object.getFields().size != 7 ||
+            failureGeneratorString(object, "schemaVersion") != "teacher-failure-asset-generation-response-v1") {
+            throw IllegalArgumentException("response_contract_invalid")
+        }
+        let lane = failureGeneratorString(object, "lane")
+        if (lane != expectedLane) { throw IllegalArgumentException("lane_mismatch") }
+        let title = failureGeneratorString(object, "title")
+        let content = failureGeneratorString(object, "content")
+        let trigger = failureGeneratorString(object, "trigger")
+        let scope = failureGeneratorString(object, "scope")
+        let priority = object.get("priority").getOrThrow().asInt().getValue()
+        let evidence = "{\"schemaVersion\":\"teacher-failure-asset-generation-response-v1\",\"lane\":\"${lane}\"," +
+            "\"title\":\"${failureGeneratorEscape(title)}\",\"content\":\"${failureGeneratorEscape(content)}\"," +
+            "\"trigger\":\"${failureGeneratorEscape(trigger)}\",\"scope\":\"${failureGeneratorEscape(scope)}\"," +
+            "\"priority\":${priority}}"
+        if (raw != evidence) { throw IllegalArgumentException("response_contract_invalid") }
+        let sealed = TeacherFailureAssetGenerationResponse(lane, title, content, trigger, scope,
+            priority, "sha256:${teacherStableHash(evidence)}")
+        let canonical = renderTeacherFailureAssetGenerationResponse(sealed)
+        _ = parseTeacherFailureAssetGenerationResponse(canonical)
         canonical
     } catch (e: IllegalArgumentException) { throw e }
     catch (_: Exception) { throw IllegalArgumentException("malformed_json") }
@@ -131,13 +148,13 @@ private func failureGeneratorSealResponse(raw: String, expectedLane: String): St
 private func failureGeneratorPrompt(request: String, lane: String): String {
     "Generate one reusable ${lane} guidance proposal from the sanitized failure-gap request below. " +
     "Return exactly one canonical JSON object matching the output schema. Keep lane exactly ${lane}. " +
-    "Set proposalHash to sha256:<lowercase SHA-256 hex> of the same response with the proposalHash field omitted. " +
+    "Do not add proposalHash; the trusted adapter computes and seals it after validating the seven business fields. " +
     "Do not include case identifiers, task answers, solution code, hidden tests, filesystem paths, credentials, " +
     "tokens, authorization data, or private payloads. Generalize only from the supplied gap description. Request:\n${request}"
 }
 
 private func failureGeneratorOutputSchema(): String {
-    "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"schemaVersion\",\"lane\",\"title\",\"content\",\"trigger\",\"scope\",\"priority\",\"proposalHash\"],\"properties\":{\"schemaVersion\":{\"type\":\"string\",\"const\":\"teacher-failure-asset-generation-response-v1\"},\"lane\":{\"type\":\"string\",\"enum\":[\"knowledge\",\"skill\",\"rules\"]},\"title\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"},\"trigger\":{\"type\":\"string\"},\"scope\":{\"type\":\"string\"},\"priority\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":1000},\"proposalHash\":{\"type\":\"string\",\"pattern\":\"^sha256:[0-9a-f]{64}$\"}}}"
+    "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"schemaVersion\",\"lane\",\"title\",\"content\",\"trigger\",\"scope\",\"priority\"],\"properties\":{\"schemaVersion\":{\"type\":\"string\",\"const\":\"teacher-failure-asset-generation-response-v1\"},\"lane\":{\"type\":\"string\",\"enum\":[\"knowledge\",\"skill\",\"rules\"]},\"title\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"},\"trigger\":{\"type\":\"string\"},\"scope\":{\"type\":\"string\"},\"priority\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":1000}}}"
 }
 
 private func failureGeneratorForbidden(value: String): Bool {

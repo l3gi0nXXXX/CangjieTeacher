@@ -30,7 +30,8 @@ private class FailureGeneratorFakeExecutor <: TeacherCommandExecutor {
         let body = match (mode) {
             case "malformed" => "{"
             case "forbidden" => valid.replace("General 中文🙂", "hidden_test answer")
-            case "bad_hash" => valid.replace("sha256:", "sha256:0")
+            case "untrusted_hash" => String(valid.toRuneArray()[..valid.toRuneArray().size - 1]) +
+                ",\"proposalHash\":\"sha256:${String(Array<Rune>(64, repeat: r'0'))}\"}"
             case _ => valid
         }
         File.writeTo(Path(output), body.toArray())
@@ -58,6 +59,7 @@ public class TeacherFailureAssetProviderGeneratorTest {
                     teacherReadUtf8File(fixture.output).trimAscii())
                 @Expect(response.lane, lane); @Expect(response.content.contains("中文🙂"), true)
                 @Expect(response.proposalHash.startsWith("sha256:"), true)
+                @Expect(spec.args[spec.args.size - 1].contains("trusted adapter computes and seals"), true)
             } finally { failureGeneratorRemove(fixture.root) }
         }
     }
@@ -86,12 +88,12 @@ public class TeacherFailureAssetProviderGeneratorTest {
             @Expect(result.diagnostic, "request_contract_invalid"); @Expect(exists(Path(badHash.output)), false)
         } finally { failureGeneratorRemove(badHash.root) }
 
-        let badProposalHash = failureGeneratorFixture("bad-proposal-hash", "rules")
+        let badProposalHash = failureGeneratorFixture("untrusted-proposal-hash", "rules")
         try {
             let result = executeTeacherFailureAssetProviderGenerator(badProposalHash.args,
-                executor: FailureGeneratorFakeExecutor(mode: "bad_hash"),
+                executor: FailureGeneratorFakeExecutor(mode: "untrusted_hash"),
                 codexExecutable: "/fake/codex", timeoutMillis: 1000)
-            @Expect(result.diagnostic, "candidate_generation_invalid")
+            @Expect(result.diagnostic, "response_contract_invalid")
             @Expect(exists(Path(badProposalHash.output)), false)
         } finally { failureGeneratorRemove(badProposalHash.root) }
 
@@ -152,9 +154,7 @@ private func failureGeneratorTestResponse(lane: String): String {
     let content = "General 中文🙂 ${lane} guidance"
     let trigger = "When the reusable gap is observed"
     let scope = "Cangjie engineering"
-    let evidence = "{\"schemaVersion\":\"teacher-failure-asset-generation-response-v1\",\"lane\":\"${lane}\",\"title\":\"${title}\",\"content\":\"${content}\",\"trigger\":\"${trigger}\",\"scope\":\"${scope}\",\"priority\":100}"
-    renderTeacherFailureAssetGenerationResponse(TeacherFailureAssetGenerationResponse(lane, title,
-        content, trigger, scope, 100, "sha256:${teacherStableHash(evidence)}"))
+    "{\"schemaVersion\":\"teacher-failure-asset-generation-response-v1\",\"lane\":\"${lane}\",\"title\":\"${title}\",\"content\":\"${content}\",\"trigger\":\"${trigger}\",\"scope\":\"${scope}\",\"priority\":100}"
 }
 
 private func failureGeneratorRemove(root: String): Unit {
