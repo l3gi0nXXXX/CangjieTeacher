@@ -69,7 +69,10 @@ public func executeTeacherFailureClaudeClassifier(args: Array<String>,
         "knowledge_gap/missing_versioned_fact; reusable procedures use procedure_gap/missing_reusable_procedure; " +
         "global behavioral constraints use rules_gap/missing_global_invariant; combinations use the matching " +
         "combined gap and multiple_reusable_gaps. Use infrastructure_failure/infrastructure_only for provider, " +
-        "timeout, protocol, runner, or environment failures. Never reveal case identifiers, hidden tests, reference " +
+        "timeout, protocol, runner, or environment failures. Classify the root cause, not a surfaced compiler symptom. " +
+        "A fact already supplied by the authority is not missing knowledge. If the supplied syntax fact is known and " +
+        "the failure violates an evaluator-owned completion-only boundary, use rules_gap/missing_global_invariant only. " +
+        "Never reveal case identifiers, hidden tests, reference " +
         "solutions, credentials, or local paths. Request:\n" + raw.trimAscii()
     let process = executor.execute(TeacherCommandSpec(claudeExecutable,
         ["-p", prompt, "--bare", "--tools", "", "--disable-slash-commands",

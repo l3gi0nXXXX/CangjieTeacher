@@ -118,7 +118,36 @@ public class TeacherFailureProviderClassifierTest {
                 "combined gap and multiple_reusable_gaps", "infrastructure_failure/infrastructure_only"]) {
                 @Expect(prompt.contains(mapping), true)
             }
+            @Expect(prompt.contains("Classify the root cause, not a surfaced compiler symptom."), true)
+            @Expect(prompt.contains("A fact already supplied by the authority is not missing knowledge."), true)
+            @Expect(prompt.contains("evaluator-owned completion-only boundary"), true)
         } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
+    }
+
+    @TestCase public func codexAndClaudeShareRootCauseClassificationPolicy(): Unit {
+        let codexFixture = prepareFailureRoot("codex-root-cause-policy")
+        let claudeFixture = prepareFailureRoot("claude-root-cause-policy")
+        let codex = FailureProviderFake()
+        let claude = FailureProviderFake()
+        try {
+            @Expect(executeTeacherFailureCodexClassifier(
+                ["--request", codexFixture[1], "--output", codexFixture[2]],
+                executor: codex, codexExecutable: "/fake/codex", timeoutMillis: 1000).ok, true)
+            @Expect(executeTeacherFailureClaudeClassifier(
+                ["--request", claudeFixture[1], "--output", claudeFixture[2]],
+                executor: claude, claudeExecutable: "/fake/claude", timeoutMillis: 1000).ok, true)
+            let codexPrompt = codex.observedArgs[codex.observedArgs.size - 1]
+            let claudePrompt = claude.observedArgs[1]
+            for (policy in ["Classify the root cause, not a surfaced compiler symptom.",
+                "A fact already supplied by the authority is not missing knowledge.",
+                "evaluator-owned completion-only boundary", "rules_gap/missing_global_invariant only"]) {
+                @Expect(codexPrompt.contains(policy), true)
+                @Expect(claudePrompt.contains(policy), true)
+            }
+        } finally {
+            try { remove(Path(codexFixture[0]), recursive: true) } catch (_: Exception) {}
+            try { remove(Path(claudeFixture[0]), recursive: true) } catch (_: Exception) {}
+        }
     }
 
     @TestCase public func claudeAdapterAcceptsVerboseJsonArrayWithBoundInitAndTerminal(): Unit {
