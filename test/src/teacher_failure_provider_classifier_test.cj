@@ -8,10 +8,12 @@ import cangjie_teacher.*
 private class FailureProviderFake <: TeacherCommandExecutor {
     let mode: String
     let classification: String
+    public var observedArgs: Array<String> = Array<String>()
     public init(mode!: String = "ok", classification!: String = failureRulesJson()) {
         this.mode = mode; this.classification = classification
     }
     public func execute(spec: TeacherCommandSpec): TeacherProcessResult {
+        observedArgs = spec.args
         if (mode == "timeout") { return TeacherProcessResult(124, "", timedOut: true) }
         if (mode == "nonzero") { return TeacherProcessResult(9, "provider secret must not propagate") }
         if (spec.executable.contains("codex")) {
@@ -73,6 +75,25 @@ public class TeacherFailureProviderClassifierTest {
             @Expect(teacherReadUtf8File("${fixture[0]}/classifier-diagnostic.json"),
                 "{\"schemaVersion\":\"cangjie-teacher-classifier-diagnostic-v1\",\"diagnostic\":\"classifier_timeout\"}\n")
             @Expect(exists(Path(fixture[2])), false)
+        } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
+    }
+
+    @TestCase public func claudeAdapterUsesFrozenSingleTurnStructuredOutputProfile(): Unit {
+        let fixture = prepareFailureRoot("claude-profile")
+        let provider = FailureProviderFake()
+        try {
+            @Expect(executeTeacherFailureClaudeClassifier(
+                ["--request", fixture[1], "--output", fixture[2]],
+                executor: provider, claudeExecutable: "/fake/claude",
+                timeoutMillis: 1000).ok, true)
+            for (value in ["--bare", "--tools", "--disable-slash-commands",
+                "--setting-sources", "--max-turns", "1", "--verbose",
+                "--no-session-persistence", "--output-format", "json",
+                "--strict-mcp-config", "--json-schema",
+                "--dangerously-skip-permissions"]) {
+                @Expect(provider.observedArgs.contains(value), true)
+            }
+            @Expect(provider.observedArgs.contains("--effort"), false)
         } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
     }
 

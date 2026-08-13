@@ -63,10 +63,12 @@ public func executeTeacherFailureClaudeClassifier(args: Array<String>,
         "Use infrastructure_failure/infrastructure_only for provider timeout, protocol, runner, or environment " +
         "failures. Never reveal case identifiers, hidden tests, reference solutions, credentials, or local paths.\n" + raw.trimAscii()
     let process = executor.execute(TeacherCommandSpec(claudeExecutable,
-        ["-p", prompt, "--model", FAILURE_CLAUDE_MODEL, "--json-schema", schema,
-         "--output-format", "json", "--effort", "low", "--no-session-persistence", "--bare",
-         "--disable-slash-commands", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}",
-         "--tools", ""], workspace, timeoutMillis: timeoutMillis))
+        ["-p", prompt, "--bare", "--tools", "", "--disable-slash-commands",
+         "--setting-sources", "", "--max-turns", "1", "--verbose",
+         "--no-session-persistence", "--model", FAILURE_CLAUDE_MODEL,
+         "--output-format", "json", "--strict-mcp-config", "--mcp-config",
+         "{\"mcpServers\":{}}", "--json-schema", schema,
+         "--dangerously-skip-permissions"], workspace, timeoutMillis: timeoutMillis))
     if (process.timedOut) { result.diagnostic = "classifier_timeout"; return result }
     if (process.exitCode != 0) { result.diagnostic = "classifier_process_failed"; return result }
     if (process.output == "invalid_response_encoding") { result.diagnostic = "invalid_response_encoding"; return result }
