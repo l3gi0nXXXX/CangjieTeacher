@@ -357,6 +357,44 @@ public class TeacherFailureAssetOrchestratorTest {
         } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 
+    @TestCase public func baseContextUsesInheritedKnowledgeIdentityWhenKnowledgeLaneIsUnchanged(): Unit {
+        let root = "/tmp/teacher-base-inherited-knowledge-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            Directory.create(Path(root), recursive: true)
+            let target = "${root}/base-context"
+            teacherCopyTree("fixtures/failure_assets_e2e/base-context", target)
+            let inheritedHash = "sha256:${String(Array<Rune>(64, repeat: r'5'))}"
+            var knowledge = teacherReadUtf8File("${target}/knowledge-reference.json")
+            knowledge = s2ReplaceRequired(knowledge,
+                "\"knowledgeCandidateHash\":\"sha256:39c400fb1e29b16784f5305012430e3cdcc35e7d4b2c6aceb37b4e6892d29ece\"",
+                "\"knowledgeCandidateHash\":\"${inheritedHash}\"")
+            _ = teacherAtomicWrite("${target}/knowledge-reference.json", knowledge)
+
+            let sourceHash = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+            let protectedHash = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+            let rulesHash = "sha256:f973c7709689b1a6a9490e07ad84c8349b2388f575560dc3bed646f9cf878185"
+            let skillsHash = "sha256:fc678ff9d5360559bb4455838eafaf91544a9ad42e747e6b8c453ebe7c335f14"
+            let combinationHash = s2CanonicalHash(
+                [rulesHash, skillsHash, inheritedHash, sourceHash, protectedHash])
+            let audit = "{\"schemaVersion\":\"ckb-student-context-combination-audit-v1\"," +
+                "\"sourceClosureHash\":\"${sourceHash}\",\"protectedClosureHash\":\"${protectedHash}\"," +
+                "\"combinationAuditHash\":\"${combinationHash}\",\"passed\":true}\n"
+            _ = teacherAtomicWrite("${target}/combination-audit.json", audit)
+
+            var manifest = teacherReadUtf8File("${target}/student-context-manifest.json")
+            manifest = s2ReplaceRequired(manifest,
+                "\"changedLanes\":[\"knowledge\",\"rules\",\"skills\"]", "\"changedLanes\":[\"rules\"]")
+            manifest = s2ReplaceRequired(manifest,
+                "\"combinationAuditHash\":\"sha256:73661941f207eff70f655dfca65602ede84213e59c1c575584125b6a3377ff47\"",
+                "\"combinationAuditHash\":\"${combinationHash}\"")
+            _ = teacherAtomicWrite("${target}/student-context-manifest.json",
+                s2ResealTrailingHash(manifest, ",\"compositeHash\":\"")[0])
+
+            let base = loadTeacherContextBaseStateV2(root, target)
+            @Expect(base.knowledgeHash, inheritedHash)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
+    }
+
     @TestCase public func baseContextReducesMixedLineageAndRejectsResealedSemanticMismatch(): Unit {
         let root = "/tmp/teacher-base-lineage-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
         try {

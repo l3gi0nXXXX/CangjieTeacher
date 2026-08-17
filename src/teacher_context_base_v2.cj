@@ -206,7 +206,7 @@ public func loadTeacherContextBaseStateV2(allowedRoot: String,
         }
         let compositeHash = teacherBaseString(object, "compositeHash")
         teacherBaseValidateTrailingHash(raw, ",\"compositeHash\":\"", compositeHash)
-        _ = teacherBaseChangedLanes(object)
+        let changedLanes = teacherBaseChangedLanes(object)
         if (teacherBaseString(object, "contextVersion").isEmpty() ||
             !(teacherBaseString(object, "baseCompositeHash") == "none" ||
                 teacherBaseHash(teacherBaseString(object, "baseCompositeHash"))) ||
@@ -235,8 +235,11 @@ public func loadTeacherContextBaseStateV2(allowedRoot: String,
             "\"sourceClosureHash\":\"${teacherBaseString(audit, "sourceClosureHash")}\"," +
             "\"protectedClosureHash\":\"${teacherBaseString(audit, "protectedClosureHash")}\"," +
             "\"combinationAuditHash\":\"${teacherBaseString(audit, "combinationAuditHash")}\",\"passed\":true}"
+        let knowledgeAuditHash = if (changedLanes.contains("knowledge")) {
+            teacherBaseString(object, "knowledgeContentHash")
+        } else { knowledge.knowledgeCandidateHash }
         let combinationValues = [teacherBaseString(object, "rulesHash"),
-            teacherBaseString(object, "skillProjectionHash"), teacherBaseString(object, "knowledgeContentHash"),
+            teacherBaseString(object, "skillProjectionHash"), knowledgeAuditHash,
             teacherBaseString(audit, "sourceClosureHash"), teacherBaseString(audit, "protectedClosureHash")]
         let combinationEvidence = teacherJoin(combinationValues.map(
             {value: String => "${value.toArray().size}:${value}"}), "")
