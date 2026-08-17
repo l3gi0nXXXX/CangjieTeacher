@@ -120,6 +120,7 @@ public class TeacherFailureProviderClassifierTest {
             }
             @Expect(prompt.contains("Classify the root cause, not a surfaced compiler symptom."), true)
             @Expect(prompt.contains("A fact already supplied by the authority is not missing knowledge."), true)
+            @Expect(prompt.contains("do not use knowledge_gap; use rules_gap/missing_global_invariant"), true)
             @Expect(prompt.contains("evaluator-owned completion-only boundary"), true)
         } finally { try { remove(Path(fixture[0]), recursive: true) } catch (_: Exception) {} }
     }
@@ -140,6 +141,7 @@ public class TeacherFailureProviderClassifierTest {
             let claudePrompt = claude.observedArgs[1]
             for (policy in ["Classify the root cause, not a surfaced compiler symptom.",
                 "A fact already supplied by the authority is not missing knowledge.",
+                "do not use knowledge_gap; use rules_gap/missing_global_invariant",
                 "evaluator-owned completion-only boundary", "rules_gap/missing_global_invariant only"]) {
                 @Expect(codexPrompt.contains(policy), true)
                 @Expect(claudePrompt.contains(policy), true)

@@ -159,7 +159,9 @@ private func failureClassifierPrompt(request: String): String {
     "global behavioral constraints use rules_gap/missing_global_invariant; combinations use the matching " +
     "combined gap and multiple_reusable_gaps. Use infrastructure_failure/infrastructure_only for provider, " +
     "timeout, protocol, runner, or environment failures. Classify the root cause, not a surfaced compiler symptom. " +
-    "A fact already supplied by the authority is not missing knowledge. If the supplied syntax fact is known and " +
+    "A fact already supplied by the authority is not missing knowledge. When the authority states the exact syntax " +
+    "or API fact needed to fix the observation, do not use knowledge_gap; use rules_gap/missing_global_invariant " +
+    "unless a reusable procedure is also absent. If the supplied syntax fact is known and " +
     "the failure violates an evaluator-owned completion-only boundary, use rules_gap/missing_global_invariant only. " +
     "Never reveal case identifiers, hidden tests, reference " +
     "solutions, credentials, or local paths. Request:\n${request}"
