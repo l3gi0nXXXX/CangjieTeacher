@@ -31,7 +31,7 @@ private class FailureGeneratorFakeExecutor <: TeacherCommandExecutor {
             case "malformed" => "{"
             case "forbidden" => valid.replace("General 中文🙂", "hidden_test answer")
             case "oversized_rule" => valid.replace("General 中文🙂 rules guidance",
-                String(Array<Rune>(900, repeat: r'x')))
+                String(Array<Rune>(1001, repeat: r'x')))
             case "untrusted_hash" => String(valid.toRuneArray()[..valid.toRuneArray().size - 1]) +
                 ",\"proposalHash\":\"sha256:${String(Array<Rune>(64, repeat: r'0'))}\"}"
             case _ => valid
@@ -62,7 +62,7 @@ public class TeacherFailureAssetProviderGeneratorTest {
                 @Expect(response.lane, lane); @Expect(response.content.contains("中文🙂"), true)
                 @Expect(response.proposalHash.startsWith("sha256:"), true)
                 @Expect(spec.args[spec.args.size - 1].contains("trusted adapter computes and seals"), true)
-                @Expect(spec.args[spec.args.size - 1].contains("below 900 UTF-8 bytes"), lane == "rules")
+                @Expect(spec.args[spec.args.size - 1].contains("at most 1000 UTF-8 bytes"), lane == "rules")
             } finally { failureGeneratorRemove(fixture.root) }
         }
     }
