@@ -62,6 +62,10 @@ public func teacherContextAssetProjection(assetRole: String,
             }
         }
     }
+    let maxBytes = if (assetRole == "rules") { 8192 } else { 24576 }
+    if (out.toArray().size > maxBytes) {
+        throw IllegalArgumentException("candidate_lane_hash_mismatch")
+    }
     out
 }
 

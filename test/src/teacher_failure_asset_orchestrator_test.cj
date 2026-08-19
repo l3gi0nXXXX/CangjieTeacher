@@ -277,6 +277,24 @@ public class TeacherFailureAssetOrchestratorTest {
         @Expect(projection, "# Student Rules\nmax\none-a\none-b\nzero\n")
     }
 
+    @TestCase public func ruleProjectionRejectsCkbBundleOverflow(): Unit {
+        let hash = "sha256:${String(Array<Rune>(64, repeat: r'a'))}"
+        let headerBytes = "# Student Rules\n".toArray().size
+        let fitting = String(Array<Rune>(8192 - headerBytes, repeat: r'x'))
+        @Expect(teacherContextAssetProjection("rules", [
+            TeacherContextBaseAssetIdentity("rule-fitting", hash, content: fitting, priority: 100)
+        ]).toArray().size, Int64(8192))
+
+        var diagnostic = ""
+        try {
+            _ = teacherContextAssetProjection("rules", [
+                TeacherContextBaseAssetIdentity("rule-overflow", hash,
+                    content: fitting + "x", priority: 100)
+            ])
+        } catch (e: IllegalArgumentException) { diagnostic = e.message }
+        @Expect(diagnostic, "candidate_lane_hash_mismatch")
+    }
+
     @TestCase public func parserKeepsTwoRuleEvidenceIndependentWithShuffledExecutions(): Unit {
         let fixtureRoot = "fixtures/student_context_candidate_v2/candidate-set-v2"
         let root = "/tmp/teacher-two-rule-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
