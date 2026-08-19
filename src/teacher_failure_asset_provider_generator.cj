@@ -131,6 +131,10 @@ private func failureGeneratorSealResponse(raw: String, expectedLane: String): St
         let trigger = failureGeneratorString(object, "trigger")
         let scope = failureGeneratorString(object, "scope")
         let priority = object.get("priority").getOrThrow().asInt().getValue()
+        let renderedRule = "\n## ${title}\n\n${content}\n\nTrigger: ${trigger}\nScope: ${scope}\n"
+        if (lane == "rules" && renderedRule.toArray().size >= 900) {
+            throw IllegalArgumentException("response_contract_invalid")
+        }
         let evidence = "{\"schemaVersion\":\"teacher-failure-asset-generation-response-v1\",\"lane\":\"${lane}\"," +
             "\"title\":\"${failureGeneratorEscape(title)}\",\"content\":\"${failureGeneratorEscape(content)}\"," +
             "\"trigger\":\"${failureGeneratorEscape(trigger)}\",\"scope\":\"${failureGeneratorEscape(scope)}\"," +
@@ -146,11 +150,15 @@ private func failureGeneratorSealResponse(raw: String, expectedLane: String): St
 }
 
 private func failureGeneratorPrompt(request: String, lane: String): String {
+    let rulesBudget = if (lane == "rules") {
+        " Keep the complete rendered rule (heading, body, trigger, and scope) below 900 UTF-8 bytes."
+    } else { "" }
     "Generate one reusable ${lane} guidance proposal from the sanitized failure-gap request below. " +
     "Return exactly one canonical JSON object matching the output schema. Keep lane exactly ${lane}. " +
     "Do not add proposalHash; the trusted adapter computes and seals it after validating the seven business fields. " +
     "Do not include case identifiers, task answers, solution code, hidden tests, filesystem paths, credentials, " +
-    "tokens, authorization data, or private payloads. Generalize only from the supplied gap description. Request:\n${request}"
+    "tokens, authorization data, or private payloads. Generalize only from the supplied gap description." +
+    "${rulesBudget} Request:\n${request}"
 }
 
 private func failureGeneratorOutputSchema(): String {

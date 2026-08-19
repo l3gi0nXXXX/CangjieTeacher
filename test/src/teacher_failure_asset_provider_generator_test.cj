@@ -30,6 +30,8 @@ private class FailureGeneratorFakeExecutor <: TeacherCommandExecutor {
         let body = match (mode) {
             case "malformed" => "{"
             case "forbidden" => valid.replace("General 中文🙂", "hidden_test answer")
+            case "oversized_rule" => valid.replace("General 中文🙂 rules guidance",
+                String(Array<Rune>(900, repeat: r'x')))
             case "untrusted_hash" => String(valid.toRuneArray()[..valid.toRuneArray().size - 1]) +
                 ",\"proposalHash\":\"sha256:${String(Array<Rune>(64, repeat: r'0'))}\"}"
             case _ => valid
@@ -60,6 +62,7 @@ public class TeacherFailureAssetProviderGeneratorTest {
                 @Expect(response.lane, lane); @Expect(response.content.contains("中文🙂"), true)
                 @Expect(response.proposalHash.startsWith("sha256:"), true)
                 @Expect(spec.args[spec.args.size - 1].contains("trusted adapter computes and seals"), true)
+                @Expect(spec.args[spec.args.size - 1].contains("below 900 UTF-8 bytes"), lane == "rules")
             } finally { failureGeneratorRemove(fixture.root) }
         }
     }
@@ -68,7 +71,8 @@ public class TeacherFailureAssetProviderGeneratorTest {
         for ((mode, diagnostic) in [("timeout", "provider_timeout"),
             ("nonzero", "provider_process_failed"), ("missing", "provider_output_missing"),
             ("malformed", "malformed_json"), ("invalid_utf8", "invalid_response_encoding"),
-            ("wrong_lane", "lane_mismatch"), ("forbidden", "forbidden_data")]) {
+            ("wrong_lane", "lane_mismatch"), ("forbidden", "forbidden_data"),
+            ("oversized_rule", "response_contract_invalid")]) {
             let fixture = failureGeneratorFixture("reject-${mode}", "rules")
             try {
                 let result = executeTeacherFailureAssetProviderGenerator(fixture.args,
