@@ -132,7 +132,7 @@ private func failureGeneratorSealResponse(raw: String, expectedLane: String): St
         let scope = failureGeneratorString(object, "scope")
         let priority = object.get("priority").getOrThrow().asInt().getValue()
         let renderedRule = "\n## ${title}\n\n${content}\n\nTrigger: ${trigger}\nScope: ${scope}\n"
-        if (lane == "rules" && renderedRule.toArray().size > 1000) {
+        if (lane == "rules" && renderedRule.toArray().size > 1024) {
             throw IllegalArgumentException("response_contract_invalid")
         }
         let evidence = "{\"schemaVersion\":\"teacher-failure-asset-generation-response-v1\",\"lane\":\"${lane}\"," +
@@ -151,7 +151,7 @@ private func failureGeneratorSealResponse(raw: String, expectedLane: String): St
 
 private func failureGeneratorPrompt(request: String, lane: String): String {
     let rulesBudget = if (lane == "rules") {
-        " Keep the complete rendered rule (heading, body, trigger, and scope) at most 1000 UTF-8 bytes."
+        " Keep the complete rendered rule (heading, body, trigger, and scope) at most 1024 UTF-8 bytes."
     } else { "" }
     "Generate one reusable ${lane} guidance proposal from the sanitized failure-gap request below. " +
     "Return exactly one canonical JSON object matching the output schema. Keep lane exactly ${lane}. " +
