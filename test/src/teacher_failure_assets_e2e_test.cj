@@ -237,7 +237,7 @@ private func r6RealSeedArgs(root: String): Array<String> {
     r6Append(out, r6RealIdentityArgs(root)); out.toArray()
 }
 
-private func r6RealFailureArgs(root: String): Array<String> {
+private func r6RealFailureArgs(root: String, replaceBaseAssets!: Bool = false): Array<String> {
     let classifierA = canonicalize(Path("${root}/classifier-a")).toString()
     let classifierB = canonicalize(Path("${root}/classifier-b")).toString()
     let generator = canonicalize(Path("${root}/generator")).toString()
@@ -256,6 +256,14 @@ private func r6RealFailureArgs(root: String): Array<String> {
         "${root}/fixture/knowledge-missing.txt", "--frozen-knowledge-reference",
         "${root}/fixture/knowledge-reference.json", "--run-id", "real-failure-r6",
         "--output-root", "${root}/exports"])
+    if (replaceBaseAssets) {
+        r6Append(out, ["--rule-id", "existing-rule", "--rule-operation", "replace",
+            "--rule-expected-old-hash",
+            "sha256:d9f6c81e7341a5e33fe9896e0bb7531fb1cb6b890fc9f824f336332d42e57f5d",
+            "--skill-id", "existing-skill", "--skill-operation", "replace",
+            "--skill-expected-old-hash",
+            "sha256:d6d98d37bbd4fb0afd3a9e70695fa8deddd6032110d1e1dafc67f3810b08d268"])
+    }
     r6Append(out, r6RealIdentityArgs(root)); out.toArray()
 }
 
@@ -505,5 +513,26 @@ public class TeacherFailureAssetsE2ETest {
             try { remove(Path(root), recursive: true) } catch (_: Exception) {}
             try { remove(Path(negative), recursive: true) } catch (_: Exception) {}
         }
+    }
+
+    @TestCase public func realFailureBuildCanReplaceExistingRuleAndSkill(): Unit {
+        let root = "/tmp/teacher-real-replace-r6-${DateTime.now().toUnixTimeStamp().toNanoseconds()}"
+        try {
+            s5PrepareAll(root); r6PrepareRealFixtures(root); r6PrepareRuntimeContracts(root)
+            r6WriteFailureProposalsWithoutProtectedText(root)
+            r6PrepareOpaqueProtectedRoot(root)
+            let classification = teacherReadUtf8File("${root}/fixture/classification-a.json").trimAscii()
+            r6WriteExecutable("${root}/classifier-a", r6FixedAdapterScript(classification))
+            r6WriteExecutable("${root}/classifier-b", r6FixedAdapterScript(classification))
+            r6WriteExecutable("${root}/generator", r6GeneratorScript(root))
+            @Expect(cangjieTeacherCliMain(r6RealFailureArgs(root,
+                replaceBaseAssets: true)), Int64(0))
+            let candidate = parseTeacherContextCandidateSetDirectoryV2(root,
+                "${root}/exports/real-failure-r6", baseContextRoot: "${root}/base-context")
+            @Expect(candidate.rules.count, Int64(1))
+            @Expect(candidate.skills.count, Int64(1))
+            @Expect(candidate.rules.visibleContent.contains("Existing rule"), false)
+            @Expect(candidate.skills.visibleContent.contains("Rune-safe review"), false)
+        } finally { try { remove(Path(root), recursive: true) } catch (_: Exception) {} }
     }
 }

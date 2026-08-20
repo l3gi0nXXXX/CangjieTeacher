@@ -1158,8 +1158,17 @@ public class TeacherFailureAssetOrchestratorTest {
         @Expect(disagreement, "classification_requires_review")
 
         let parsedCli = parseTeacherCliOptions(["failure-assets-build", "--failure", "failure.json",
-            "--expected-hash", "abc", "--base-context-manifest", "none", "--output-root", "out"])
+            "--expected-hash", "abc", "--base-context-manifest", "none", "--output-root", "out",
+            "--rule-id", "rule-a", "--rule-operation", "replace",
+            "--rule-expected-old-hash", "sha256:old-rule", "--skill-id", "skill-a",
+            "--skill-operation", "replace", "--skill-expected-old-hash", "sha256:old-skill"])
         @Expect(parsedCli.failurePath, "failure.json")
         @Expect(parsedCli.baseContextManifest, "none")
+        @Expect(parsedCli.ruleId, "rule-a")
+        @Expect(parsedCli.ruleOperation, "replace")
+        @Expect(parsedCli.ruleExpectedOldHash, "sha256:old-rule")
+        @Expect(parsedCli.skillId, "skill-a")
+        @Expect(parsedCli.skillOperation, "replace")
+        @Expect(parsedCli.skillExpectedOldHash, "sha256:old-skill")
     }
 }

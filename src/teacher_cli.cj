@@ -64,6 +64,12 @@ public class TeacherCliOptions {
     public var authority = ""
     public var gapDescription = ""
     public var frozenKnowledgeReference = ""
+    public var ruleId = ""
+    public var ruleOperation = "add"
+    public var ruleExpectedOldHash = ""
+    public var skillId = ""
+    public var skillOperation = "add"
+    public var skillExpectedOldHash = ""
     public init() {}
 }
 
@@ -137,6 +143,12 @@ public func parseTeacherCliOptions(args: Array<String>): TeacherCliOptions {
             case "--authority" => out.authority = value
             case "--gap-description" => out.gapDescription = value
             case "--frozen-knowledge-reference" => out.frozenKnowledgeReference = value
+            case "--rule-id" => out.ruleId = value
+            case "--rule-operation" => out.ruleOperation = value
+            case "--rule-expected-old-hash" => out.ruleExpectedOldHash = value
+            case "--skill-id" => out.skillId = value
+            case "--skill-operation" => out.skillOperation = value
+            case "--skill-expected-old-hash" => out.skillExpectedOldHash = value
             case _ => throw IllegalArgumentException("unknown_cli_option")
         }
         i += 2
@@ -634,6 +646,12 @@ private func runTeacherRealFailureAssetsBuild(options: TeacherCliOptions): Int64
     } else { "{}" }
     let studentWorkspace = teacherCliCreateAdapterWorkspace(options,
         "student-failure-${options.runId}")
+    let ruleId = if (options.ruleId.isEmpty()) {
+        "real-rule-${first.classificationEvidenceHash}"
+    } else { options.ruleId }
+    let skillId = if (options.skillId.isEmpty()) {
+        "real-skill-${first.classificationEvidenceHash}"
+    } else { options.skillId }
     let request = TeacherFailureAssetBuildRequestV2(failure, first, second, gap,
         generator, fixtures, fixtures,
         StudentCompletionNonHumanEvalExecutor(options.runtimeExecutable,
@@ -641,9 +659,10 @@ private func runTeacherRealFailureAssetsBuild(options: TeacherCliOptions): Int64
             timeoutMillis: options.timeoutMillis),
         TeacherFailureKnowledgeRequest("unused", "", "", frozenReference, "",
             closure.protectedArtifacts), FrozenTeacherFailureKnowledgeAdapter(), closure, base,
-        options.runId, "real-rule-${first.classificationEvidenceHash}",
-        "failure-derived-general-rule", "real-skill-${first.classificationEvidenceHash}",
-        "add", "", "add", "", options.allowedRoot, options.outputRoot)
+        options.runId, ruleId, "failure-derived-general-rule", skillId,
+        options.ruleOperation, options.ruleExpectedOldHash,
+        options.skillOperation, options.skillExpectedOldHash,
+        options.allowedRoot, options.outputRoot)
     let built = buildTeacherFailureAssets(request)
     let candidate = match (built.candidateSetV2) {
         case Some(value) => value
